@@ -141,6 +141,10 @@ export const GENERALS = [
     command: 80, force: 88, intel: 70, politics: 55, loyalty: 80, portrait: 'yang_kan' },
   { id: 'wei_rui',    name: '韦睿',   faction: 'nanchao', role: '儒将',
     command: 90, force: 65, intel: 82, politics: 75, loyalty: 88, portrait: 'wei_rui' },
+  { id: 'chen_qian',  name: '陈蒨',   faction: 'nanchao', role: '文帝',
+    command: 82, force: 75, intel: 80, politics: 85, loyalty: 90, portrait: 'chen_qian' },
+  { id: 'yang_yaren', name: '羊鸦仁', faction: 'nanchao', role: '边将',
+    command: 75, force: 82, intel: 60, politics: 50, loyalty: 75, portrait: 'yang_yaren' },
 
   // 东魏
   { id: 'gao_huan',   name: '高欢',   faction: 'dongwei', role: '君主',
@@ -151,6 +155,10 @@ export const GENERALS = [
     command: 78, force: 95, intel: 55, politics: 40, loyalty: 78, portrait: 'gao_aocao' },
   { id: 'murong_shaozong', name: '慕容绍宗', faction: 'dongwei', role: '名将',
     command: 86, force: 75, intel: 80, politics: 65, loyalty: 80, portrait: 'murong_shaozong' },
+  { id: 'gao_changgong', name: '高长恭', faction: 'dongwei', role: '兰陵王',
+    command: 85, force: 92, intel: 70, politics: 60, loyalty: 80, portrait: 'gao_changgong' },
+  { id: 'duan_shao',  name: '段韶',   faction: 'dongwei', role: '谋将',
+    command: 86, force: 78, intel: 82, politics: 75, loyalty: 82, portrait: 'duan_shao' },
 
   // 西魏
   { id: 'yuwen_tai',  name: '宇文泰', faction: 'xiwei', role: '君主',
@@ -161,6 +169,8 @@ export const GENERALS = [
     command: 82, force: 80, intel: 75, politics: 78, loyalty: 82, portrait: 'dugu_xin' },
   { id: 'li_hu',      name: '李虎',   faction: 'xiwei', role: '八柱国',
     command: 80, force: 82, intel: 68, politics: 65, loyalty: 85, portrait: 'li_hu' },
+  { id: 'yuwen_yong', name: '宇文邕', faction: 'xiwei', role: '武帝',
+    command: 88, force: 80, intel: 85, politics: 88, loyalty: 92, portrait: 'yuwen_yong' },
 
   // 在野
   { id: 'chen_qingzhi', name: '陈庆之', faction: null, role: '在野',
@@ -168,7 +178,10 @@ export const GENERALS = [
   { id: 'tan_daoji',  name: '檀道济', faction: null, role: '在野',
     command: 86, force: 82, intel: 70, politics: 60, loyalty: 60, portrait: 'tan_daoji' },
   { id: 'cao_jingzong', name: '曹景宗', faction: null, role: '在野',
-    command: 78, force: 85, intel: 60, politics: 45, loyalty: 55, portrait: 'cao_jingzong' }
+    command: 78, force: 85, intel: 60, politics: 45, loyalty: 55, portrait: 'cao_jingzong' },
+  // 杨坚：隋公代周事件登场，初始在野，事件后归入西魏
+  { id: 'yang_jian',  name: '杨坚',   faction: null, role: '隋公',
+    command: 90, force: 82, intel: 90, politics: 95, loyalty: 70, portrait: 'yang_jian' }
 ];
 
 // ---------- 事件表 ----------
@@ -254,6 +267,69 @@ export const HISTORICAL_EVENTS = [
     options: [
       { text: '铁腕整肃', effect: { morale: -15, comm: +10 } },
       { text: '怀柔安抚', effect: { money: -500, morale: +5 } }
+    ]
+  },
+
+  // ---------- 新增历史事件 ----------
+  {
+    id: 'liuzhen', name: '六镇起义', illustration: 'rebellion',
+    minTurn: 3, factions: ['dongwei', 'xiwei'],
+    description: '北方六镇戍卒哗变，边地狼烟四起！平叛虽损兵折将，却可收揽骁勇。',
+    options: [
+      { text: '出兵平叛（损兵3000）', effect: { armyLoss: 3000, morale: +5, recruitRandom: true } },
+      { text: '羁縻招安（耗金800）', effect: { money: -800, morale: -5, recruitRandom: true } }
+    ]
+  },
+  {
+    id: 'xiaowen_reform', name: '孝文帝改革', illustration: 'harvest',
+    minTurn: 12, factions: ['dongwei', 'xiwei'],
+    // 仅当控制洛阳时触发
+    condition: (game) => {
+      const c = game.cities.get('luoyang');
+      return c && c.owner === game.playerFaction;
+    },
+    description: '迁都洛阳已久，汉风渐染。或行汉化以兴文治，或守旧俗以安军心。',
+    options: [
+      { text: '推行汉化改革（繁荣+10 民心+15，军心-10）', effect: { prosperity: 10, morale: 15, armyMorale: -10 } },
+      { text: '固守鲜卑旧俗（军心+10，繁荣-10）', effect: { prosperity: -10, morale: -5, armyMorale: 10 } }
+    ]
+  },
+  {
+    id: 'mangshan', name: '邙山之战', illustration: 'cavalry_charge',
+    minTurn: 10, factions: ['dongwei', 'xiwei'],
+    description: '东西魏大军会战于邙山，野战遮天蔽日！此战自动结算一场大规模野战。',
+    options: [
+      { text: '率军亲征（自动大战）', effect: { massBattle: true } }
+    ]
+  },
+  {
+    id: 'yubi_siege', name: '玉璧围城', illustration: 'city_siege',
+    minTurn: 9, factions: ['xiwei'],
+    description: '东魏大军围玉璧，韦孝宽临危受命，守城意志坚如磐石。',
+    options: [
+      { text: '全城死守（守城战力大幅提升，本回合免伤）', effect: { garrisonBuff: true, morale: +10 } }
+    ]
+  },
+  {
+    id: 'houjing_continue', name: '侯景之乱·续', illustration: 'rebellion',
+    minTurn: 11, factions: ['nanchao'],
+    // 侯景之乱后第3回合仍未平定（寿阳无主）时触发
+    condition: (game) => {
+      const c = game.cities.get('shouyang');
+      return c && c.owner === null;
+    },
+    description: '侯景余部卷土重来，建康危在旦夕！若不速平，社稷倾颓。',
+    options: [
+      { text: '倾国之兵勤王（损兵4000）', effect: { armyLoss: 4000, morale: -5, recaptureJiankang: true } },
+      { text: '求和纳贡（耗金1500）', effect: { money: -1500, morale: -15 } }
+    ]
+  },
+  {
+    id: 'yangjian_dynasty', name: '隋公代周', illustration: 'harvest',
+    minTurn: 25, factions: ['xiwei'],
+    description: '随国公杨坚素有人望，百官归心，入朝辅政。',
+    options: [
+      { text: '召杨坚入朝（超高属性武将加入）', effect: { recruitGeneral: 'yang_jian', morale: +10 } }
     ]
   }
 ];

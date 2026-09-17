@@ -927,3 +927,9 @@ html, body {
 }
 .btn-icon:hover { border-color: #FFD700; color: #FFD700; transform: scale(1.08); }
 .btn-icon.muted { opacity: 0.45; }
+
+/* 顶栏紧凑化（1024 宽度适配） */
+.top-bar { gap: 12px; padding: 0 10px; }
+.top-item { font-size: 13px; white-space: nowrap; }
+.top-bar-btns { gap: 5px; }
+.top-bar-btns .btn-small { padding: 4px 9px; font-size: 12px; }
