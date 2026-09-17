@@ -4,6 +4,34 @@
   <meta charset="UTF-8">
   <title>南北朝</title>
   <link rel="stylesheet" href="css/style.css">
+  <script>
+    // 全局错误捕获：任何 JS 错误都显示在屏幕上，避免黑屏
+    window.addEventListener('error', function(e) {
+      var box = document.getElementById('boot-error');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'boot-error';
+        box.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;z-index:999999;' +
+          'background:#2a1010;color:#ff8888;padding:14px;border:2px solid #e05555;' +
+          'font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:60vh;overflow:auto;';
+        document.body.appendChild(box);
+      }
+      box.textContent = '[启动错误] ' + (e.message || e.error || '未知错误') +
+        '\n' + ((e.error && e.error.stack) || '');
+    });
+    window.addEventListener('unhandledrejection', function(e) {
+      var box = document.getElementById('boot-error');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'boot-error';
+        box.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;z-index:999999;' +
+          'background:#2a1010;color:#ff8888;padding:14px;border:2px solid #e05555;' +
+          'font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:60vh;overflow:auto;';
+        document.body.appendChild(box);
+      }
+      box.textContent = '[Promise错误] ' + (e.reason && e.reason.message || e.reason);
+    });
+  </script>
 </head>
 <body>
   <!-- 古风 loading 画面（卷轴展开效果） -->
@@ -21,13 +49,38 @@
 
   <div id="app"></div>
 
-  <!-- 音效与教程模块（ES Module，先于 ui 加载，保证单例） -->
+  <!-- 兜底：3 秒后无论如何隐藏 loading（即使 JS 异常也不卡 loading） -->
+  <script>
+    setTimeout(function() {
+      var ls = document.getElementById('loading-screen');
+      if (ls) ls.classList.add('hide');
+    }, 3000);
+  </script>
+
+  <!-- 音效与教程模块（ES Module） -->
+  <script type="module" src="js/animation.js"></script>
   <script type="module" src="js/audio.js"></script>
   <script type="module" src="js/tutorial.js"></script>
   <script type="module">
-    import { UI } from './js/ui.js';
-    window.__ui_ = new UI();
-    window.__ui_.start();
+    try {
+      const { UI } = await import('./js/ui.js');
+      window.__ui_ = new UI();
+      window.__ui_.start();
+    } catch (err) {
+      console.error('[bootstrap]', err);
+      var box = document.getElementById('boot-error');
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'boot-error';
+        box.style.cssText = 'position:fixed;top:10px;left:10px;right:10px;z-index:999999;' +
+          'background:#2a1010;color:#ff8888;padding:14px;border:2px solid #e05555;' +
+          'font-family:monospace;font-size:12px;white-space:pre-wrap;max-height:60vh;overflow:auto;';
+        document.body.appendChild(box);
+      }
+      box.textContent = '[启动失败] ' + (err.message || err) + '\n' + (err.stack || '');
+      var ls = document.getElementById('loading-screen');
+      if (ls) ls.classList.add('hide');
+    }
   </script>
 </body>
 </html>

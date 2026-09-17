@@ -2,6 +2,8 @@
 // city.js — 城市数据模型与内政操作
 // ============================================================
 import { CITIES, CITY_LINKS, UNIT_TYPES, TERRAIN, SEASON_FOOD_MULT } from './data.js';
+import { getBuildingBag } from './building.js';
+import { calcCityCulturePerTurn, getReligionCityModifiers } from './religion.js';
 
 let cityIdCounter = 0;
 
@@ -25,6 +27,21 @@ export class City {
     this.garrison = 0;              // 驻城兵力
     this.mayor = null;              // 太守 generalId
     this.adjacent = CITY_LINKS[data.id] || [];
+    // ---- V2.0：建筑树 ----
+    this.buildings = data.buildings || {};   // { buildingId: level }
+    this.buildingThisTurn = false;           // 每回合仅可建造/升级一个建筑
+    // ---- V6.0：宗教文化系统 ----
+    this.religion = data.religion || { buddhist: 0, daoist: 0, culture: 0 };
+  }
+
+  // 建筑聚合效果袋（农田/市集/城墙/码头…）
+  buildingBag() {
+    return getBuildingBag(this.buildings);
+  }
+
+  // 有效城防 = 基础防御 + 城墙每级 +10
+  getEffectiveDefense() {
+    return this.defense + (this.buildingBag().defenseFlat || 0);
   }
 
   // 计算金钱收入
@@ -34,7 +51,9 @@ export class City {
     // 科技/技能加成（由 game.getTechBonus 汇总）
     const bonus = (key) => (window.__game && typeof window.__game.getTechBonus === 'function')
       ? (window.__game.getTechBonus(this.owner, key) || 0) : 0;
-    const commEff = this.comm * (1 + bonus('commMult'));
+    const bb = this.buildingBag();
+    // 市集：每级商业 +8
+    const commEff = (this.comm + (bb.commFlat || 0)) * (1 + bonus('commMult'));
     let income = (this.pop * (commEff / 100) * (this.taxRate / 100) * moraleFactor) / 10;
     // 太守政治加成（三省制/代周建隋 提升政治效果）
     const polEffMult = 1 + bonus('politicsEffMult');
@@ -44,6 +63,12 @@ export class City {
     }
     // 税收类科技/技能加成（均在最终收入上乘算）
     income *= (1 + bonus('incomeMult'));
+    // 市集建筑：每级金钱 +5%
+    income *= (1 + (bb.incomeMult || 0));
+    // V2.5：联姻经济加成（每桩 active 联姻 +10%，见 diplomacy.getMarriageIncomeMult）
+    const marriageMult = (window.__game && typeof window.__game.getMarriageIncomeMult === 'function')
+      ? window.__game.getMarriageIncomeMult(this.owner) : 0;
+    income *= (1 + marriageMult);
     return Math.round(income);
   }
 
@@ -52,8 +77,12 @@ export class City {
     const seasonMult = SEASON_FOOD_MULT[season] || 1;
     const bonus = (key) => (window.__game && typeof window.__game.getTechBonus === 'function')
       ? (window.__game.getTechBonus(this.owner, key) || 0) : 0;
-    let food = (this.pop * (this.agri / 100) * seasonMult) / 10;
+    const bb = this.buildingBag();
+    // 农田：每级农业 +8
+    const agriEff = this.agri + (bb.agriFlat || 0);
+    let food = (this.pop * (agriEff / 100) * seasonMult) / 10;
     food *= (1 + bonus('foodMult')); // 均田制/水利兴修
+    food *= (1 + (bb.foodMult || 0)); // 农田建筑每级 +5%
     if (this.mayor) {
       const gen = window.__game?.getGeneral(this.mayor);
       if (gen) food *= (1 + gen.effPolitics / 300);
@@ -116,11 +145,22 @@ export class City {
     const food = this.calcFood(season);
     // 民心自然波动
     this.morale = Math.max(0, Math.min(100, this.morale + (Math.random() * 4 - 2)));
+    // 庙宇：每级民心 +2/回合
+    const bb = this.buildingBag();
+    if (bb.moralePerTurn) this.morale = Math.min(100, this.morale + bb.moralePerTurn);
+    // ---- V6.0：宗教文化系统 ----
+    // 每回合文化值积累（佛寺×5 + 道观×3 + 石窟×10 + 基础2）
+    if (!this.religion) this.religion = { buddhist: 0, daoist: 0, culture: 0 };
+    const cultureGain = calcCityCulturePerTurn(this);
+    this.religion.culture = (this.religion.culture || 0) + cultureGain;
+    // 宗教影响：佛教→民心加成，道教→科技加成（由 game 层汇总）
+    const relMods = getReligionCityModifiers(this);
+    if (relMods.moraleMod) this.morale = Math.min(100, this.morale + Math.round(relMods.moraleMod / 5));
     // 人口自然增长（大索貌阅 +10%）
     const popMult = (window.__game && typeof window.__game.getTechBonus === 'function')
       ? (1 + (window.__game.getTechBonus(this.owner, 'popMult') || 0)) : 1;
     this.pop = Math.round(this.pop * (1 + (this.morale - 50) / 5000) * popMult);
-    return { income, food };
+    return { income, food, culture: cultureGain };
   }
 
   serialize() {
@@ -129,7 +169,9 @@ export class City {
       terrain: this.terrain, size: this.size, capital: this.capital,
       owner: this.owner, pop: this.pop, agri: this.agri, comm: this.comm,
       defense: this.defense, prosperity: this.prosperity, taxRate: this.taxRate,
-      morale: this.morale, garrison: this.garrison, mayor: this.mayor
+      morale: this.morale, garrison: this.garrison, mayor: this.mayor,
+      buildings: this.buildings, buildingThisTurn: this.buildingThisTurn,
+      religion: this.religion  // V6.0
     };
   }
 
@@ -144,6 +186,11 @@ export class City {
     c.morale = data.morale;
     c.garrison = data.garrison;
     c.mayor = data.mayor;
+    // 旧存档补默认值
+    c.buildings = data.buildings || {};
+    c.buildingThisTurn = !!data.buildingThisTurn;
+    // V6.0：旧存档补 religion 字段
+    c.religion = data.religion || { buddhist: 0, daoist: 0, culture: 0 };
     return c;
   }
 }

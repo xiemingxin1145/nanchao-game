@@ -4,7 +4,9 @@
 //  - startMultiBattle / resolveBattleRound / endMultiBattle：
 //    最多 5 回合的逐步战斗（玩家交互 + AI 自动共用）
 // ============================================================
-import { UNIT_TYPES, COUNTER_RELATION, COUNTER_BONUS, TERRAIN, CITY_LINKS } from './data.js';
+import { UNIT_TYPES, COUNTER_RELATION, COUNTER_BONUS, TERRAIN, CITY_LINKS, ADVANCEMENT_TREE } from './data.js';
+import { getFormation } from './formation.js';
+import { isNavalBattle, applyWaterTerrainMod, checkFireAttack, FIRE_ATTACK_PENALTY, NAVY_UNIT_KEYS } from './navy.js';
 
 let armyIdCounter = 0;
 
@@ -17,6 +19,12 @@ export class Army {
     this.troops = troops;         // 总兵力
     this.unitMix = unitMix || this.defaultMix(troops);
     this.hasMoved = false;        // 本回合是否已行动
+    // ---- V2.0 ----
+    this.formation = 'heyi';      // 阵型 id（默认鹤翼阵）
+    // 各兵种当前进阶阶数：0 基础 / 1 精锐 / 2 王牌
+    this.unitTier = { infantry: 0, cavalry: 0, archer: 0 };
+    // 待进阶队列：[{ unitType, targetTier, turnsLeft }]，1 回合后生效
+    this.pendingUpgrades = [];
   }
 
   defaultMix(troops) {
@@ -31,19 +39,69 @@ export class Army {
     return best;
   }
 
+  // 兵种进阶系数：tier>0 时该兵种系数 × ADVANCEMENT_TREE 对应 mult
+  // 公式：coeff(type) = UNIT_TYPES[type].coefficient × (tier>0 ? tree[tier-1].mult : 1)
+  unitCoefficient(unitType) {
+    let mult = 1.0;
+    const tier = this.unitTier[unitType] || 0;
+    if (tier > 0) {
+      const node = (ADVANCEMENT_TREE[unitType] || []).find(n => n.tier === tier);
+      if (node) mult = node.mult;
+    }
+    return UNIT_TYPES[unitType].coefficient * mult;
+  }
+
   getAvgUnitCoeff() {
     const mix = this.unitMix;
     const total = mix.infantry + mix.cavalry + mix.archer || 1;
-    return (mix.infantry * UNIT_TYPES.infantry.coefficient +
-            mix.cavalry * UNIT_TYPES.cavalry.coefficient +
-            mix.archer * UNIT_TYPES.archer.coefficient) / total;
+    return (mix.infantry * this.unitCoefficient('infantry') +
+            mix.cavalry * this.unitCoefficient('cavalry') +
+            mix.archer * this.unitCoefficient('archer')) / total;
+  }
+
+  getFormationName() {
+    return getFormation(this.formation).name;
+  }
+
+  // 申请某兵种进阶：需 city 校场等级满足；费用由 game 层扣减
+  // 返回 { ok, msg }；成功后进入 pendingUpgrades，1 回合后生效
+  requestUpgrade(unitType, drillLevel) {
+    if (!ADVANCEMENT_TREE[unitType]) return { ok: false, msg: '兵种不存在' };
+    const curTier = this.unitTier[unitType] || 0;
+    if (curTier >= 2) return { ok: false, msg: '该兵种已是最高阶' };
+    const node = ADVANCEMENT_TREE[unitType][curTier]; // 下一阶
+    if (!node) return { ok: false, msg: '进阶已完成' };
+    if (drillLevel < node.drillLevel) {
+      return { ok: false, msg: `需校场达到 ${node.drillLevel} 级（当前 ${drillLevel} 级）` };
+    }
+    if (this.pendingUpgrades.some(p => p.unitType === unitType)) {
+      return { ok: false, msg: '该兵种正在进阶整训中' };
+    }
+    this.pendingUpgrades.push({ unitType, targetTier: node.tier, turnsLeft: 1 });
+    return { ok: true, msg: `开始整训进阶为 ${node.name}，1 回合后成军` };
+  }
+
+  // 回合推进：待进阶到位
+  endTurn() {
+    const done = [];
+    this.pendingUpgrades = this.pendingUpgrades.filter(p => {
+      p.turnsLeft--;
+      if (p.turnsLeft <= 0) {
+        this.unitTier[p.unitType] = p.targetTier;
+        done.push(p);
+        return false;
+      }
+      return true;
+    });
+    return done;
   }
 
   serialize() {
     return {
       id: this.id, faction: this.faction, generalId: this.generalId,
       cityId: this.cityId, troops: this.troops, unitMix: this.unitMix,
-      hasMoved: this.hasMoved
+      hasMoved: this.hasMoved,
+      formation: this.formation, unitTier: this.unitTier, pendingUpgrades: this.pendingUpgrades
     };
   }
 
@@ -54,6 +112,10 @@ export class Army {
     });
     a.id = data.id;
     a.hasMoved = data.hasMoved;
+    // 旧存档补默认值
+    a.formation = data.formation || 'heyi';
+    a.unitTier = data.unitTier || { infantry: 0, cavalry: 0, archer: 0 };
+    a.pendingUpgrades = Array.isArray(data.pendingUpgrades) ? data.pendingUpgrades : [];
     return a;
   }
 }
@@ -62,9 +124,18 @@ export class Army {
 // 通用工具
 // ============================================================
 // 加成封顶：同类加成总和上限 +100%（即倍率 ≤ 2.0），下限 -90%
+// V4.0: 保持不变，clampBonus 仍为 ±100% 同类上限
 export function clampBonus(sum) {
   return Math.max(-0.9, Math.min(1.0, sum));
 }
+
+// V4.0: 总战力倍率硬封顶 3.0（300%），防止所有加成叠加后失衡
+// 原值: 无封顶 → 新值: max 3.0 → 调整原因: 确保极端加成组合不会导致战斗结果不可预测
+const TOTAL_POWER_CAP = 3.0;
+function clampTotalPower(mult) {
+  return Math.max(0.1, Math.min(TOTAL_POWER_CAP, mult));
+}
+
 function sumBag(bags, key) {
   let s = 0;
   for (const b of bags) s += (b[key] || 0);
@@ -83,6 +154,20 @@ export function computeBattle(attacker, defender, attackerTerrain, defenderTerra
   attacker.bags = attacker.bags || [];
   defender.bags = defender.bags || [];
 
+  // V4.0: 0兵力边界处理 — 双方0兵则平局，一方0兵则另一方直接胜
+  if (!attacker.troops || attacker.troops <= 0) {
+    result.draw = true;
+    result.battleLog.push('攻方无兵，战斗无法进行。');
+    return result;
+  }
+  if (!defender.troops || defender.troops <= 0) {
+    result.attackerWin = true;
+    result.battleLog.push('守方无兵，城池不战而下！');
+    result.defenderLoss = 0;
+    result.attackerLoss = 0;
+    return result;
+  }
+
   function power(side, terrain, isAttacker) {
     let p = side.troops;
     p *= side.unitCoeff || 1.0;
@@ -99,15 +184,32 @@ export function computeBattle(attacker, defender, attackerTerrain, defenderTerra
     if (terrain === 'river' && side.unitType === 'archer') p *= 1.20;
     if (terrain === 'desert') p *= 0.70;
 
+    // V6.0：水战地形加成——水军在水上+50%，陆军在水上-30%
+    const isWater = (terrain === 'river');
+    const waterMod = applyWaterTerrainMod(side.unitType, isWater);
+    p *= waterMod;
+    if (isWater && waterMod !== 1.0) {
+      const unitName = UNIT_TYPES[side.unitType] ? UNIT_TYPES[side.unitType].name : side.unitType;
+      if (NAVY_UNIT_KEYS.includes(side.unitType)) {
+        result.tactics.push(`${unitName}水战加成！战力×${waterMod.toFixed(2)}`);
+      } else {
+        result.tactics.push(`我军不习水战，战力×${waterMod.toFixed(2)}`);
+      }
+    }
+
     if (COUNTER_RELATION[side.unitType] === side._enemyType) {
       p *= (1 + COUNTER_BONUS);
       result.tactics.push(`${UNIT_TYPES[side.unitType].name}克制${UNIT_TYPES[side._enemyType].name}，战力+25%`);
     }
     p *= (0.8 + gen.intel / 250);
-    if (isAttacker) p *= 0.9;
+    // V4.0: 攻城方惩罚 0.9→0.85（原值0.9，新值0.85，调整原因: 攻城需要至少1.5倍兵力才能稳胜，增大攻城方难度）
+    if (isAttacker) p *= 0.85;
     // 守城/攻城（快速结算仅粗略）
     if (isAttacker) p *= (1 + clampBonus(sumBag(side.bags, 'siegeMult')));
     else p *= (1 + clampBonus(sumBag(side.bags, 'garrisonMult')));
+
+    // V4.0: 总倍率硬封顶
+    p = clampTotalPower(p / side.troops) * side.troops;
     return p;
   }
 
@@ -116,6 +218,20 @@ export function computeBattle(attacker, defender, attackerTerrain, defenderTerra
 
   let atkPower = power(attacker, defenderTerrain || 'plain', true);
   let defPower = power(defender, defenderTerrain || 'plain', false);
+
+  // V6.0：水战火攻机制（赤壁式）——攻方智力高时概率火攻
+  const battleIsNaval = isNavalBattle(attacker.cityId || '', defender.cityId || '');
+  if (battleIsNaval) {
+    const atkGenForFire = attacker.general || { intel: 50 };
+    const windDir = Math.random() < 0.5 ? 'favorable' : 'unfavorable';
+    const fireResult = checkFireAttack(atkGenForFire.intel, true, windDir);
+    if (fireResult.success) {
+      defPower *= FIRE_ATTACK_PENALTY;
+      result.tactics.push(`★ 火攻！${atkGenForFire.name || '我军'}借风纵火，敌船大乱！防守战力-30%`);
+      result.fireAttack = true;
+      result.windDirection = windDir;
+    }
+  }
 
   if (defender.cityDefense) {
     defPower *= (1 + defender.cityDefense / 200);
@@ -240,6 +356,13 @@ function calcPower(side, enemyType, battle, action) {
   if (terr === 'river' && side.unitType === 'archer') p *= 1.20;
   if (terr === 'desert') p *= 0.70;
 
+  // V6.0：水战地形加成
+  const isWater = (terr === 'river');
+  if (isWater) {
+    const waterMod = applyWaterTerrainMod(side.unitType, true);
+    p *= waterMod;
+  }
+
   // 兵种克制
   if (COUNTER_RELATION[side.unitType] === enemyType) p *= (1 + COUNTER_BONUS);
 
@@ -268,6 +391,8 @@ function calcPower(side, enemyType, battle, action) {
 
   // 智力士气
   p *= (0.8 + gen.intel / 250);
+  // V4.0: 总倍率硬封顶 3.0（与 computeBattle 一致，防止叠加失衡）
+  p = clampTotalPower(p / Math.max(1, side.troops)) * Math.max(1, side.troops);
   return p;
 }
 

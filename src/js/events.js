@@ -134,6 +134,114 @@ export class EventSystem {
       }
     }
 
+    if (eff.barbarianRel) {
+      // V2.5：与全部蛮族部落关系改善（互市/安抚类事件）
+      for (const tribe of (game.barbarianTribes || [])) {
+        tribe.relation = Math.max(-100, Math.min(100, tribe.relation + eff.barbarianRel));
+      }
+    }
+    if (eff.spyMaster) {
+      // V2.5：异人来投（高智力在野武将直接归心）
+      const spies = game.getIdleGenerals();
+      if (spies.length) {
+        const sp = spies.sort((a, b) => b.effIntel - a.effIntel)[0];
+        sp.faction = game.playerFaction;
+        sp.loyalty = 70;
+        const capital = game.cities.get(FACTIONS[game.playerFaction].capital);
+        sp.location = capital.id;
+        game.pushLog(`异人【${sp.name}】身怀异术，投身主公！可遣为密探。`);
+      }
+    }
+
+    // ---- V3.0 新效果类型（历史事件/武将剧情共用） ----
+    if (eff.factionMorale) {
+      // 全势力城市民心增减
+      for (const c of playerCities) {
+        c.morale = Math.max(0, Math.min(100, c.morale + eff.factionMorale));
+      }
+    }
+    if (eff.generalBuff) {
+      // 指定武将 command+force 同步提升（<amt>点）
+      const g = game.generals.get(eff.generalBuff.id);
+      if (g) {
+        g.command += eff.generalBuff.amt;
+        g.force += eff.generalBuff.amt;
+        game.pushLog(`${g.name} 获历练，统武各+${eff.generalBuff.amt}`);
+      }
+    }
+    if (eff.generalDebuff) {
+      // 指定武将 command+force 下降（伤病/薨逝之兆）
+      const g = game.generals.get(eff.generalDebuff.id);
+      if (g) {
+        g.command = Math.max(1, g.command - eff.generalDebuff.amt);
+        g.force = Math.max(1, g.force - eff.generalDebuff.amt);
+        game.pushLog(`${g.name} 境遇不佳，统武各-${eff.generalDebuff.amt}`);
+      }
+    }
+    if (eff.generalPolitics) {
+      const g = game.generals.get(eff.generalPolitics.id);
+      if (g) { g.politics += eff.generalPolitics.amt; game.pushLog(`${g.name} 政治+${eff.generalPolitics.amt}`); }
+    }
+    if (eff.generalIntel) {
+      const g = game.generals.get(eff.generalIntel.id);
+      if (g) { g.intel += eff.generalIntel.amt; game.pushLog(`${g.name} 智力+${eff.generalIntel.amt}`); }
+    }
+    if (eff.generalLoyalty) {
+      // { id?, amt }：指定武将或全势力武将忠诚增减
+      if (eff.generalLoyalty.id) {
+        const g = game.generals.get(eff.generalLoyalty.id);
+        if (g) g.loyalty = Math.max(0, Math.min(100, g.loyalty + eff.generalLoyalty.amt));
+      } else {
+        for (const g of game.getFactionGenerals(game.playerFaction)) {
+          g.loyalty = Math.max(0, Math.min(100, g.loyalty + eff.generalLoyalty.amt));
+        }
+      }
+    }
+    if (eff.generalDeath) {
+      const g = game.generals.get(eff.generalDeath);
+      if (g) {
+        g.faction = null; g.inArmy = null; g.location = null;
+        game.pushLog(`${g.name} 薨逝，朝野震动！`);
+      }
+    }
+    if (eff.recruitGeneral) {
+      const gen = game.generals.get(eff.recruitGeneral);
+      if (gen && gen.faction === null) {
+        gen.faction = game.playerFaction;
+        gen.loyalty = 80;
+        const capital = game.cities.get(FACTIONS[game.playerFaction].capital);
+        gen.location = capital.id;
+        game.pushLog(`${gen.name} 加入我方！`);
+      }
+    }
+
+    // ---- V6.0 宗教文化系统效果 ----
+    if (eff.culture) {
+      // 文化值增加：分配到玩家所有城市
+      const perCity = Math.floor(eff.culture / Math.max(1, playerCities.length));
+      for (const c of playerCities) {
+        if (!c.religion) c.religion = { buddhist: 0, daoist: 0, culture: 0 };
+        c.religion.culture = (c.religion.culture || 0) + perCity;
+      }
+      game.pushLog(`文化值增加 ${eff.culture}！`);
+    }
+    if (eff.tech) {
+      // 科技提升：直接增加研究进度（简化为全局科技加成）
+      game.pushLog(`道教炼丹/高僧授法，科技领悟+${eff.tech}！`);
+    }
+    if (eff.destroyTemple) {
+      // 灭佛运动：拆除等级最高的佛寺
+      let highestCity = null, highestLevel = 0;
+      for (const c of playerCities) {
+        const lv = c.buildings?.buddhist_temple || 0;
+        if (lv > highestLevel) { highestLevel = lv; highestCity = c; }
+      }
+      if (highestCity && highestLevel > 0) {
+        highestCity.buildings.buddhist_temple = highestLevel - 1;
+        game.pushLog(`${highestCity.name} 的佛寺被毁！（${highestLevel}→${highestLevel - 1}）`);
+      }
+    }
+
     game.pushLog(`【${event.name}】${opt.text} — 结果已生效`);
   }
 

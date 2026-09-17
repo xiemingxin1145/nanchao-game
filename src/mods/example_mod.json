@@ -1,0 +1,112 @@
+{
+  "id": "example_sui",
+  "name": "隋代周兴",
+  "version": "1.0.0",
+  "author": "Nanchao Studio",
+  "description": "示例模组：添加新势力「隋」（杨坚）及3位新武将。开启后，隋势力将出现在主菜单可选列表中。",
+  "data": {
+    "factions": {
+      "sui": {
+        "id": "sui",
+        "name": "隋",
+        "color": "#B8860B",
+        "colorLight": "#DAA520",
+        "capital": "daxing",
+        "description": "杨坚受周禅建隋，据关中之险，谋一统天下。名将云集，水陆并进。",
+        "bonus": "全兵种+10%，政治效果+15%",
+        "startCities": ["daxing", "tongguan", "hongnong"]
+      }
+    },
+    "cities": [
+      {
+        "id": "daxing",
+        "name": "大兴城",
+        "isoX": 6, "isoY": 4,
+        "terrain": "plain",
+        "size": 4,
+        "capital": true,
+        "pop": 75000,
+        "agri": 70,
+        "comm": 80,
+        "defense": 70,
+        "prosperity": 80,
+        "taxRate": 30
+      },
+      {
+        "id": "tongguan",
+        "name": "潼关",
+        "isoX": 7, "isoY": 3,
+        "terrain": "mountain",
+        "size": 2,
+        "capital": false,
+        "pop": 30000,
+        "agri": 50,
+        "comm": 40,
+        "defense": 75,
+        "prosperity": 45,
+        "taxRate": 30
+      },
+      {
+        "id": "hongnong",
+        "name": "弘农",
+        "isoX": 8, "isoY": 3,
+        "terrain": "plain",
+        "size": 2,
+        "capital": false,
+        "pop": 35000,
+        "agri": 55,
+        "comm": 50,
+        "defense": 50,
+        "prosperity": 50,
+        "taxRate": 30
+      }
+    ],
+    "generals": [
+      {
+        "id": "yang_jian_sui",
+        "name": "杨坚",
+        "faction": "sui",
+        "role": "君主",
+        "command": 88,
+        "force": 80,
+        "intel": 90,
+        "politics": 95,
+        "loyalty": 100,
+        "portrait": "yang_jian"
+      },
+      {
+        "id": "yang_su",
+        "name": "杨素",
+        "faction": "sui",
+        "role": "名将",
+        "command": 86,
+        "force": 82,
+        "intel": 80,
+        "politics": 70,
+        "loyalty": 85,
+        "portrait": "yang_su"
+      },
+      {
+        "id": "gao_jiong",
+        "name": "高颎",
+        "faction": "sui",
+        "role": "谋臣",
+        "command": 75,
+        "force": 60,
+        "intel": 92,
+        "politics": 88,
+        "loyalty": 90,
+        "portrait": "gao_jiong"
+      }
+    ],
+    "generalSkills": {
+      "yang_su": ["mouliao_baichu"],
+      "gao_jiong": ["jingtu_tuzhi"]
+    },
+    "cityLinks": {
+      "daxing": ["tongguan", "hongnong", "changan"],
+      "tongguan": ["daxing", "hongnong", "changan"],
+      "hongnong": ["daxing", "tongguan", "luoyang"]
+    }
+  }
+}

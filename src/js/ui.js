@@ -1,12 +1,21 @@
 // ============================================================
 // ui.js — UI 渲染、面板、弹窗、交互（表现层强化版）
 // ============================================================
-import { FACTIONS, SEASONS, SEASON_ICON, UNIT_TYPES, IMG, CITY_LINKS, TERRAIN } from './data.js';
+import { FACTIONS, SEASONS, SEASON_ICON, UNIT_TYPES, IMG, CITY_LINKS, TERRAIN, SCENARIOS, DEFAULT_SCENARIO } from './data.js';
 import { Game } from './game.js';
 import { IsometricMap } from './map.js';
-import { saveGame, loadGame, hasSave, getSaveInfo } from './save.js';
+import { saveGame, loadGame, hasSave, getSaveInfo, getCurrentNGPlusLevel } from './save.js';
 import { AudioManager } from './audio.js';
 import { Tutorial } from './tutorial.js';
+import { Animator } from './animation.js';
+import { IntroPlayer } from './intro.js';
+import { isIntroCompleted } from './ngplus.js';
+import { TITLES, MAX_ACTIVE_TITLES } from './titles.js';
+import { formatPlayTime } from './stats.js';
+// V4.0: 模组系统
+import { modManager } from './modding.js';
+// V5.5: 局域网对战
+import { LANManager, parseStateMessage, LAN_DEFAULTS } from './network.js';
 
 export class UI {
   constructor() {
@@ -21,15 +30,51 @@ export class UI {
     this._pendingTechId = null;
     this._battleMode = 'old';   // 'old' | 'multi'
     this._boundGlobal = false;
+    // ---- 战斗动画状态 ----
+    this._battleAnim = null;     // 多回合战斗动画循环状态
+    this._oldBattleAnim = null;  // 旧版战报动画状态
+    this._prevAttTroops = null;
+    this._prevDefTroops = null;
+    // ---- V5.5 局域网对战状态 ----
+    this.lan = new LANManager();
+    this._lanScenario = DEFAULT_SCENARIO;
+    this._lanHostFaction = null;
+    this._lanBoundKeys = false;  // 键盘快捷键是否已绑定
   }
 
   // ---------- 启动 ----------
-  start() {
+  async start() {
     this._installGlobalAudio();
-    this.showMainMenu();
+    // V4.0: 先加载模组数据（异步），再初始化游戏
+    try {
+      await modManager.loadMods('mods/');
+      Game.applyMods();
+    } catch (e) {
+      console.warn('[UI] 模组加载失败，使用基础数据', e);
+    }
+    // V3.5：首次启动播放开场演出
+    if (!isIntroCompleted()) {
+      this._playIntro();
+    } else {
+      this.showMainMenu();
+    }
     // 隐藏 loading 卷轴
     const ls = document.getElementById('loading-screen');
     if (ls) setTimeout(() => ls.classList.add('hide'), 500);
+  }
+
+  // V3.5：播放开场演出
+  _playIntro() {
+    const intro = new IntroPlayer({
+      onComplete: () => this.showMainMenu(),
+      onSkip: () => this.showMainMenu()
+    });
+    intro.play();
+  }
+
+  // V3.5：从主菜单重看开场
+  _replayIntro() {
+    this._playIntro();
   }
 
   // 全局：首次点击解锁音频 + 按钮悬停/点击音
@@ -57,17 +102,22 @@ export class UI {
 
   // ---------- 主菜单 ----------
   showMainMenu() {
+    const ngLevel = getCurrentNGPlusLevel();
     this.container.innerHTML = `
       <div class="main-menu">
         <div class="title-screen">
-          <img src="${IMG.titleBg}" class="title-bg" onerror="this.style.display='none'">
+          <img src="${IMG.titleBg}" class="title-bg kenburns" onerror="this.style.display='none'">
           <div class="title-overlay">
-            <h1 class="game-title">南北朝</h1>
+            <h1 class="game-title title-glow">南北朝</h1>
             <p class="subtitle">—— 乱世英雄起四方 ——</p>
+            ${ngLevel > 0 ? `<p class="ngplus-badge">当前周目：第 ${ngLevel} 周目</p>` : ''}
             <div class="menu-buttons">
               <button class="btn-ancient" id="btn-start">开始游戏</button>
               <button class="btn-ancient" id="btn-load" ${hasSave() ? '' : 'disabled'}>读取存档</button>
+              <button class="btn-ancient" id="btn-mods">模组管理</button>
+              <button class="btn-ancient" id="btn-stats">统计</button>
               <button class="btn-ancient" id="btn-tutorial">重看教程</button>
+              <button class="btn-ancient" id="btn-replay-intro">重看开场</button>
               <button class="btn-ancient" id="btn-quit">退出</button>
             </div>
           </div>
@@ -75,8 +125,11 @@ export class UI {
       </div>
     `;
 
-    document.getElementById('btn-start').onclick = () => this.showFactionSelect();
+    document.getElementById('btn-start').onclick = () => this.showModeSelect();
     document.getElementById('btn-tutorial').onclick = () => this._replayTutorial();
+    document.getElementById('btn-replay-intro').onclick = () => this._replayIntro();
+    document.getElementById('btn-stats').onclick = () => this.showStatsPanel();
+    document.getElementById('btn-mods').onclick = () => this.showModPanel();
     document.getElementById('btn-load').onclick = () => {
       const g = loadGame();
       if (g) {
@@ -89,9 +142,86 @@ export class UI {
       if (window.electronAPI) window.electronAPI.quitGame();
       else window.close();
     };
+    // V3.5：主菜单 BGM
+    try { this.audio.resume(); this.audio.switchBGM('menu'); } catch (e) {}
   }
 
-  // 主菜单「重看教程」：开一局新游戏后播放教程
+  // V3.5：统计面板（主菜单入口）
+  showStatsPanel() {
+    // 如果有进行中的游戏，用游戏内统计；否则用全局存档统计
+    const stats = this.game ? this.game.getStats() : null;
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    let rows = '';
+    if (stats) {
+      rows = `
+        <div class="stats-section"><h3>本局统计</h3>
+          <div class="stats-row"><span>回合数</span><b>${stats.currentTurn}</b></div>
+          <div class="stats-row"><span>战斗/胜利/胜率</span><b>${stats.battles} / ${stats.victories} / ${stats.winRate}%</b></div>
+          <div class="stats-row"><span>杀敌/损兵</span><b>${stats.kills} / ${stats.losses}</b></div>
+          <div class="stats-row"><span>占领城市/最大城市</span><b>${stats.citiesConquered} / ${stats.maxCities}</b></div>
+          <div class="stats-row"><span>招募武将</span><b>${stats.recruited}</b></div>
+          <div class="stats-row"><span>建造建筑</span><b>${stats.buildingsBuilt}</b></div>
+          <div class="stats-row"><span>研究科技</span><b>${stats.researched}</b></div>
+          <div class="stats-row"><span>触发事件</span><b>${stats.eventsTriggered}</b></div>
+          <div class="stats-row"><span>当前金钱/粮草</span><b>${stats.currentMoney} / ${stats.currentFood}</b></div>
+        </div>`;
+    } else {
+      rows = '<p class="hint">暂无游戏统计数据，开始一局游戏后可查看详细统计。</p>';
+    }
+    modal.innerHTML = `
+      <div class="modal stats-modal">
+        <h2 class="modal-title">游戏统计</h2>
+        ${rows}
+        <button class="btn-ancient" style="margin-top:14px" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  // V4.0: 模组管理面板
+  showModPanel() {
+    const modList = modManager.getModList();
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    let modRows = '';
+    if (modList.length === 0) {
+      modRows = '<p class="hint">未发现模组文件。将 JSON 模组文件放入 mods/ 目录后重启游戏即可加载。</p>';
+    } else {
+      modRows = modList.map(m => `
+        <div class="mod-item" data-mod-id="${m.id}">
+          <div class="mod-header">
+            <h3 style="color:${m.enabled ? '#4CAF50' : '#888'}">${m.name}</h3>
+            <label class="mod-toggle">
+              <input type="checkbox" ${m.enabled ? 'checked' : ''} onchange="window.__ui_.toggleMod('${m.id}', this.checked)">
+              <span>${m.enabled ? '已启用' : '已禁用'}</span>
+            </label>
+          </div>
+          <p class="mod-meta">v${m.version} · ${m.author}</p>
+          <p class="mod-desc">${m.description}</p>
+          ${m.loadError ? `<p class="mod-error">加载错误: ${m.loadError}</p>` : ''}
+        </div>
+      `).join('');
+    }
+    modal.innerHTML = `
+      <div class="modal mods-modal">
+        <h2 class="modal-title">模组管理</h2>
+        <p class="hint" style="margin-bottom:12px">启用/禁用模组后需重启游戏生效。模组文件位于 <code>mods/</code> 目录。</p>
+        ${modRows}
+        <button class="btn-ancient" style="margin-top:14px" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  // V4.0: 切换模组启用状态
+  toggleMod(modId, enabled) {
+    modManager.setModEnabled(modId, enabled);
+    // 刷新面板显示
+    const modal = document.querySelector('.modal-overlay');
+    if (modal) modal.remove();
+    this.showModPanel();
+  }
   _replayTutorial() {
     this.game = new Game();
     this.game.initGame('nanchao');
@@ -99,43 +229,455 @@ export class UI {
     this.tutorial.restart();
   }
 
-  // ---------- 势力选择 ----------
-  showFactionSelect() {
-    const factions = Object.values(FACTIONS);
+  // V5.0：开始游戏 → 模式选择（单人 / 热座多人 / 局域网对战）
+  showModeSelect() {
+    const lanAvailable = this.lan.isAvailable();
     this.container.innerHTML = `
-      <div class="faction-select">
-        <h2 class="panel-title">—— 选择你的霸业 ——</h2>
+      <div class="mode-select">
+        <h2 class="panel-title">—— 选择游戏模式 ——</h2>
+        <div class="mode-cards">
+          <div class="mode-card" id="mode-single">
+            <h3>单人模式</h3>
+            <p class="mode-desc">你操控一方势力，其余由 AI 执政。逐鹿天下，问鼎九州。</p>
+          </div>
+          <div class="mode-card" id="mode-hotseat">
+            <h3>热座多人模式</h3>
+            <p class="mode-desc">2~6 名玩家同坐一机，轮流操控不同势力。
+              每位玩家结束回合后切换视角，私密信息互不窥探。</p>
+          </div>
+          <div class="mode-card ${lanAvailable ? '' : 'disabled'}" id="mode-lan">
+            <h3>局域网对战</h3>
+            <p class="mode-desc">${lanAvailable
+              ? '两台电脑通过局域网连线，各控一方势力。主机权威结算，客机镜像同步。支持文字聊天。'
+              : '局域网对战需在桌面版（Electron）中运行。当前环境不可用。'}</p>
+          </div>
+        </div>
+        <button class="btn-ancient" id="btn-back-menu2">返回</button>
+      </div>
+    `;
+    document.getElementById('mode-single').onclick = () => this.showFactionSelect({ hotSeat: false });
+    document.getElementById('mode-hotseat').onclick = () => this.showFactionSelect({ hotSeat: true });
+    const lanCard = document.getElementById('mode-lan');
+    if (lanAvailable) {
+      lanCard.onclick = () => this.showLanSetup();
+    }
+    document.getElementById('btn-back-menu2').onclick = () => this.showMainMenu();
+  }
+
+  // ============================================================
+  // V5.5 局域网对战：设置界面（主机/客机）
+  // ============================================================
+  showLanSetup() {
+    const port = LAN_DEFAULTS.port;
+    this.container.innerHTML = `
+      <div class="lan-setup">
+        <h2 class="panel-title">—— 局域网对战 ——</h2>
+        <div class="lan-cards">
+          <div class="mode-card" id="lan-host">
+            <h3>创建主机</h3>
+            <p class="mode-desc">创建房间并监听端口 <b>${port}</b>。
+              客机连接你的 IP 后开始。主机先选势力，为权威服务器。</p>
+            <button class="btn-ancient" id="lan-host-btn">创建主机</button>
+          </div>
+          <div class="mode-card" id="lan-join">
+            <h3>加入游戏</h3>
+            <p class="mode-desc">输入主机的局域网 IP 地址，连接后等待主机开局。</p>
+            <div class="lan-join-form">
+              <input type="text" id="lan-ip" placeholder="主机 IP（如 192.168.1.100）" value="127.0.0.1">
+              <input type="number" id="lan-port" placeholder="端口" value="${port}" min="1024" max="65535">
+              <button class="btn-ancient" id="lan-join-btn">连接</button>
+            </div>
+          </div>
+        </div>
+        <div class="lan-status" id="lan-status"></div>
+        <button class="btn-ancient" id="btn-back-lan">返回</button>
+      </div>
+    `;
+
+    this._bindLanEvents();
+    document.getElementById('btn-back-lan').onclick = () => this.showModeSelect();
+    document.getElementById('lan-host-btn').onclick = () => this._lanCreateHost();
+    document.getElementById('lan-join-btn').onclick = () => {
+      const ip = document.getElementById('lan-ip').value.trim();
+      const p = parseInt(document.getElementById('lan-port').value, 10) || port;
+      this._lanJoinClient(ip, p);
+    };
+  }
+
+  _bindLanEvents() {
+    // 防止重复绑定
+    if (this._lanBound) return;
+    this._lanBound = true;
+    const status = () => document.getElementById('lan-status');
+    this.lan.onStatusChange = (evt) => {
+      const el = status();
+      if (!el) return;
+      switch (evt.type) {
+        case 'listening':
+          el.innerHTML = `<span class="lan-ok">✓ 主机已启动，监听端口 ${evt.data.port}，等待客机连接…</span>`;
+          break;
+        case 'connected':
+        case 'client-connected':
+          el.innerHTML = `<span class="lan-ok">✓ 已连接！等待选择势力…</span>`;
+          if (this.lan.isHost) this._lanHostChooseFaction();
+          else this._lanClientChooseFaction();
+          break;
+        case 'disconnected':
+        case 'client-disconnect':
+          el.innerHTML = `<span class="lan-err">✗ 连接已断开</span>`;
+          break;
+        case 'error':
+          el.innerHTML = `<span class="lan-err">✗ 错误：${evt.data}</span>`;
+          break;
+        case 'timeout':
+          el.innerHTML = `<span class="lan-err">✗ 网络超时（${evt.data.after}ms 无响应），已断开</span>`;
+          break;
+      }
+    };
+    this.lan.onMessage = (msg) => this._lanHandleMessage(msg);
+  }
+
+  _lanCreateHost() {
+    const r = this.lan.host(LAN_DEFAULTS.port);
+    const el = document.getElementById('lan-status');
+    if (el) el.innerHTML = r.ok ? '<span class="lan-info">正在启动主机…</span>' : `<span class="lan-err">${r.msg}</span>`;
+  }
+
+  _lanJoinClient(ip, port) {
+    const r = this.lan.join(ip, port);
+    const el = document.getElementById('lan-status');
+    if (el) el.innerHTML = r.ok ? '<span class="lan-info">正在连接主机…</span>' : `<span class="lan-err">${r.msg}</span>`;
+  }
+
+  // ---- 主机选择势力（剧本 + 势力）----
+  _lanHostChooseFaction() {
+    const sc = SCENARIOS[this._lanScenario] || SCENARIOS[DEFAULT_SCENARIO];
+    const factions = sc.factions.map(id => FACTIONS[id]).filter(Boolean);
+    this.container.innerHTML = `
+      <div class="faction-select lan-select">
+        <h2 class="panel-title">—— 主机：选择你的势力 ——</h2>
+        <div class="scenario-tabs">
+          ${Object.values(SCENARIOS).map(s => `
+            <button class="scenario-tab ${s.id === this._lanScenario ? 'active' : ''}" data-sc="${s.id}">
+              <b>${s.name}</b><small>${s.year}年</small>
+            </button>
+          `).join('')}
+        </div>
+        <p class="scenario-desc hint">${sc.description}</p>
+        <p class="hint" style="color:#E8D5A3">你先选。客机将从剩余势力中选择。</p>
+        <div class="faction-cards" id="lan-faction-cards">
+          ${factions.map(f => `
+            <div class="faction-card" data-fid="${f.id}">
+              <div class="faction-color-bar" style="background:${f.color}"></div>
+              <h3 style="color:${f.color}">${f.name}</h3>
+              <p class="faction-desc">${f.description}</p>
+              <p class="faction-bonus"><b>特色：</b>${f.bonus}</p>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+    document.querySelectorAll('.scenario-tab').forEach(tab => {
+      tab.onclick = () => { this._lanScenario = tab.dataset.sc; this._lanHostChooseFaction(); };
+    });
+    document.querySelectorAll('#lan-faction-cards .faction-card').forEach(card => {
+      card.onclick = () => {
+        const fid = card.dataset.fid;
+        // 通知客机主机选了哪个势力 + 剧本
+        this.lan.send({ type: 'handshake', hostFaction: fid, scenarioId: this._lanScenario });
+        this._lanStartHostGame(fid);
+      };
+    });
+  }
+
+  // ---- 主机开局（自己选完，等客机选）----
+  _lanStartHostGame(hostFid) {
+    this.game = new Game();
+    this.game.netRole = 'host';
+    this._lanHostFaction = hostFid;
+    // 主机先用自己势力初始化游戏（客机选完后再补客机势力）
+    this.game.initGame(hostFid, this._lanScenario);
+    // 等待客机 factionPick 消息后再开始游戏 UI
+    this.toast('已选势力，等待客机选择…');
+  }
+
+  // ---- 客机选择势力 ----
+  _lanClientChooseFaction() {
+    // 客机已经收到 handshake 消息（含 hostFaction / scenarioId），在 _lanHandleMessage 里记录
+    const hostFid = this._lanHostFaction; // 由 handshake 填入
+    const scId = this._lanScenario;
+    const sc = SCENARIOS[scId] || SCENARIOS[DEFAULT_SCENARIO];
+    const avail = sc.factions.filter(id => id !== hostFid);
+    const factions = avail.map(id => FACTIONS[id]).filter(Boolean);
+    this.container.innerHTML = `
+      <div class="faction-select lan-select">
+        <h2 class="panel-title">—— 客机：选择你的势力 ——</h2>
+        <p class="hint">主机已选择：<b style="color:${FACTIONS[hostFid] ? FACTIONS[hostFid].color : '#fff'}">${FACTIONS[hostFid] ? FACTIONS[hostFid].name : hostFid}</b></p>
+        <p class="hint" style="color:#E8D5A3">请从剩余势力中选择一方。</p>
         <div class="faction-cards">
           ${factions.map(f => `
             <div class="faction-card" data-fid="${f.id}">
               <div class="faction-color-bar" style="background:${f.color}"></div>
               <h3 style="color:${f.color}">${f.name}</h3>
-              <p class="faction-capital">都城：${f.capital === 'jiankang' ? '建康' : f.capital === 'yecheng' ? '邺城' : '长安'}</p>
               <p class="faction-desc">${f.description}</p>
               <p class="faction-bonus"><b>特色：</b>${f.bonus}</p>
-              <p class="faction-cities"><b>初始城市：</b>${f.startCities.length} 座</p>
             </div>
           `).join('')}
         </div>
-        <button class="btn-ancient" id="btn-back-menu">返回</button>
       </div>
     `;
-
     document.querySelectorAll('.faction-card').forEach(card => {
-      card.onmouseenter = () => card.classList.add('selected');
-      card.onmouseleave = () => card.classList.remove('selected');
       card.onclick = () => {
         const fid = card.dataset.fid;
-        this.game = new Game();
-        this.game.initGame(fid);
-        this.initGameUI();
-        // 首次游戏触发新手教程
-        if (!Tutorial.isDone()) {
-          setTimeout(() => this.tutorial.start(), 600);
-        }
+        this.lan.send({ type: 'factionPick', factionId: fid });
+        this._lanStartClientGame(fid, hostFid, scId);
       };
     });
-    document.getElementById('btn-back-menu').onclick = () => this.showMainMenu();
+  }
+
+  _lanStartClientGame(clientFid, hostFid, scId) {
+    this.game = new Game();
+    this.game.netRole = 'client';
+    this.game.netOpponentFaction = clientFid;
+    // 客机先用自己势力初始化占位，等主机广播初始状态
+    this.game.initGame(clientFid, scId);
+    this.initGameUI();
+    this._showLanOverlay('等待主机开局…');
+  }
+
+  // ---- 主机收到客机 factionPick → 正式开局并广播初始状态 ----
+  _lanHostStartGame(clientFid) {
+    const hostFid = this._lanHostFaction;
+    // 重新初始化：把客机势力加入 humanFactions（类似热座，但走网络）
+    this.game = new Game();
+    this.game.netRole = 'host';
+    this.game.netOpponentFaction = clientFid;
+    this.game.initGame(hostFid, this._lanScenario);
+    this.initGameUI();
+    // 广播初始状态，轮到主机
+    this._lanBroadcastState('host');
+    this._showLanOverlay('');
+    this.toast('客机已加入！轮到你行动。');
+  }
+
+  // ---- 广播完整状态到对方 ----
+  _lanBroadcastState(yourTurn) {
+    if (!this.game) return;
+    this.lan.sendState(this.game.serialize(), yourTurn);
+  }
+
+  // ---- 统一处理收到的网络消息 ----
+  _lanHandleMessage(msg) {
+    if (!msg || !msg.type) return;
+    switch (msg.type) {
+      case 'handshake':
+        // 客机收到：主机的势力 + 剧本
+        this._lanHostFaction = msg.hostFaction;
+        this._lanScenario = msg.scenarioId || DEFAULT_SCENARIO;
+        break;
+      case 'factionPick':
+        // 主机收到：客机选了势力
+        if (this.lan.isHost) this._lanHostStartGame(msg.factionId);
+        break;
+      case 'state': {
+        // 双方收到：完整状态快照
+        const snap = parseStateMessage(msg);
+        if (snap && this.game) {
+          this.game.applyNetworkState(snap, msg.yourTurn);
+          this.refreshUI();
+          if (this.map) { this.map.dirty = true; this.map.render(); }
+          this._updateMapMarker();
+          if (msg.yourTurn === (this.lan.isHost ? 'host' : 'client')) {
+            this._showLanOverlay('');
+            this.toast('轮到你行动！');
+          } else {
+            this._showLanOverlay('等待对方行动…');
+          }
+        }
+        break;
+      }
+      case 'endTurn':
+        // 主机收到客机的结束回合：执行结算并广播
+        if (this.lan.isHost && this.game) {
+          this.game.endTurn();
+          this._lanBroadcastState('host');
+          this.refreshUI();
+          if (this.map) { this.map.dirty = true; this.map.render(); }
+          this._updateMapMarker();
+          this._showLanOverlay('');
+        }
+        break;
+      case 'chat':
+        this._lanAppendChat(msg.from, msg.text);
+        break;
+      case 'disconnected':
+      case 'bye':
+        this._showLanOverlay('对方已断开连接');
+        break;
+      case 'ping':
+        this.lan.send({ type: 'pong', timestamp: Date.now() });
+        break;
+    }
+  }
+
+  // ---- 局域网覆盖层（等待/断开提示）----
+  _showLanOverlay(text) {
+    let ov = document.getElementById('lan-overlay');
+    if (!text) { if (ov) ov.remove(); return; }
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'lan-overlay';
+      ov.className = 'lan-overlay';
+      document.body.appendChild(ov);
+    }
+    ov.innerHTML = `<div class="lan-overlay-card">${text}</div>`;
+  }
+
+  // ---- 聊天 ----
+  _showLanChatPanel() {
+    let modal = document.getElementById('lan-chat-modal');
+    if (modal) { modal.remove(); return; }
+    modal = document.createElement('div');
+    modal.id = 'lan-chat-modal';
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal lan-chat-modal">
+        <h2 class="modal-title">💬 对战聊天</h2>
+        <div class="lan-chat-log" id="lan-chat-log"></div>
+        <div class="lan-chat-input-row">
+          <input type="text" id="lan-chat-input" placeholder="输入消息…" maxlength="120">
+          <button class="btn-ancient" id="lan-chat-send">发送</button>
+        </div>
+        <button class="btn-ancient" style="margin-top:10px" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    // 渲染历史
+    const logEl = document.getElementById('lan-chat-log');
+    if (logEl) logEl.innerHTML = this.lan._chatLog.map(c =>
+      `<div class="lan-chat-line"><b style="color:${c.from === 'host' ? '#C07840' : '#4A90D9'}">${c.from === 'host' ? '主机' : '客机'}:</b> ${this._escHtml(c.text)}</div>`
+    ).join('');
+    const send = () => {
+      const inp = document.getElementById('lan-chat-input');
+      if (!inp || !inp.value.trim()) return;
+      this.lan.sendChat(inp.value.trim());
+      inp.value = '';
+    };
+    document.getElementById('lan-chat-send').onclick = send;
+    document.getElementById('lan-chat-input').onkeydown = (e) => { if (e.key === 'Enter') send(); };
+  }
+
+  _lanAppendChat(from, text) {
+    this.lan._chatLog.push({ from, text });
+    if (this.lan._chatLog.length > 200) this.lan._chatLog.shift();
+    const logEl = document.getElementById('lan-chat-log');
+    if (logEl) {
+      const div = document.createElement('div');
+      div.className = 'lan-chat-line';
+      div.innerHTML = `<b style="color:${from === 'host' ? '#C07840' : '#4A90D9'}">${from === 'host' ? '主机' : '客机'}:</b> ${this._escHtml(text)}`;
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+
+  _escHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---------- 势力选择（含剧本选择 / 热座多选） ----------
+  // opts: { hotSeat:boolean, scenario?:string }
+  showFactionSelect(opts = {}) {
+    const hotSeat = !!opts.hotSeat;
+    let scenarioId = opts.scenario || DEFAULT_SCENARIO;
+    const render = () => {
+      const sc = SCENARIOS[scenarioId] || SCENARIOS[DEFAULT_SCENARIO];
+      // 剧本激活的势力卡片
+      const activeFactions = sc.factions.map(id => FACTIONS[id]).filter(Boolean);
+      const ngLevel = getCurrentNGPlusLevel();
+      const ngBonus = (!hotSeat && ngLevel > 0) ? `
+        <div class="ngplus-banner">◆ 周目继承：第 ${ngLevel} 周目 ◆<br>
+          <small>AI兵力+${ngLevel*10}% · AI经济+${ngLevel*5}% · 继承武将忠诚+20</small>
+        </div>` : '';
+      this.container.innerHTML = `
+        <div class="faction-select">
+          <h2 class="panel-title">—— ${hotSeat ? '热座多人 · 选择执政势力' : '选择你的霸业'} ——</h2>
+          ${ngBonus}
+          <!-- 剧本选择 -->
+          <div class="scenario-tabs">
+            ${Object.values(SCENARIOS).map(s => `
+              <button class="scenario-tab ${s.id === scenarioId ? 'active' : ''}" data-sc="${s.id}">
+                <b>${s.name}</b><small>${s.year}年</small>
+              </button>
+            `).join('')}
+          </div>
+          <p class="scenario-desc hint">${sc.description}</p>
+          ${hotSeat ? '<p class="hint" style="color:#E8D5A3">勾选 2~6 个由人类操控的势力，其余自动由 AI 执政。</p>' : ''}
+          <div class="faction-cards" id="faction-cards">
+            ${activeFactions.map(f => `
+              <div class="faction-card ${hotSeat ? 'multi-select' : ''}" data-fid="${f.id}">
+                ${hotSeat ? '<div class="multi-check">□</div>' : ''}
+                <div class="faction-color-bar" style="background:${f.color}"></div>
+                <h3 style="color:${f.color}">${f.name}</h3>
+                <p class="faction-capital">都城：${FACTIONS[f.id].capital === 'jiankang' ? '建康' : FACTIONS[f.id].capital === 'yecheng' ? '邺城' : FACTIONS[f.id].capital === 'changan' ? '长安' : FACTIONS[f.id].capital}</p>
+                <p class="faction-desc">${f.description}</p>
+                <p class="faction-bonus"><b>特色：</b>${f.bonus}</p>
+              </div>
+            `).join('')}
+          </div>
+          ${hotSeat ? `<button class="btn-ancient" id="btn-hotseat-start" disabled>开始热座（已选 <span id="hs-count">0</span> 方）</button>` : ''}
+          <button class="btn-ancient" id="btn-back-menu">返回</button>
+        </div>
+      `;
+
+      // 剧本切换
+      document.querySelectorAll('.scenario-tab').forEach(tab => {
+        tab.onclick = () => { scenarioId = tab.dataset.sc; render(); };
+      });
+      document.getElementById('btn-back-menu').onclick = () =>
+        hotSeat ? this.showModeSelect() : this.showMainMenu();
+
+      const selected = new Set();
+      document.querySelectorAll('#faction-cards .faction-card').forEach(card => {
+        card.onclick = () => {
+          const fid = card.dataset.fid;
+          if (!hotSeat) {
+            // 单人：直接开局
+            this.game = new Game();
+            this.game.initGame(fid, scenarioId);
+            this.initGameUI();
+            if (!Tutorial.isDone()) setTimeout(() => this.tutorial.start(), 600);
+            return;
+          }
+          // 热座：多选
+          if (selected.has(fid)) {
+            selected.delete(fid);
+            card.classList.remove('selected');
+            card.querySelector('.multi-check').textContent = '□';
+          } else {
+            if (selected.size >= 6) { this.toast('最多选择 6 个人类势力'); return; }
+            selected.add(fid);
+            card.classList.add('selected');
+            card.querySelector('.multi-check').textContent = '■';
+          }
+          document.getElementById('hs-count').textContent = selected.size;
+          const startBtn = document.getElementById('btn-hotseat-start');
+          startBtn.disabled = !(selected.size >= 2 && selected.size <= 6);
+        };
+      });
+      if (hotSeat) {
+        document.getElementById('btn-hotseat-start').onclick = () => {
+          const humans = [...selected];
+          if (humans.length < 2) return;
+          this.game = new Game();
+          // 第一个选择的势力为首回合行动方
+          this.game.initGame(humans[0], scenarioId, humans);
+          this.initGameUI();
+          // 热座开局：先请首位玩家就位
+          setTimeout(() => this._showPlayerTransition(true), 300);
+        };
+      }
+    };
+    render();
   }
 
   // ---------- 游戏主界面 ----------
@@ -158,6 +700,8 @@ export class UI {
             <button class="btn-icon" id="btn-mute" title="静音">🔊</button>
             <button class="btn-icon" id="btn-tech" title="科技树">📜</button>
             <button class="btn-icon" id="btn-ach" title="成就">🏆</button>
+            <button class="btn-icon" id="btn-stats" title="统计">📊</button>
+            ${this.game.netRole ? '<button class="btn-icon" id="btn-lan-chat" title="聊天">💬</button>' : ''}
             <button class="btn-small" id="btn-save">存档</button>
             <button class="btn-small" id="btn-diplomacy">外交</button>
             <button class="btn-small" id="btn-recruit">招募</button>
@@ -191,6 +735,7 @@ export class UI {
     this.map.game = this.game;
     this.map.onSelect = (sel) => this.handleMapSelect(sel);
     this.map.resize();
+    this.map.startLoop(); // 启动待机动画渲染循环
 
     window.addEventListener('resize', () => { if (this.map) { this.map.resize(); this._updateMapMarker(); } });
 
@@ -205,12 +750,17 @@ export class UI {
     document.getElementById('btn-menu').onclick = () => this.showSettings();
     document.getElementById('btn-tech').onclick = () => this.showTechTree();
     document.getElementById('btn-ach').onclick = () => this.showAchievements();
+    document.getElementById('btn-stats').onclick = () => this.showStatsPanel();
     document.getElementById('btn-mute').onclick = () => this.toggleMute();
     document.getElementById('top-faction').onclick = () => this.showFactionIntel();
+    const chatBtn = document.getElementById('btn-lan-chat');
+    if (chatBtn) chatBtn.onclick = () => this._showLanChatPanel();
 
-    // 启动背景音乐
-    this.audio.resume();
-    this.audio.startBGM();
+    // V5.5：键盘快捷键（空格=结束回合，ESC=关闭面板，1-6=快速切换面板）
+    this._bindShortcuts();
+
+    // 启动背景音乐（大地图场景）
+    try { this.audio.resume(); this.audio.switchBGM('map'); } catch (e) {}
 
     this._prevRes = { money: null, food: null, army: null };
     this._prevSeason = null;
@@ -405,18 +955,50 @@ export class UI {
 
     slot.innerHTML = `
       <div class="general-detail">
-        <img src="${IMG.portrait(gen.portrait)}" class="gen-portrait" style="width:56px;height:56px;float:left;margin:0 8px 4px 0" onerror="this.style.display='none'">
-        <div style="font-size:15px;color:#FFD700">${gen.name} <small style="color:#9A8B6A">Lv.${level}</small></div>
+        <div class="portrait-anim-wrap gen-detail-portrait" style="width:96px;height:128px;float:left;margin:0 10px 6px 0">
+          <img src="${IMG.portrait(gen.portrait)}" class="gen-portrait portrait-anim" style="width:96px;height:128px;object-fit:cover" onerror="this.style.display='none'">
+        </div>
+        <div style="font-size:15px;color:#FFD700" class="name-glow">${gen.name} <small style="color:#9A8B6A">Lv.${level}</small></div>
         <div class="general-meta-row"><span>身份</span><b>${gen.role}</b></div>
         <div class="general-meta-row"><span>忠诚</span><b>${Math.round(gen.loyalty)}</b></div>
+        <div class="general-meta-row"><span>统/武</span><b>${gen.command} / ${gen.force}</b></div>
+        <div class="general-meta-row"><span>智/政</span><b>${gen.intel} / ${gen.politics}</b></div>
         <div class="radar-wrap"><canvas id="gen-radar" width="160" height="160"></canvas></div>
-        <div class="general-meta-row"><span>经验</span><b>${exp}/${expNeed}</b></div>
+        <div class="exp-bar-label"><span>经验</span><b>${exp}/${expNeed}</b></div>
         <div class="exp-bar-wrap"><div class="exp-bar" style="width:${Math.min(100, exp / expNeed * 100)}%"></div></div>
-        ${skills.length > 0 ? `<div>${skills.map(s => `<span class="skill-chip">${typeof s === 'string' ? s : (s.name || '技能')}</span>`).join('')}</div>` : ''}
+        ${skills.length > 0 ? `<div class="skill-chips">${skills.map(s => `<span class="skill-chip">${typeof s === 'string' ? s : (s.name || '技能')}</span>`).join('')}</div>` : ''}
+        ${this._renderGeneralTitles(gen)}
       </div>
     `;
     const cv = document.getElementById('gen-radar');
     if (cv) this.drawRadar(cv, gen);
+  }
+
+  // V3.5：渲染武将称号区
+  _renderGeneralTitles(gen) {
+    if (!this.game || !this.game.unlockedTitles) return '';
+    const unlocked = this.game.unlockedTitles[gen.id] || [];
+    const active = this.game.activeTitles[gen.id] || [];
+    if (unlocked.length === 0) return '<div class="titles-row"><span class="hint">暂无称号</span></div>';
+    const chips = unlocked.map(tid => {
+      const t = TITLES.find(x => x.id === tid);
+      if (!t) return '';
+      const isActive = active.includes(tid);
+      return `<span class="title-chip ${isActive ? 'equipped' : ''}" 
+        onclick="__ui_.toggleTitle('${gen.id}','${tid}')" title="${t.desc}">
+        ${t.name}
+      </span>`;
+    }).join('');
+    return `<div class="titles-row"><span class="titles-label">称号(${active.length}/${MAX_ACTIVE_TITLES}):</span>${chips}</div>`;
+  }
+
+  // V3.5：切换称号装备
+  toggleTitle(generalId, titleId) {
+    if (typeof this.game.equipTitleOnGeneral !== 'function') return;
+    const r = this.game.equipTitleOnGeneral(generalId, titleId);
+    this.toast(r.msg);
+    // 重新渲染武将详情
+    this.showGeneralDetail(generalId);
   }
 
   // 五边形雷达图（统帅/武力/智力/政治/忠诚）
@@ -587,7 +1169,240 @@ export class UI {
       document.body.appendChild(modal);
     }
     this._renderBattleShell(modal, st, sceneKey);
+    this._startBattleAnim(st);
+    this._prevAttTroops = st.attacker ? st.attacker.troops : null;
+    this._prevDefTroops = st.defender ? st.defender.troops : null;
     this._renderBattleState(st, true);
+  }
+
+  // ============================================================
+  // 多回合战斗动画系统（Canvas 角色 + 粒子 + 屏幕震动）
+  // ============================================================
+  _startBattleAnim(st) {
+    this._stopBattleAnim();
+    const canvas = document.getElementById('battle-canvas');
+    if (!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const attColor = (st.attackerFaction && FACTIONS[st.attackerFaction] && FACTIONS[st.attackerFaction].color) || '#A0522D';
+    const defColor = (st.defenderFaction && FACTIONS[st.defenderFaction] && FACTIONS[st.defenderFaction].color) || '#2C3E6B';
+    this._battleAnim = {
+      canvas, ctx,
+      rafId: null,
+      time: 0,
+      lastTime: performance.now(),
+      // 双方角色：intro 阶段从两侧冲入
+      attacker: {
+        x: -60, targetX: 210, action: 'charge', frame: 0,
+        faction: attColor, unitType: (st.attacker && st.attacker.unitType) || 'infantry'
+      },
+      defender: {
+        x: canvas.width + 60, targetX: canvas.width - 210, action: 'charge', frame: 0,
+        faction: defColor, unitType: (st.defender && st.defender.unitType) || 'infantry'
+      },
+      particles: [],
+      shake: 0,
+      introT: 0,           // 冲锋入场进度 0~1
+      finished: false,
+      resultShown: false
+    };
+    const loop = (now) => this._battleLoop(now);
+    this._battleAnim.rafId = requestAnimationFrame(loop);
+  }
+
+  _stopBattleAnim() {
+    if (this._battleAnim) {
+      if (this._battleAnim.rafId) cancelAnimationFrame(this._battleAnim.rafId);
+      this._battleAnim = null;
+    }
+  }
+
+  _battleLoop(now) {
+    const ba = this._battleAnim;
+    if (!ba) return;
+    const dt = Math.min((now - ba.lastTime) / 1000, 0.05);
+    ba.lastTime = now;
+    ba.time += dt;
+
+    // 入场冲锋：双方滑到目标位置
+    if (ba.introT < 1) {
+      ba.introT = Math.min(1, ba.introT + dt * 1.8);
+      const e = 1 - Math.pow(1 - ba.introT, 2);
+      ba.attacker.x = -60 + (ba.attacker.targetX + 60) * e;
+      ba.defender.x = ba.canvas.width + 60 - (ba.canvas.width + 60 - ba.defender.targetX) * e;
+      if (ba.introT >= 1) {
+        ba.attacker.action = 'idle';
+        ba.defender.action = 'idle';
+      }
+    }
+
+    // 更新角色帧与受击计时
+    for (const side of [ba.attacker, ba.defender]) {
+      side.frame += dt * 10;
+      if (side.hurtUntil && ba.time > side.hurtUntil) {
+        if (side.action === 'hurt') side.action = 'idle';
+        side.hurtUntil = 0;
+      }
+      if (side.action === 'victory' || side.action === 'defeat') {
+        // 终局姿势保持，frame 继续走
+      } else if (side.action !== 'skill' && side.action !== 'slash' && side.action !== 'shoot' && side.action !== 'hurt') {
+        // 非攻击动作时回到 idle（charge 仅入场）
+      }
+    }
+
+    // 粒子更新
+    for (let i = ba.particles.length - 1; i >= 0; i--) {
+      const p = ba.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) { ba.particles.splice(i, 1); continue; }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.gravity) p.vy += p.gravity * dt;
+    }
+
+    // 屏幕震动衰减
+    if (ba.shake > 0.2) ba.shake *= 0.88; else ba.shake = 0;
+
+    // ---- 绘制 ----
+    const ctx = ba.ctx;
+    const W = ba.canvas.width, H = ba.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+
+    // 地面线
+    ctx.save();
+    if (ba.shake > 0.3) ctx.translate((Math.random() - 0.5) * ba.shake, (Math.random() - 0.5) * ba.shake);
+
+    // 地面
+    ctx.strokeStyle = 'rgba(196,165,90,0.3)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, H - 30);
+    ctx.lineTo(W, H - 30);
+    ctx.stroke();
+
+    const groundY = H - 40;
+
+    // 攻方（朝右）
+    ctx.save();
+    ctx.translate(ba.attacker.x, groundY);
+    if (ba.attacker.action === 'hurt') { /* 受击红闪由角色内部处理 */ }
+    Animator.drawBattleCharacter(ctx, 0, 0, ba.attacker.faction, ba.attacker.action, ba.attacker.frame, ba.attacker.unitType);
+    ctx.restore();
+
+    // 守方（朝左，水平翻转）
+    ctx.save();
+    ctx.translate(ba.defender.x, groundY);
+    ctx.scale(-1, 1);
+    Animator.drawBattleCharacter(ctx, 0, 0, ba.defender.faction, ba.defender.action, ba.defender.frame, ba.defender.unitType);
+    ctx.restore();
+
+    // 粒子
+    for (const p of ba.particles) {
+      const t = Math.max(0, p.life / p.maxLife);
+      Animator.drawParticle(ctx, p.x, p.y, p.type, t, p);
+    }
+
+    ctx.restore(); // shake
+
+    ba.rafId = requestAnimationFrame((t) => this._battleLoop(t));
+  }
+
+  // 每回合战斗状态更新后，对比兵力变化 -> 播放受击/攻击动画
+  _detectBattleHits(st) {
+    if (!this._battleAnim) return;
+    const att = st.attacker || {};
+    const def = st.defender || {};
+    const attTroops = att.troops;
+    const defTroops = def.troops;
+    const ba = this._battleAnim;
+
+    if (this._prevAttTroops != null && attTroops != null) {
+      if (attTroops < this._prevAttTroops) {
+        // 攻方被打：攻方 hurt + 在攻方位置出 impact
+        ba.attacker.action = 'hurt';
+        ba.attacker.hurtUntil = ba.time + 0.25;
+        this._spawnBattleParticle('impact', ba.attacker.x, 200);
+        ba.shake = Math.max(ba.shake, 6);
+      }
+      if (defTroops < this._prevDefTroops) {
+        // 守方被打：攻方先 slash 一下，守方 hurt
+        ba.attacker.action = 'slash';
+        // 0.4s 后回到 idle
+        setTimeout(() => { if (ba.attacker.action === 'slash') ba.attacker.action = 'idle'; }, 450);
+        ba.defender.action = 'hurt';
+        ba.defender.hurtUntil = ba.time + 0.25;
+        this._spawnBattleParticle('impact', ba.defender.x, 200);
+        this._spawnBattleParticle('slash', (ba.attacker.x + ba.defender.x) / 2, 190, { angle: -Math.PI / 4 });
+        ba.shake = Math.max(ba.shake, 8);
+      }
+      // 技能判定：日志含"绝技/技能"
+      const recentLog = (st.log || []).slice(-2).join(' ');
+      if (/绝技|技能|施展|奇袭/.test(recentLog)) {
+        ba.attacker.action = 'skill';
+        setTimeout(() => { if (ba.attacker.action === 'skill') ba.attacker.action = 'idle'; }, 900);
+        // 粒子飞向守方
+        this._spawnSkillParticles(ba.attacker.x, 200, ba.defender.x, 200);
+        ba.shake = Math.max(ba.shake, 10);
+      }
+    }
+    this._prevAttTroops = attTroops;
+    this._prevDefTroops = defTroops;
+  }
+
+  _spawnBattleParticle(type, x, y, extra) {
+    if (!this._battleAnim) return;
+    for (let i = 0; i < 8; i++) {
+      const p = this._makeParticle(type, x + (Math.random() - 0.5) * 10, y + (Math.random() - 0.5) * 10, extra);
+      this._battleAnim.particles.push(p);
+    }
+  }
+
+  _spawnSkillParticles(fx, fy, tx, ty) {
+    if (!this._battleAnim) return;
+    // 火焰粒子从攻方飞向守方
+    for (let i = 0; i < 14; i++) {
+      const t = Math.random();
+      const p = this._makeParticle('fire', fx, fy, {});
+      p.vx = (tx - fx) / 0.8 * (0.8 + Math.random() * 0.4);
+      p.vy = (ty - fy) / 0.8 + (Math.random() - 0.5) * 30;
+      p.life = p.maxLife = 0.7 + Math.random() * 0.3;
+      this._battleAnim.particles.push(p);
+    }
+    // 命中时 impact
+    setTimeout(() => {
+      if (!this._battleAnim) return;
+      for (let i = 0; i < 8; i++) {
+        const p = this._makeParticle('impact', tx, ty, {});
+        this._battleAnim.particles.push(p);
+      }
+    }, 600);
+  }
+
+  _makeParticle(type, x, y, extra) {
+    const base = { x, y, vx: 0, vy: 0, gravity: 0, drag: 0, life: 0.5, maxLife: 0.5, size: 3, color: '#fff' };
+    if (type === 'fire') {
+      base.vx = (Math.random() - 0.5) * 20;
+      base.vy = -30 - Math.random() * 40;
+      base.life = base.maxLife = 0.6 + Math.random() * 0.5;
+      base.size = 2 + Math.random() * 3;
+      base.color = Math.random() < 0.5 ? '#ff6a2a' : '#ffcc33';
+      base.gravity = -10;
+    } else if (type === 'impact') {
+      base.life = base.maxLife = 0.45;
+      base.size = 6;
+      base.color = '#ffe680';
+    } else if (type === 'slash') {
+      base.life = base.maxLife = 0.25;
+      base.size = 40;
+      base.color = '#ffffff';
+      base.angle = (extra && extra.angle) || -Math.PI / 4;
+    } else if (type === 'heal') {
+      base.vx = (Math.random() - 0.5) * 10;
+      base.vy = -25 - Math.random() * 20;
+      base.life = base.maxLife = 0.8 + Math.random() * 0.4;
+      base.size = 2 + Math.random() * 2.5;
+      base.color = '#66ff88';
+    }
+    return base;
   }
 
   _renderBattleShell(modal, st, sceneKey) {
@@ -596,19 +1411,24 @@ export class UI {
         <div class="battle-round-badge" id="bt-round">第 1 / ${st.maxRounds || 5} 回合</div>
         <div class="battle-arena">
           <div class="battle-scene" style="background-image:url('${IMG.battle(sceneKey)}')" onerror="this.style.display='none'"></div>
+          <canvas id="battle-canvas" width="760" height="260"></canvas>
           <div class="battle-side-box">
-            <img class="battle-portrait att" src="${IMG.portrait((st.attacker && st.attacker.portrait) || 'yang_kan')}" onerror="this.style.display='none'">
+            <div class="portrait-anim-wrap">
+              <img class="battle-portrait att portrait-anim" src="${IMG.portrait((st.attacker && st.attacker.portrait) || 'yang_kan')}" onerror="this.style.display='none'">
+            </div>
             <div style="flex:1">
-              <div class="battle-gen-name">${(st.attacker && st.attacker.name) || '我军'}</div>
+              <div class="battle-gen-name name-glow">${(st.attacker && st.attacker.name) || '我军'}</div>
               <div class="troop-bar-wrap"><div class="troop-bar" id="bt-att-bar"></div></div>
               <div class="troop-num" id="bt-att-num">0</div>
             </div>
           </div>
           <div class="battle-vs-big">VS</div>
           <div class="battle-side-box right">
-            <img class="battle-portrait def" src="${IMG.portrait((st.defender && st.defender.portrait) || 'gao_aocao')}" onerror="this.style.display='none'">
+            <div class="portrait-anim-wrap">
+              <img class="battle-portrait def portrait-anim" src="${IMG.portrait((st.defender && st.defender.portrait) || 'gao_aocao')}" onerror="this.style.display='none'">
+            </div>
             <div style="flex:1">
-              <div class="battle-gen-name">${(st.defender && st.defender.name) || '守军'}</div>
+              <div class="battle-gen-name name-glow">${(st.defender && st.defender.name) || '守军'}</div>
               <div class="troop-bar-wrap"><div class="troop-bar" id="bt-def-bar"></div></div>
               <div class="troop-num" id="bt-def-num">0</div>
             </div>
@@ -625,6 +1445,8 @@ export class UI {
   }
 
   _renderBattleState(st, isFirst) {
+    // 动画：检测兵力变化 -> 播放受击/斩击/技能动画
+    if (!isFirst) this._detectBattleHits(st);
     const setBar = (barId, numId, cur, max) => {
       const bar = document.getElementById(barId);
       const num = document.getElementById(numId);
@@ -711,6 +1533,28 @@ export class UI {
     if (win) this.audio.playVictory();
     else if (titleCls === 'lose') this.audio.playDefeat();
 
+    // 动画：胜方胜利姿势，败方倒地
+    if (this._battleAnim && !this._battleAnim.resultShown) {
+      this._battleAnim.resultShown = true;
+      const ba = this._battleAnim;
+      if (titleCls === 'win') {
+        ba.attacker.action = 'victory';
+        ba.defender.action = 'defeat';
+        ba.defender.frame = 0;
+        // 胜利粒子
+        for (let i = 0; i < 12; i++) {
+          ba.particles.push(this._makeParticle('impact', ba.attacker.x + (Math.random()-0.5)*30, 180, {}));
+        }
+      } else if (titleCls === 'lose') {
+        ba.defender.action = 'victory';
+        ba.attacker.action = 'defeat';
+        ba.attacker.frame = 0;
+      } else {
+        ba.attacker.action = 'idle';
+        ba.defender.action = 'idle';
+      }
+    }
+
     const logEl = document.getElementById('bt-log');
     if (logEl) {
       logEl.innerHTML += `<div class="log-crit">—— ${titleTxt} ——</div>`;
@@ -724,7 +1568,7 @@ export class UI {
     }
   }
 
-  // ---------- 旧版战斗结算弹窗（兼容降级） ----------
+  // ---------- 旧版战斗结算弹窗（兼容降级，含冲锋碰撞动画） ----------
   showBattleModal(result) {
     this._battleMode = 'old';
     if (result.attackerWin) this.audio.playVictory();
@@ -735,6 +1579,7 @@ export class UI {
     modal.innerHTML = `
       <div class="modal battle-modal">
         <h2 class="modal-title">⚔ 战报 · ${result.targetCityName}</h2>
+        <canvas id="old-battle-canvas" width="700" height="180" style="width:100%;border-radius:6px;border:1px solid #8B7A4A;background:linear-gradient(180deg,#1a2a20,#0d1a12)"></canvas>
         <img src="${IMG.battle(battleImg)}" class="battle-img" onerror="this.style.display='none'">
         <div class="battle-info">
           <div class="battle-side">
@@ -756,6 +1601,86 @@ export class UI {
       </div>
     `;
     document.body.appendChild(modal);
+    this._startOldBattleAnim(result);
+  }
+
+  // 旧版战报：双方冲锋 -> 碰撞 -> 胜负姿势
+  _startOldBattleAnim(result) {
+    this._stopOldBattleAnim();
+    const canvas = document.getElementById('old-battle-canvas');
+    if (!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const attFid = result.attackerFaction || 'dongwei';
+    const defFid = result.defenderFaction || 'xiwei';
+    const attColor = (FACTIONS[attFid] && FACTIONS[attFid].color) || '#A0522D';
+    const defColor = (FACTIONS[defFid] && FACTIONS[defFid].color) || '#2C3E6B';
+    const win = !!result.attackerWin && !result.draw;
+    const draw = !!result.draw;
+    this._oldBattleAnim = {
+      canvas, ctx, rafId: null, time: 0, last: performance.now(),
+      att: { x: -40, tx: canvas.width * 0.3, action: 'charge', frame: 0, faction: attColor, unitType: 'cavalry' },
+      def: { x: canvas.width + 40, tx: canvas.width * 0.7, action: 'charge', frame: 0, faction: defColor, unitType: 'infantry' },
+      collided: false, shake: 0
+    };
+    const loop = (now) => this._oldBattleLoop(now, win, draw);
+    this._oldBattleAnim.rafId = requestAnimationFrame(loop);
+  }
+
+  _stopOldBattleAnim() {
+    if (this._oldBattleAnim) {
+      if (this._oldBattleAnim.rafId) cancelAnimationFrame(this._oldBattleAnim.rafId);
+      this._oldBattleAnim = null;
+    }
+  }
+
+  _oldBattleLoop(now, win, draw) {
+    const ob = this._oldBattleAnim;
+    if (!ob) return;
+    const dt = Math.min((now - ob.last) / 1000, 0.05);
+    ob.last = now;
+    ob.time += dt;
+    for (const s of [ob.att, ob.def]) s.frame += dt * 10;
+
+    // 冲锋接近
+    const speed = 260;
+    if (!ob.collided) {
+      ob.att.x += speed * dt;
+      ob.def.x -= speed * dt;
+      if (ob.att.x >= ob.att.tx && ob.def.x <= ob.def.tx) {
+        ob.collided = true;
+        ob.att.action = 'slash';
+        ob.def.action = 'hurt';
+        ob.shake = 8;
+      }
+    } else {
+      // 碰撞后 0.6s 进入胜负
+      if (ob.time > 1.2) {
+        if (draw) { ob.att.action = 'idle'; ob.def.action = 'idle'; }
+        else if (win) { ob.att.action = 'victory'; ob.def.action = 'defeat'; }
+        else { ob.def.action = 'victory'; ob.att.action = 'defeat'; }
+      } else if (ob.time > 0.6) {
+        ob.def.action = 'hurt';
+      }
+    }
+    if (ob.shake > 0.3) ob.shake *= 0.88; else ob.shake = 0;
+
+    // 绘制
+    const ctx = ob.ctx, W = ob.canvas.width, H = ob.canvas.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    if (ob.shake > 0.3) ctx.translate((Math.random()-0.5)*ob.shake, (Math.random()-0.5)*ob.shake);
+    ctx.strokeStyle = 'rgba(196,165,90,0.3)';
+    ctx.beginPath(); ctx.moveTo(0, H - 25); ctx.lineTo(W, H - 25); ctx.stroke();
+    const gy = H - 35;
+    ctx.save(); ctx.translate(ob.att.x, gy);
+    Animator.drawBattleCharacter(ctx, 0, 0, ob.att.faction, ob.att.action, ob.att.frame, ob.att.unitType);
+    ctx.restore();
+    ctx.save(); ctx.translate(ob.def.x, gy); ctx.scale(-1, 1);
+    Animator.drawBattleCharacter(ctx, 0, 0, ob.def.faction, ob.def.action, ob.def.frame, ob.def.unitType);
+    ctx.restore();
+    ctx.restore();
+
+    ob.rafId = requestAnimationFrame((t) => this._oldBattleLoop(t, win, draw));
   }
 
   // ---------- 外交面板 ----------
@@ -820,7 +1745,9 @@ export class UI {
         ${idle.length === 0 ? '<p>暂无在野武将</p>' :
           idle.map(g => `
             <div class="general-row">
-              <img src="${IMG.portrait(g.portrait)}" class="gen-portrait" onerror="this.style.display='none'">
+              <div class="portrait-anim-wrap" style="width:48px;height:48px;flex-shrink:0">
+                <img src="${IMG.portrait(g.portrait)}" class="gen-portrait portrait-anim" style="width:48px;height:48px;object-fit:cover" onerror="this.style.display='none'">
+              </div>
               <div class="gen-info">
                 <b>${g.name}</b>（${g.role}）<br>
                 统${g.command} 武${g.force} 智${g.intel} 政${g.politics}
@@ -838,6 +1765,7 @@ export class UI {
   recruitGeneral(generalId) {
     const result = this.game.recruitIdleGeneral(generalId);
     this.audio.playRecruit();
+    this.audio.playWelcome();
     this.toast(result.msg);
     document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
   }
@@ -1047,8 +1975,16 @@ export class UI {
       <div class="modal">
         <h2 class="modal-title">设置</h2>
         <div class="setting-row">
-          <span>音量</span>
-          <input type="range" id="set-volume" min="0" max="100" value="${Math.round(this.audio.volume * 100)}">
+          <span>主音量</span>
+          <input type="range" id="set-master-vol" min="0" max="100" value="${Math.round(this.audio.masterVolume * 100)}">
+        </div>
+        <div class="setting-row">
+          <span>音乐音量</span>
+          <input type="range" id="set-bgm-vol" min="0" max="100" value="${Math.round(this.audio.bgmVolume * 100)}">
+        </div>
+        <div class="setting-row">
+          <span>音效音量</span>
+          <input type="range" id="set-sfx-vol" min="0" max="100" value="${Math.round(this.audio.sfxVolume * 100)}">
         </div>
         <div class="setting-row">
           <span>静音</span>
@@ -1071,9 +2007,9 @@ export class UI {
     `;
     document.body.appendChild(modal);
 
-    document.getElementById('set-volume').oninput = (e) => {
-      this.audio.setVolume(e.target.value / 100);
-    };
+    document.getElementById('set-master-vol').oninput = (e) => this.audio.setMasterVolume(e.target.value / 100);
+    document.getElementById('set-bgm-vol').oninput = (e) => this.audio.setBGMVolume(e.target.value / 100);
+    document.getElementById('set-sfx-vol').oninput = (e) => this.audio.setSFXVolume(e.target.value / 100);
     document.getElementById('set-mute').onclick = (e) => {
       const m = this.audio.toggleMute();
       e.target.textContent = m ? '已静音' : '未静音';
@@ -1082,7 +2018,7 @@ export class UI {
     };
     document.getElementById('set-bgm').onclick = (e) => {
       if (this.audio._bgmOn) { this.audio.stopBGM(); e.target.textContent = '已暂停'; }
-      else { this.audio.startBGM(); e.target.textContent = '播放中'; }
+      else { this.audio.startBGM('map'); e.target.textContent = '播放中'; }
     };
   }
 
@@ -1098,17 +2034,78 @@ export class UI {
 
   doExit() {
     this.audio.stopBGM();
+    this._stopBattleAnim();
+    this._stopOldBattleAnim();
+    if (this.map) this.map.stopLoop();
     this.showMainMenu();
+    try { this.audio.switchBGM('menu'); } catch (e) {}
+  }
+
+  // V5.5：键盘快捷键
+  _bindShortcuts() {
+    if (this._boundShortcuts) return;
+    this._boundShortcuts = true;
+    document.addEventListener('keydown', (e) => {
+      if (!this.game) return;
+      // 输入框中不触发快捷键
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          this.endTurn();
+          break;
+        case 'Escape':
+          // 关闭最上层弹窗/面板
+          const ov = document.querySelector('.modal-overlay:last-of-type');
+          if (ov) ov.remove();
+          else {
+            this.game.selectedCity = null;
+            this.game.selectedArmy = null;
+            const pc = document.getElementById('panel-content');
+            if (pc) pc.innerHTML = '<p class="hint">点击地图上的城市或军队查看详情</p>';
+            if (this.map) { this.map.dirty = true; this.map.render(); this._updateMapMarker(); }
+          }
+          break;
+        case '1': this.showTechTree(); break;
+        case '2': this.showAchievements(); break;
+        case '3': this.showDiplomacy(); break;
+        case '4': this.showRecruitPanel(); break;
+        case '5': this.showStatsPanel(); break;
+        case '6': if (this.game.netRole) this._showLanChatPanel(); break;
+      }
+    });
   }
 
   // ---------- 结束回合 ----------
   endTurn() {
     if (this.game.state !== 'playing') return;
+    // V5.5：客机结束回合 → 发送指令给主机，不本地结算
+    if (this.game.netRole === 'client') {
+      this.lan.send({ type: 'endTurn' });
+      this.game.state = 'waiting';
+      this._showLanOverlay('等待对方行动…');
+      this.refreshUI();
+      return;
+    }
+    // V5.5：主机结束回合 → 正常结算后广播给客机
+    const prevFid = this.game.playerFaction;
     this.game.endTurn();
     this.map.render();
     this._updateMapMarker();
     this.refreshUI();
     this.checkGameOver();
+    // 主机：广播新状态给客机，轮到客机
+    if (this.game.netRole === 'host') {
+      this._lanBroadcastState('client');
+      this._showLanOverlay('等待对方行动…');
+    }
+
+    // V5.0：热座模式 —— 若换手到新的人类玩家，弹出就位过渡画面
+    if (this.game.isHotSeat && !this.game.gameOver
+        && this.game.state === 'playing' && this.game.playerFaction !== prevFid) {
+      this._showPlayerTransition(false);
+    }
 
     // 检查是否有待处理事件
     if (this.game.eventSystem.pendingEvents && this.game.eventSystem.pendingEvents.length > 0) {
@@ -1116,14 +2113,72 @@ export class UI {
     }
   }
 
+  // V5.0：热座玩家切换过渡画面（覆盖屏幕，隐藏上一位玩家私密信息）
+  _showPlayerTransition(firstStart = false) {
+    if (!this.game || !this.game.isHotSeat) return;
+    const fac = FACTIONS[this.game.playerFaction];
+    if (!fac) return;
+    // 关闭所有面板/弹窗，清空选中，避免泄露上一位玩家信息
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    this.game.selectedCity = null;
+    this.game.selectedArmy = null;
+    const panel = document.getElementById('panel-content');
+    if (panel) panel.innerHTML = '<p class="hint">等待新玩家就位……</p>';
+
+    let ov = document.getElementById('hs-transition');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'hs-transition';
+      ov.className = 'hs-transition-overlay';
+      document.body.appendChild(ov);
+    }
+    ov.innerHTML = `
+      <div class="hs-transition-card" style="border-color:${fac.color}">
+        <p class="hs-turn-label">${firstStart ? '热座开局' : '轮到你了'}</p>
+        <h2 class="hs-faction-name" style="color:${fac.color}">${fac.name}</h2>
+        <p class="hs-hint">${firstStart ? '请各方玩家确认座位' : '请将键盘鼠标交给下一位玩家'}</p>
+        <p class="hs-secret">（上一位玩家的密探与情报已隐藏）</p>
+        <button class="btn-ancient" id="hs-ready">我已就位，开始</button>
+      </div>
+    `;
+    ov.classList.add('show');
+    this._updateHotSeatIndicator();
+    document.getElementById('hs-ready').onclick = () => {
+      ov.classList.remove('show');
+      // 新玩家视野刷新
+      if (this.map) { this.map.dirty = true; this.map.render(); }
+      this.refreshUI();
+      this._updateMapMarker();
+      this.audio.playClick();
+    };
+  }
+
+  // V5.0：顶栏当前玩家指示器
+  _updateHotSeatIndicator() {
+    let el = document.getElementById('hs-indicator');
+    if (!this.game || !this.game.isHotSeat) { if (el) el.remove(); return; }
+    const fac = FACTIONS[this.game.playerFaction];
+    if (!fac) return;
+    if (!el) {
+      const bar = document.querySelector('.top-bar');
+      if (!bar) return;
+      el = document.createElement('div');
+      el.id = 'hs-indicator';
+      el.className = 'top-item hs-indicator';
+      bar.insertBefore(el, bar.firstChild);
+    }
+    el.innerHTML = `热座 · <b style="color:${fac.color}">${fac.name}</b>`;
+  }
+
   showEventModal(event) {
-    this.audio.playEvent();
+    this.audio.playEventTrigger();
+    this.audio.switchBGM('event');
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.innerHTML = `
       <div class="modal event-modal">
         <h2 class="modal-title">📜 ${event.name}</h2>
-        <img src="${IMG.event(event.illustration)}" class="event-img" onerror="this.style.display='none'">
+        <img src="${IMG.event(event.illustration)}" class="event-img kenburns" onerror="this.style.display='none'">
         <p class="event-desc">${event.description}</p>
         <div class="event-options">
           ${event.options.map((opt, i) =>
@@ -1149,6 +2204,9 @@ export class UI {
   }
 
   closeBattle() {
+    // 停止战斗动画循环
+    this._stopBattleAnim();
+    this._stopOldBattleAnim();
     // 关闭多回合战斗弹窗
     const bm = document.getElementById('battle-modal-root');
     if (bm) bm.remove();
@@ -1158,6 +2216,7 @@ export class UI {
     });
     this._battleMode = 'old';
     if (this.game && this.game.state === 'battle') this.game.state = 'playing';
+    this.audio.switchBGM('map');
     this.refreshUI();
     this.checkGameOver();
   }
@@ -1180,6 +2239,7 @@ export class UI {
       document.body.appendChild(modal);
       if (this.game.gameOver.win) this.audio.playVictory();
       else this.audio.playDefeat();
+      this.audio.switchBGM('ending');
     }
   }
 
@@ -1271,9 +2331,19 @@ export class UI {
       [...this.game.pendingAchievements].forEach(a => this.showAchToast(a));
       this.game.pendingAchievements.length = 0;
     }
+    // V3.5：待弹出称号通知
+    if (this.game.pendingTitles && this.game.pendingTitles.length > 0) {
+      [...this.game.pendingTitles].forEach(t => {
+        this.showAchToast({ icon: '👑', name: `称号解锁：${t.title.name}`, description: t.title.desc });
+        this.audio.playTitleUnlock();
+      });
+      this.game.pendingTitles.length = 0;
+    }
 
-    if (this.map) this.map.render();
+    if (this.map) { this.map.dirty = true; this.map.render(); }
     this._updateMapMarker();
+    // V5.0：热座当前玩家指示器
+    this._updateHotSeatIndicator();
   }
 
   // ---------- 提示 ----------
