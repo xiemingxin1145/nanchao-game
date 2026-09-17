@@ -4,6 +4,7 @@
 import { GENERALS, NEW_GENERAL_SKILLS } from './data.js';
 import { getGeneralSkills } from './skills.js';
 import { getItem } from './equipment.js';
+import { getTitleStatBonus } from './office.js'; // V7.0 爵位属性加成
 
 // V4.0: 升级经验需求 100→120（原值100，新值120，调整原因: 减缓升级速度，确保升级有成就感但不会太快）
 const EXP_PER_LEVEL = 120;   // 120 exp 升一级
@@ -45,7 +46,14 @@ export class General {
     this.married = data.married || null;        // 联姻对象的 generalId
     this.onHostage = !!data.onHostage;          // 在外为质期间不可带兵/任官
     this.onMission = !!data.onMission;          // 执行谍报任务期间不可任职
+
+    // ---- V7.0：官职 / 爵位 ----
+    this.office = data.office || null;          // 官职 id（OFFICES），仅中央/武官
+    this.title = data.title || null;            // 爵位 id（TITLES），六等爵
   }
+
+  // V7.0：爵位给个人的四维加成
+  _titleBonus() { return this.title ? getTitleStatBonus(this.title) : 0; }
 
   // 汇总已装备物品的属性加成袋
   // 平衡：单件传说 +15 四维，四槽合计远低于基础属性 50% 上限
@@ -63,11 +71,11 @@ export class General {
     return bag;
   }
 
-  // 有效属性（含等级加成 + 装备加成；负伤时按比例下降）
-  get effCommand()   { return this._wound(this.command + (this.getEquipmentStats().command || 0)); }
-  get effForce()      { return this._wound(this.force + (this.getEquipmentStats().force || 0)); }
-  get effIntel()      { return this._wound(this.intel + (this.getEquipmentStats().intel || 0)); }
-  get effPolitics()   { return this._wound(this.politics + (this.getEquipmentStats().politics || 0)); }
+  // 有效属性（含等级加成 + 装备加成 + 爵位加成；负伤时按比例下降）
+  get effCommand()   { return this._wound(this.command + this._titleBonus() + (this.getEquipmentStats().command || 0)); }
+  get effForce()      { return this._wound(this.force + this._titleBonus() + (this.getEquipmentStats().force || 0)); }
+  get effIntel()      { return this._wound(this.intel + this._titleBonus() + (this.getEquipmentStats().intel || 0)); }
+  get effPolitics()   { return this._wound(this.politics + this._titleBonus() + (this.getEquipmentStats().politics || 0)); }
 
   _wound(attr) {
     // 负伤期间属性 -20%
@@ -119,7 +127,8 @@ export class General {
       location: this.location, inArmy: this.inArmy,
       exp: this.exp, level: this.level, skills: this.skills, wounded: this.wounded,
       equipment: this.equipment,
-      married: this.married, onHostage: this.onHostage, onMission: this.onMission
+      married: this.married, onHostage: this.onHostage, onMission: this.onMission,
+      office: this.office, title: this.title  // V7.0
     };
   }
 
@@ -137,6 +146,9 @@ export class General {
     g.married = data.married || null;
     g.onHostage = !!data.onHostage;
     g.onMission = !!data.onMission;
+    // V7.0：旧存档补官职/爵位
+    g.office = data.office || null;
+    g.title = data.title || null;
     return g;
   }
 }

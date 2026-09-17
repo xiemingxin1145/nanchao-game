@@ -1683,3 +1683,547 @@ html, body {
   .game-panel { font-size: 13px; }
   .culture-display { padding: 4px 8px; }
 }
+
+/* ============================================================
+   V6.5 UI 深度精修
+   - 主菜单 Ken Burns 背景动画
+   - 面板进入/退出动画统一
+   - 按钮 hover/active 动画统一
+   - 城市呼吸动画增强
+   - 键盘快捷键提示
+   - 更多分辨率适配
+   ============================================================ */
+
+/* ---- 主菜单 Ken Burns 效果 ---- */
+@keyframes ken-burns {
+  0%   { transform: scale(1.0) translate(0, 0); }
+  50%  { transform: scale(1.08) translate(-1%, -1%); }
+  100% { transform: scale(1.0) translate(0, 0); }
+}
+.title-bg {
+  animation: ken-burns 20s ease-in-out infinite;
+}
+
+/* 标题光晕增强 */
+@keyframes title-halo {
+  0%, 100% { text-shadow: 0 0 30px rgba(255,215,0,0.3), 0 4px 8px rgba(0,0,0,0.8); }
+  50%      { text-shadow: 0 0 60px rgba(255,215,0,0.6), 0 0 100px rgba(255,180,0,0.3), 0 4px 8px rgba(0,0,0,0.8); }
+}
+.game-title {
+  animation: title-halo 4s ease-in-out infinite;
+}
+
+/* ---- 面板进入/退出动画统一 ---- */
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes panel-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(8px) scale(0.98); }
+}
+.modal, .right-panel, .bottom-bar, .top-bar {
+  animation: panel-in 0.25s ease-out;
+}
+
+/* ---- 按钮统一 hover/active 动画 ---- */
+.btn-ancient {
+  position: relative;
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.btn-ancient:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(255, 215, 0, 0.35), inset 0 1px 0 rgba(255,255,255,0.2);
+}
+.btn-ancient:active {
+  transform: translateY(0) scale(0.97);
+}
+
+/* ---- 城市呼吸动画增强 ---- */
+@keyframes city-breathe {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50%      { transform: scale(1.04); filter: brightness(1.15); }
+}
+.army-piece, .city-marker {
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+.army-piece:hover, .city-marker:hover {
+  filter: brightness(1.25) drop-shadow(0 0 8px rgba(255,215,0,0.5));
+}
+
+/* ---- 资源条进度效果 ---- */
+.resource-bar {
+  position: relative;
+  overflow: hidden;
+  border-radius: 3px;
+}
+.resource-bar .fill {
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+}
+.resource-bar .fill::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+  animation: bar-shine 2s linear infinite;
+}
+@keyframes bar-shine {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(100%); }
+}
+
+/* ---- 选中光环动画 ---- */
+@keyframes select-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(255,215,0,0.6); }
+  100% { box-shadow: 0 0 0 12px rgba(255,215,0,0); }
+}
+.army-piece.selected {
+  animation: select-ring 1.2s ease-out infinite;
+}
+
+/* ---- 武将详情立绘悬停放大 ---- */
+.general-portrait-large {
+  transition: transform 0.3s ease, filter 0.3s ease;
+}
+.general-portrait-large:hover {
+  transform: scale(1.05);
+  filter: brightness(1.1) drop-shadow(0 0 12px rgba(255,215,0,0.4));
+}
+
+/* ---- 势力卡片 hover 增强 ---- */
+.faction-card {
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.faction-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 25px rgba(0,0,0,0.5), 0 0 20px rgba(255,215,0,0.2);
+}
+
+/* ---- 事件弹窗选项悬停效果 ---- */
+.event-option {
+  transition: all 0.2s ease;
+}
+.event-option:hover {
+  background: rgba(196, 165, 90, 0.15);
+  border-color: #C4A55A;
+  transform: translateX(4px);
+}
+
+/* ---- 战斗速度按钮 ---- */
+.battle-speed-btn {
+  padding: 4px 12px;
+  background: rgba(45, 90, 75, 0.6);
+  border: 1px solid #C4A55A;
+  color: #E8D5A3;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  border-radius: 3px;
+  transition: all 0.2s;
+}
+.battle-speed-btn:hover, .battle-speed-btn.active {
+  background: rgba(196, 165, 90, 0.4);
+  border-color: #FFD700;
+  color: #FFD700;
+}
+
+/* ---- 键盘快捷键提示 ---- */
+.kbd-hint {
+  display: inline-block;
+  padding: 1px 6px;
+  background: rgba(0,0,0,0.5);
+  border: 1px solid #555;
+  border-radius: 3px;
+  font-size: 10px;
+  color: #999;
+  margin-left: 4px;
+}
+
+/* ---- 季节动画 ---- */
+@keyframes season-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.season-icon {
+  display: inline-block;
+  animation: season-spin 8s linear infinite;
+}
+
+/* ---- 水波纹粒子 ---- */
+@keyframes ripple {
+  0%   { transform: scale(0.5); opacity: 0.8; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+.water-ripple {
+  position: absolute;
+  border: 2px solid rgba(100, 180, 255, 0.5);
+  border-radius: 50%;
+  animation: ripple 2s ease-out infinite;
+}
+
+/* ---- 佛光粒子 ---- */
+@keyframes buddhist-glow {
+  0%, 100% { box-shadow: 0 0 10px rgba(255, 200, 50, 0.3); }
+  50%      { box-shadow: 0 0 25px rgba(255, 200, 50, 0.6); }
+}
+.buddhist-building {
+  animation: buddhist-glow 3s ease-in-out infinite;
+}
+
+/* ---- 1920x1080 大屏适配 ---- */
+@media (min-width: 1600px) {
+  .game-title { font-size: 120px; }
+  .subtitle { font-size: 28px; }
+  .btn-ancient { font-size: 22px; padding: 14px 60px; }
+  .right-panel { width: 360px; }
+}
+
+/* ---- 1024x768 紧凑适配 ---- */
+@media (max-width: 1152px) {
+  .game-title { font-size: 64px; letter-spacing: 12px; }
+  .subtitle { font-size: 16px; margin-bottom: 30px; }
+  .btn-ancient { font-size: 14px; padding: 8px 32px; }
+  .right-panel { width: 260px; }
+  .top-bar { font-size: 12px; }
+}
+
+
+/* ============================================================
+   V7.0 — 王朝/官职/贸易面板样式
+   ============================================================ */
+.era-click { color: #e8c060; cursor: pointer; letter-spacing: 1px; }
+.era-click:hover { color: #fff; }
+.modal.wide { width: 720px; max-width: 92vw; max-height: 86vh; overflow-y: auto; }
+.dynasty-hero { background: rgba(232,192,96,0.08); border: 1px solid #c9a86a; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px; }
+.office-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.office-row {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: rgba(255,255,255,0.03); border-radius: 6px; padding: 8px 12px;
+  border-left: 4px solid #c9a86a; font-size: 13px;
+}
+.office-row b { color: #e8d5a3; min-width: 70px; }
+.office-row .hint { flex: 1; color: #b8a888; font-size: 12px; }
+.office-row .diplo-actions { display: flex; gap: 6px; align-items: center; }
+.office-row select.select-small { max-width: 110px; }
+@keyframes eraBump { 0%{transform:scale(1);} 40%{transform:scale(1.18); color:#fff;} 100%{transform:scale(1);} }
+.era-click.bump { animation: eraBump 0.6s ease; }
+
+/* ============================================================
+   V7.5 — UI 深度精修样式
+   技术：
+   1) Ken Burns 30s：@keyframes 缓慢 scale(1→1.08) translate，infinite alternate
+   2) 扫光效果：.btn-ancient::before 伪元素，translateX(-100%)→100%，hover 0.6s
+      参考：CSS Scan 按钮光带（https://cssscan.com）
+   3) 金色粒子：DOM 粒子用 CSS animation 飘浮（translate + opacity）
+   4) 面板进出场：translateY 滑入/滑出 + opacity 淡入淡出
+   ============================================================ */
+
+/* ---------- 主菜单 Ken Burns 30秒循环（覆盖原12s） ---------- */
+.title-bg.kenburns {
+  animation: kenburnsV75 30s ease-in-out infinite alternate !important;
+}
+@keyframes kenburnsV75 {
+  0%   { transform: scale(1.0) translate(0, 0); }
+  100% { transform: scale(1.12) translate(-2%, -2%); }
+}
+
+/* ---------- 主菜单金色粒子（萤火虫/星光） ---------- */
+.menu-particles {
+  position: absolute; inset: 0;
+  pointer-events: none; z-index: 1;
+  overflow: hidden;
+}
+.menu-particle {
+  position: absolute;
+  width: 4px; height: 4px;
+  border-radius: 50%;
+  background: #FFD700;
+  box-shadow: 0 0 6px 2px rgba(255, 215, 0, 0.7);
+  opacity: 0;
+  animation: particleFloat var(--dur, 8s) ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+@keyframes particleFloat {
+  0%   { transform: translate(0, 0) scale(0.6); opacity: 0; }
+  20%  { opacity: 0.9; }
+  50%  { transform: translate(var(--dx, 20px), var(--dy, -40px)) scale(1); }
+  80%  { opacity: 0.7; }
+  100% { transform: translate(calc(var(--dx, 20px) * 2), calc(var(--dy, -40px) * 2)) scale(0.5); opacity: 0; }
+}
+
+/* ---------- 主菜单版本号（右下角） ---------- */
+.version-badge {
+  position: absolute;
+  bottom: 16px; right: 24px;
+  font-size: 13px;
+  color: rgba(232, 213, 163, 0.55);
+  letter-spacing: 2px;
+  z-index: 2;
+  font-family: "STSong", serif;
+}
+
+/* ---------- 按钮扫光 hover 效果（金色光带从左到右） ---------- */
+/* 技术：::before 伪元素盖在按钮上，初始 translateX(-100%) 隐藏在左外，
+   hover 时 translateX(100%) 扫过。overflow:hidden 裁剪光带。 */
+.btn-ancient { position: relative; overflow: hidden; }
+.btn-ancient::before {
+  content: '';
+  position: absolute; top: 0; left: 0;
+  width: 40%; height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 235, 150, 0.45), transparent);
+  transform: translateX(-150%) skewX(-20deg);
+  transition: transform 0.6s ease;
+  pointer-events: none;
+}
+.btn-ancient:hover::before {
+  transform: translateX(350%) skewX(-20deg);
+}
+
+/* ---------- 主菜单标题文字阴影层次增强 ---------- */
+.game-title.title-glow {
+  text-shadow:
+    0 0 30px rgba(255, 215, 0, 0.5),
+    0 0 60px rgba(255, 180, 0, 0.3),
+    0 4px 12px rgba(0, 0, 0, 0.9),
+    0 2px 4px rgba(0, 0, 0, 0.8);
+}
+
+/* ---------- 势力卡片：星级难度 + 武将预览 ---------- */
+.faction-stars {
+  font-size: 14px;
+  color: #C4A55A;
+  letter-spacing: 2px;
+  margin: 2px 0;
+}
+.faction-stars .star-dim { color: rgba(196, 165, 90, 0.25); }
+.faction-generals-preview {
+  display: flex; gap: 6px;
+  margin-top: 6px;
+}
+.faction-generals-preview .gen-thumb {
+  width: 32px; height: 40px;
+  border-radius: 3px;
+  border: 1px solid #8B7A4A;
+  object-fit: cover;
+  background: #2a2018;
+}
+.faction-card { transition: transform 0.25s ease, box-shadow 0.25s ease; }
+.faction-card:hover {
+  transform: translateY(-4px);
+}
+.faction-card.selected {
+  transform: translateY(-6px);
+}
+
+/* ---------- 剧本标签页激活态 ---------- */
+.scenario-tab {
+  transition: all 0.2s ease;
+}
+.scenario-tab:hover { border-color: #C4A55A; }
+.scenario-tab.active {
+  border-color: #FFD700;
+  background: rgba(255, 215, 0, 0.12);
+  box-shadow: 0 0 12px rgba(255, 215, 0, 0.3);
+}
+
+/* ---------- 结束回合按钮脉冲动画 ---------- */
+.btn-end-turn.pulse {
+  animation: endTurnPulse 1.8s ease-in-out infinite;
+}
+@keyframes endTurnPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(255, 215, 0, 0.3); }
+  50%      { box-shadow: 0 0 25px rgba(255, 215, 0, 0.75); }
+}
+
+/* ---------- 正统值进度条 ---------- */
+.legit-bar-wrap {
+  display: inline-block;
+  width: 60px; height: 6px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 3px;
+  overflow: hidden;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+.legit-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #C4A55A, #FFD700);
+  transition: width 0.5s ease;
+}
+
+/* ---------- 顶栏资源图标 ---------- */
+.top-item .res-icon { margin-right: 3px; }
+
+/* ---------- 事件弹窗：类型图标 + 效果预览 ---------- */
+.event-type-icon {
+  font-size: 22px;
+  margin-right: 8px;
+}
+.event-option {
+  position: relative;
+  transition: all 0.2s ease;
+}
+.event-option:hover {
+  background: linear-gradient(180deg, rgba(255,215,0,0.15), rgba(255,215,0,0.05));
+  transform: scale(1.02);
+}
+.event-option .effect-preview {
+  display: block;
+  font-size: 11px;
+  color: #9A8B6A;
+  margin-top: 2px;
+}
+
+/* ---------- 战斗日志：斑马纹 + 关键事件高亮 ---------- */
+.message-log .log-line:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+.message-log .log-line.critical {
+  color: #ffcc44;
+  font-weight: bold;
+}
+
+/* ---------- 水战背景波纹 ---------- */
+.water-battle-bg {
+  position: relative;
+  background: linear-gradient(180deg, #1a3a5a 0%, #0d2438 100%);
+  overflow: hidden;
+}
+.water-battle-bg::after {
+  content: '';
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(ellipse at 20% 30%, rgba(100, 180, 255, 0.12) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 70%, rgba(100, 180, 255, 0.10) 0%, transparent 50%);
+  animation: waterShift 6s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+@keyframes waterShift {
+  0%   { opacity: 0.6; transform: translateX(0); }
+  100% { opacity: 1;   transform: translateX(20px); }
+}
+
+/* ---------- 结局画面：S/A/B/C/D 评分 ---------- */
+.ending-rating {
+  font-size: 96px;
+  font-weight: bold;
+  text-align: center;
+  margin: 16px 0;
+  background: linear-gradient(180deg, #FFD700, #C4A55A);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 20px rgba(255, 215, 0, 0.5));
+}
+.ending-rating.rating-s { background: linear-gradient(180deg, #FFE9A8, #FF9500); -webkit-background-clip: text; background-clip: text; }
+.ending-rating.rating-a { background: linear-gradient(180deg, #FFD700, #C4A55A); -webkit-background-clip: text; background-clip: text; }
+.ending-rating.rating-b { background: linear-gradient(180deg, #C0C0C0, #808080); -webkit-background-clip: text; background-clip: text; }
+.ending-rating.rating-c { background: linear-gradient(180deg, #C8956A, #8B6914); -webkit-background-clip: text; background-clip: text; }
+.ending-rating.rating-d { background: linear-gradient(180deg, #999, #555); -webkit-background-clip: text; background-clip: text; }
+.ending-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 24px;
+  margin: 14px 0;
+  font-size: 14px;
+}
+.ending-stats .stat-row { display: flex; justify-content: space-between; }
+
+/* ---------- 武将详情：属性进度条 ---------- */
+.apt-bar-wrap {
+  display: flex; align-items: center; gap: 6px;
+  margin: 2px 0;
+  font-size: 12px;
+}
+.apt-bar-wrap .apt-label { width: 32px; color: #9A8B6A; }
+.apt-bar-wrap .apt-track {
+  flex: 1; height: 8px;
+  background: rgba(0,0,0,0.4);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.apt-bar-wrap .apt-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8B7A4A, #C4A55A);
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+.apt-bar-wrap .apt-val { width: 28px; text-align: right; color: #E8D5A3; }
+
+/* ---------- 武将立绘悬停放大 ---------- */
+.gen-detail-portrait {
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.gen-detail-portrait:hover {
+  transform: scale(1.1);
+  box-shadow: 0 0 20px rgba(255, 215, 0, 0.6);
+  z-index: 5;
+}
+
+/* ---------- 技能 chips 悬停 ---------- */
+.skill-chip {
+  cursor: default;
+  transition: all 0.15s ease;
+}
+.skill-chip:hover {
+  background: rgba(255, 215, 0, 0.25);
+  border-color: #FFD700;
+}
+
+/* ---------- 城市面板：建筑图标 ---------- */
+.building-icon {
+  display: inline-block;
+  width: 28px; height: 28px;
+  line-height: 28px;
+  text-align: center;
+  font-size: 16px;
+  border-radius: 4px;
+  background: rgba(196, 165, 90, 0.15);
+  border: 1px solid #8B7A4A;
+  margin: 2px;
+}
+
+/* ---------- 面板滑入动画（右面板） ---------- */
+#panel-content {
+  animation: panelSlideIn 0.3s ease;
+}
+@keyframes panelSlideIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ---------- 成就通知右上滑入 ---------- */
+.ach-toast {
+  animation: achSlideIn 0.4s cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+@keyframes achSlideIn {
+  from { opacity: 0; transform: translateX(80px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ---------- 连击数字 ---------- */
+.combo-number {
+  position: absolute;
+  font-size: 28px;
+  font-weight: bold;
+  color: #FFD700;
+  text-shadow: 0 0 10px rgba(255, 215, 0, 0.8);
+  animation: comboPop 0.6s ease forwards;
+  pointer-events: none;
+  z-index: 10;
+}
+@keyframes comboPop {
+  0%   { transform: scale(0.5); opacity: 0; }
+  30%  { transform: scale(1.3); opacity: 1; }
+  100% { transform: scale(1) translateY(-30px); opacity: 0; }
+}
+
+/* ---------- 小屏适配（1024x768）增强 ---------- */
+@media (max-width: 1152px) {
+  .ending-rating { font-size: 64px; }
+  .menu-particles { display: none; }
+}

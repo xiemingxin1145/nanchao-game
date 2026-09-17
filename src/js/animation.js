@@ -36,9 +36,9 @@ export class CharacterAnimator {
     // 技术参考：对象池模式（object pool pattern）——
     // const pool = []; function getParticle(){ return pool.pop() || {}; }
     // function releaseParticle(p){ pool.push(p); }
-    // 战斗场景粒子上限（V5.5：降为 100，配合对象池，非战斗场景不更新）
+    // 战斗场景粒子上限（V7.5：提升为 150，配合对象池，非战斗场景不更新）
     this._particlePool = [];
-    this._maxParticles = 100;
+    this._maxParticles = 150;
     this._paused = false;   // V5.5：非战斗场景暂停粒子更新
   }
 
@@ -226,6 +226,122 @@ export class CharacterAnimator {
           this._pushParticle(p);
         }
         break;
+
+      // ---- V6.5 新增粒子效果 ----
+      case 'ripple':
+        // 水波纹：从中心向外扩散的圆环
+        for (let i = 0; i < 3; i++) {
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'ripple', x: x + i * 8, y: y + i * 4,
+            vx: 0, vy: 0, gravity: 0, drag: 0,
+            life: 1.0 + i * 0.2, maxLife: 1.0 + i * 0.2,
+            size: 5, color: '#6ab0e8', angle: i * 0.5
+          });
+          this._pushParticle(p);
+        }
+        break;
+      case 'buddhist_glow':
+        // 佛光：金色温暖光芒，缓慢上升扩散
+        for (let i = 0; i < 12; i++) {
+          const ang = (i / 12) * Math.PI * 2;
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'buddhist_glow', x: x + Math.cos(ang) * 20, y: y + Math.sin(ang) * 20,
+            vx: Math.cos(ang) * 8, vy: -15 - Math.random() * 10,
+            gravity: -5, drag: 0.5,
+            life: 1.2 + Math.random() * 0.6, maxLife: 1.8,
+            size: 3 + Math.random() * 2, color: '#FFD700'
+          });
+          this._pushParticle(p);
+        }
+        break;
+      case 'daoist_qi':
+        // 道气：青绿灵气，螺旋上升
+        for (let i = 0; i < 10; i++) {
+          const ang = (i / 10) * Math.PI * 2 + this.time * 0.5;
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'daoist_qi', x: x + Math.cos(ang) * 15, y: y + Math.sin(ang) * 15,
+            vx: Math.cos(ang + 0.5) * 12, vy: -20 - Math.random() * 15,
+            gravity: -8, drag: 0.3,
+            life: 1.0 + Math.random() * 0.5, maxLife: 1.5,
+            size: 2.5 + Math.random() * 2, color: '#7AE0C0'
+          });
+          this._pushParticle(p);
+        }
+        break;
+      case 'culture_gold':
+        // 文化繁荣金光：温暖的金色粒子从城市中心上升
+        for (let i = 0; i < 14; i++) {
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'culture_gold', x: x + (Math.random() - 0.5) * 40, y: y + Math.random() * 20,
+            vx: (Math.random() - 0.5) * 8, vy: -30 - Math.random() * 25,
+            gravity: -10, drag: 0.2,
+            life: 1.5 + Math.random() * 0.8, maxLife: 2.3,
+            size: 2 + Math.random() * 3, color: '#FFE9A8'
+          });
+          this._pushParticle(p);
+        }
+        break;
+      case 'critical_hit':
+        // 暴击特效：红色冲击 + 金色碎片
+        this.particles.push({
+          type: 'impact', x, y, vx: 0, vy: 0, gravity: 0, drag: 0,
+          life: 0.4, maxLife: 0.4, size: 10, color: '#FF4444'
+        });
+        for (let i = 0; i < 16; i++) {
+          const ang = Math.random() * Math.PI * 2;
+          const sp = 80 + Math.random() * 160;
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'spark', x, y,
+            vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+            gravity: 150, drag: 1.0,
+            life: 0.35 + Math.random() * 0.25, maxLife: 0.6,
+            size: 2 + Math.random() * 2, color: Math.random() < 0.5 ? '#FF4444' : '#FFD700'
+          });
+          this._pushParticle(p);
+        }
+        break;
+
+      // ---- V7.5 新增粒子效果 ----
+      case 'accession_gold':
+        // 登基金光：金色光柱冲天 + 四散金箔（庄严盛大）
+        for (let i = 0; i < 20; i++) {
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'accession_gold', x: x + (Math.random() - 0.5) * 30, y: y + Math.random() * 15,
+            vx: (Math.random() - 0.5) * 15, vy: -100 - Math.random() * 80,
+            gravity: -30, drag: 0.15,
+            life: 1.5 + Math.random() * 0.8, maxLife: 2.3,
+            size: 2.5 + Math.random() * 3.5, color: '#FFD700',
+            angle: Math.random() * Math.PI * 2
+          });
+          this._pushParticle(p);
+        }
+        // 中心大光柱
+        this.particles.push({
+          type: 'accession_beam', x, y, vx: 0, vy: -60, gravity: 0, drag: 0,
+          life: 1.2, maxLife: 1.2, size: 24, color: '#FFE9A8'
+        });
+        break;
+      case 'trade_coin':
+        // 贸易钱币：金币从天而降 + 旋转下落
+        for (let i = 0; i < 12; i++) {
+          const p = this._getParticle();
+          Object.assign(p, {
+            type: 'trade_coin', x: x + (Math.random() - 0.5) * 50, y: y - 60 - Math.random() * 30,
+            vx: (Math.random() - 0.5) * 20, vy: 40 + Math.random() * 40,
+            gravity: 60, drag: 0.2,
+            life: 1.0 + Math.random() * 0.5, maxLife: 1.5,
+            size: 3 + Math.random() * 2, color: '#D4AF37',
+            angle: Math.random() * Math.PI * 2, seed: Math.random() * 10
+          });
+          this._pushParticle(p);
+        }
+        break;
       default:
         this.particles.push({ type, x, y, vx: 0, vy: 0, life: 0.5, maxLife: 0.5, size: 3, color: '#fff' });
     }
@@ -357,6 +473,82 @@ export class CharacterAnimator {
         ctx.fillStyle = extra.color || '#FFD700';
         ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 12;
         ctx.beginPath(); ctx.arc(x, y, extra.size, 0, Math.PI * 2); ctx.fill();
+        break;
+      }
+      // ---- V6.5 新增粒子绘制 ----
+      case 'ripple': {
+        // 水波纹：扩散圆环
+        const prog = 1 - t;
+        ctx.globalAlpha = t * 0.6;
+        ctx.strokeStyle = extra.color || '#6ab0e8';
+        ctx.lineWidth = 2 * t + 0.5;
+        ctx.beginPath();
+        ctx.arc(x, y, extra.size + prog * 50, 0, Math.PI * 2);
+        ctx.stroke();
+        break;
+      }
+      case 'buddhist_glow': {
+        ctx.globalAlpha = t * 0.8;
+        ctx.fillStyle = extra.color || '#FFD700';
+        ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(x, y, extra.size * (0.5 + t), 0, Math.PI * 2); ctx.fill();
+        break;
+      }
+      case 'daoist_qi': {
+        ctx.globalAlpha = t * 0.7;
+        ctx.fillStyle = extra.color || '#7AE0C0';
+        ctx.shadowColor = '#7AE0C0'; ctx.shadowBlur = 6;
+        ctx.beginPath(); ctx.ellipse(x, y, extra.size * 0.7, extra.size * 1.4, 0, 0, Math.PI * 2); ctx.fill();
+        break;
+      }
+      case 'culture_gold': {
+        ctx.globalAlpha = t;
+        ctx.fillStyle = extra.color || '#FFE9A8';
+        ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 8;
+        ctx.beginPath(); ctx.arc(x, y, extra.size, 0, Math.PI * 2); ctx.fill();
+        break;
+      }
+      // ---- V7.5 新粒子绘制 ----
+      case 'accession_gold': {
+        // 金箔：旋转小菱形 + 光晕
+        ctx.globalAlpha = t;
+        ctx.fillStyle = extra.color || '#FFD700';
+        ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 10;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(extra.angle || 0);
+        const s = extra.size * (0.6 + t * 0.4);
+        ctx.beginPath();
+        ctx.moveTo(0, -s); ctx.lineTo(s * 0.6, 0); ctx.lineTo(0, s); ctx.lineTo(-s * 0.6, 0);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'accession_beam': {
+        // 登极大光柱：垂直金色光柱
+        ctx.globalAlpha = t * 0.7;
+        const g = ctx.createLinearGradient(x, y - 80, x, y);
+        g.addColorStop(0, 'rgba(255,233,168,0)');
+        g.addColorStop(1, 'rgba(255,215,0,0.6)');
+        ctx.fillStyle = g;
+        ctx.fillRect(x - extra.size / 2, y - 80, extra.size, 80);
+        break;
+      }
+      case 'trade_coin': {
+        // 金币：圆形 + 方孔（古钱样式），随下落旋转
+        const spin = (extra.seed || 0) + this.time * 6;
+        const squash = Math.abs(Math.sin(spin)); // 模拟旋转时的椭圆变形
+        ctx.globalAlpha = t;
+        ctx.fillStyle = extra.color || '#D4AF37';
+        ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 6;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(squash * 0.7 + 0.3, 1);
+        ctx.beginPath(); ctx.arc(0, 0, extra.size, 0, Math.PI * 2); ctx.fill();
+        // 方孔
+        ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        ctx.fillRect(-extra.size * 0.3, -extra.size * 0.3, extra.size * 0.6, extra.size * 0.6);
+        ctx.restore();
         break;
       }
       default: {

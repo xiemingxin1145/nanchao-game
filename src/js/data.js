@@ -180,6 +180,96 @@ export const SCENARIOS = {
     cityMorale: { xiwei: 78, nanchao: 32 },
     generalLoyalty: { xiwei: 90, nanchao: 48 },
     garrisonMult: { xiwei: 1.9, nanchao: 0.65 }
+  },
+
+  // ---- V6.5 剧本7：六镇起义（523年）----
+  // 历史背景：北魏正光四年（523年），沃野镇民破六韩拔陵起义，六镇响应。
+  // 北魏朝政腐败，柔然南下，南梁北伐。尔朱荣乘势崛起，高欢、宇文泰皆起于六镇。
+  '523': {
+    id: '523', name: '六镇起义', year: 523,
+    description: '北魏正光四年，沃野镇民破六韩拔陵聚众反，六镇并起，烽火连天。魏廷衰微，柔然犯塞，南朝萧衍图谋北伐。英雄起于草泽，霸业基于戎马。',
+    factions: ['nanchao', 'dongwei', 'xiwei'],
+    factionNameOverride: {
+      nanchao: '南梁', dongwei: '北魏', xiwei: '起义军'
+    },
+    // 特殊规则：北魏民心低、武将忠诚低；起义军初始兵力少但士气高；南梁中等
+    resources: {
+      nanchao: { money: 2000, food: 3000 },
+      dongwei: { money: 1200, food: 2000 },
+      xiwei: { money: 600, food: 1000 }
+    },
+    cityMorale: { nanchao: 55, dongwei: 30, xiwei: 40 },
+    generalLoyalty: { nanchao: 65, dongwei: 40, xiwei: 75 },
+    garrisonMult: { nanchao: 1.0, dongwei: 0.7, xiwei: 1.2 }
+  },
+
+  // ---- V6.5 剧本8：隋文统一（588年详细版）----
+  // 历史背景：开皇八年，杨坚已篡周建隋八年，灭后梁，据有整个北方。
+  // 晋王杨广节度九十路总管，五十一万大军临江。南陈后主陈叔宝荒于诗酒。
+  '588': {
+    id: '588', name: '隋文统一', year: 588,
+    description: '开皇八年，隋文帝杨坚奋五世之余烈，命晋王杨广节度九十路总管，五十一万大军八路伐陈。韩擒虎出庐江，贺若弼出广陵，舟舰横江。南陈后主恃长江天险，奏伎纵酒，作诗不辍。此一战，天下归一。',
+    factions: ['xiwei', 'nanchao', 'hou_liang', 'wang_lin'],
+    factionNameOverride: {
+      xiwei: '隋', nanchao: '南陈', hou_liang: '后梁', wang_lin: '王琳余烬'
+    },
+    // 特殊规则：隋极强；南陈民心低、兵力弱；后梁附庸；王琳残余
+    resources: {
+      xiwei: { money: 7000, food: 9000 },
+      nanchao: { money: 800, food: 1500 },
+      hou_liang: { money: 500, food: 1000 },
+      wang_lin: { money: 400, food: 800 }
+    },
+    cityMorale: { xiwei: 80, nanchao: 25, hou_liang: 45, wang_lin: 40 },
+    generalLoyalty: { xiwei: 92, nanchao: 42, hou_liang: 55, wang_lin: 48 },
+    garrisonMult: { xiwei: 2.0, nanchao: 0.6, hou_liang: 0.7, wang_lin: 0.7 }
+  },
+
+  // ---- V7.5 剧本9：孝文改革（494年）----
+  // 历史背景：北魏太和十八年（494年），孝文帝拓跋宏力排众议，迁都洛阳，
+  // 推行汉化改革：改汉姓、穿汉服、说汉语、与汉人士族通婚。民族融合加深，
+  // 但鲜卑旧贵族阻力巨大，六镇将士地位骤降，埋下日后六镇起义的隐患。
+  // 南齐偏安江东，柔然雄踞漠南。此局北魏汉化阻力大（民心低），但文治科技鼎盛。
+  '494': {
+    id: '494', name: '孝文改革', year: 494,
+    description: '北魏孝文帝迁都洛阳，力推汉化：禁胡服、断北语、改汉姓、定族姓。胡汉融合，文教大兴。然六镇武人怨望，旧贵族离心。南齐据江东，柔然扰漠南。改革成则天下治，改革败则社稷倾。',
+    factions: ['dongwei', 'nanchao', 'xiwei'],
+    factionNameOverride: {
+      dongwei: '北魏', nanchao: '南齐', xiwei: '柔然'
+    },
+    // 特殊规则：北魏初始民心低（汉化阻力），但文治科技高、经济强；南齐中等；柔然兵强但经济弱
+    resources: {
+      dongwei: { money: 3000, food: 3800 },
+      nanchao: { money: 1800, food: 2800 },
+      xiwei: { money: 800, food: 1500 }
+    },
+    cityMorale: { dongwei: 35, nanchao: 55, xiwei: 50 },
+    generalLoyalty: { dongwei: 50, nanchao: 65, xiwei: 70 },
+    garrisonMult: { dongwei: 1.1, nanchao: 1.0, xiwei: 1.3 }
+  },
+
+  // ---- V7.5 剧本10：周武灭齐（576年）----
+  // 历史背景：北周建德五年（576年），武帝宇文邕已灭佛强国，府兵精锐。
+  // 亲率大军伐齐，破晋州，围平阳。齐后主高纬昏庸，冯淑妃红颜误军，
+  // 朝政崩坏，斛律光已死，兰陵王被鸩。北周乘势东出，志在混一北方。
+  // 南陈据江东，后梁附庸江陵。
+  '576': {
+    id: '576', name: '周武灭齐', year: 576,
+    description: '北周武帝宇文邕灭佛强国，府兵精强，亲征北齐。齐后主高纬荒于宠信，自毁长城，斛律光、兰陵王相继冤死。周师东出潼关，破晋州、围平阳，兵锋直指邺城。北方一统，在此一战。',
+    factions: ['xiwei', 'dongwei', 'nanchao', 'hou_liang'],
+    factionNameOverride: {
+      xiwei: '北周', dongwei: '北齐', nanchao: '南陈', hou_liang: '后梁'
+    },
+    // 特殊规则：北齐民心低、武将忠诚低；北周兵力强、经济强
+    resources: {
+      xiwei: { money: 3600, food: 4800 },
+      dongwei: { money: 900, food: 1800 },
+      nanchao: { money: 1500, food: 2600 },
+      hou_liang: { money: 700, food: 1300 }
+    },
+    cityMorale: { xiwei: 72, dongwei: 25, nanchao: 52, hou_liang: 55 },
+    generalLoyalty: { xiwei: 85, dongwei: 32, nanchao: 66, hou_liang: 58 },
+    garrisonMult: { xiwei: 1.5, dongwei: 0.7, nanchao: 1.0, hou_liang: 0.85 }
   }
 };
 export const DEFAULT_SCENARIO = '550';
@@ -386,7 +476,7 @@ export const CITY_LINKS = {
   yingcheng:  ['jiangling', 'jiankang', 'jiangzhou', 'xiangzhou', 'jiangxia'],
   xiangzhou:  ['jiangling', 'guangzhou', 'yingcheng', 'jiaozhou', 'jiangzhou'],
   // 豫州（萧庄）
-  yuzhou:     ['shouyang', 'jiankang', 'pengcheng', 'hefei'],
+  yuzhou:     ['shouyang', 'jiankang', 'pengcheng', 'hefei', 'jiangxia'],
   xinye:      ['xiangyang', 'jiangling', 'hanzhong', 'nanyang'],
   // ---- V6.5 新增城市连接 ----
   jiangxia:   ['jiangling', 'yingcheng', 'jiangzhou', 'yuzhou', 'hefei'],
@@ -894,6 +984,311 @@ export const EVENTS = [
       { text: '开山造像（耗金1500，文化+80，繁荣+10）', effect: { money: -1500, culture: 80, prosperity: 10 } },
       { text: '量力而行（文化+30，繁荣+5）', effect: { culture: 30, prosperity: 5 } }
     ]
+  },
+
+  // ---------- V6.5 新增随机事件（天文/文化/军事/经济/政治/特殊 共15个） ----------
+  // 历史：太白经天——金星白昼见于东方，古人以为兵象，主大将执掌兵权
+  {
+    id: 'taibai_jingtian', name: '太白经天', illustration: 'plague',
+    description: '白昼太白经天，光芒赫然。星官奏曰：此兵象也，主大将握权，天下将有大战。',
+    options: [
+      { text: '整军经武（军心+8，耗金400）', effect: { money: -400, armyMorale: 8 } },
+      { text: '下罪己诏（民心+5，军心-3）', effect: { morale: 5, armyMorale: -3 } }
+    ]
+  },
+  // 历史：南北朝官学制度——太学为国子学，培育人才
+  {
+    id: 'establish_taixue', name: '设立太学', illustration: 'harvest',
+    description: '命有司设立太学，招纳生徒，讲习五经。教化大行，人才辈出。',
+    options: [
+      { text: '大兴太学（耗金1000，繁荣+12，政治+5）', effect: { money: -1000, prosperity: 12, generalPolitics: { amt: 5 } } },
+      { text: '暂以养民（繁荣+3）', effect: { prosperity: 3 } }
+    ]
+  },
+  {
+    id: 'recruit_camp', name: '新兵训练营', illustration: 'harvest',
+    description: '诸县送新兵至营，操练三月。弓马娴熟，可堪一战。',
+    options: [
+      { text: '厚赏操练（耗金500，兵源+3000）', effect: { money: -500, pop: 3000 } },
+      { text: '草草操练（兵源+1000）', effect: { pop: 1000 } }
+    ]
+  },
+  {
+    id: 'price_inflation', name: '物价飞涨', illustration: 'plague',
+    description: '岁币浩繁，钱货不通，长安建业两市物价腾踊数倍，百姓怨声载道。',
+    options: [
+      { text: '平抑物价（耗金800，民心+5）', effect: { money: -800, morale: 5 } },
+      { text: '放任自流（民心-10，商业-5）', effect: { morale: -10, comm: -5 } }
+    ]
+  },
+  {
+    id: 'royal_succession', name: '宗室争位', illustration: 'rebellion',
+    description: '宗室诸王各树党羽，觊觎大位。流言四起，人心不安。',
+    options: [
+      { text: '立储定国（众将忠诚+8，耗金600）', effect: { money: -600, generalLoyalty: { amt: 8 } } },
+      { text: '含糊其辞（众将忠诚-5）', effect: { generalLoyalty: { amt: -5 } } }
+    ]
+  },
+  {
+    id: 'famous_doctor', name: '名医出诊', illustration: 'harvest',
+    description: '有神医自彭城来，善治金疮瘟疫。军中将士争延致之。',
+    options: [
+      { text: '重金聘之（耗金400，伤兵归队，民心+5）', effect: { money: -400, morale: 5, pop: 2000 } },
+      { text: '仅赐酒食（民心+2）', effect: { morale: 2 } }
+    ]
+  },
+  {
+    id: 'trade_routes_broken', name: '商路断绝', illustration: 'plague',
+    description: '边境不宁，胡汉商队裹足不前，丝路断绝，市易萧然。',
+    options: [
+      { text: '派兵护商（耗金500，商业+5）', effect: { money: -500, comm: 5 } },
+      { text: '听之任之（商业-8，金钱-300）', effect: { comm: -8, money: -300 } }
+    ]
+  },
+  {
+    id: 'border_farming', name: '边疆屯田', illustration: 'harvest',
+    description: '诸将建议于边地屯田，且耕且战，以实仓廪。',
+    options: [
+      { text: '大兴屯田（耗金600，粮草+3000）', effect: { money: -600, food: 3000 } },
+      { text: '小试屯田（粮草+1000）', effect: { food: 1000 } }
+    ]
+  },
+  {
+    id: 'literary_boom', name: '文学兴盛', illustration: 'harvest',
+    description: '江南文会大兴，诗赋唱和，江左风流复振。有献文章者接踵于路。',
+    options: [
+      { text: '褒奖文士（耗金500，繁荣+10，文化+20）', effect: { money: -500, prosperity: 10, culture: 20 } }
+    ]
+  },
+  {
+    id: 'hu_merchant_horses', name: '胡商献马', illustration: 'harvest',
+    description: '突厥、柔然商队驱骏马千匹至塞下，请求互市。良马可得，骑兵可强。',
+    options: [
+      { text: '以茶帛易马（耗金800，骑兵战力提升）', effect: { money: -800, armyMorale: 8 } },
+      { text: '厚值强买（耗金1500，骑兵+10，民心-3）', effect: { money: -1500, armyMorale: 10, morale: -3 } }
+    ]
+  },
+  {
+    id: 'wall_donation', name: '城防捐资', illustration: 'harvest',
+    description: '城中父老感念主公恩德，集资修缮城墙，雉堞一新。',
+    options: [
+      { text: '受之无愧（防御+8，民心+3）', effect: { defense: 8, morale: 3 } },
+      { text: '婉辞不受（民心+5）', effect: { morale: 5 } }
+    ]
+  },
+  {
+    id: 'scholar_flees', name: '名士来奔', illustration: 'harvest',
+    description: '有北朝名士因避乱南奔，身怀经史，欲为主公讲论治道。',
+    options: [
+      { text: '拜为祭酒（招募一在野将，耗金300）', effect: { money: -300, recruitRandom: true } }
+    ]
+  },
+  {
+    id: 'baihong_guanri', name: '白虹贯日', illustration: 'plague',
+    description: '白虹横贯日轮，太史占之曰：贵人当之，兵大起。朝野惊骇。',
+    options: [
+      { text: '祭天禳灾（耗金500，民心+6）', effect: { money: -500, morale: 6 } },
+      { text: '严备边患（军心+6）', effect: { armyMorale: 6 } }
+    ]
+  },
+  {
+    id: 'craftsman_contest', name: '百工竞技', illustration: 'harvest',
+    description: '召集天下工匠于城中竞技，良匠辈出，百工精巧。',
+    options: [
+      { text: '设金奖优（耗金400，商业+8，繁荣+5）', effect: { money: -400, comm: 8, prosperity: 5 } }
+    ]
+  },
+  {
+    id: 'nomad_market', name: '互市开市', illustration: 'harvest',
+    description: '与边境蛮族约定互市，以茶帛盐铁易马匹皮毛。边民两利，邦交亦睦。',
+    options: [
+      { text: '开互市（金钱+800，蛮族关系+10）', effect: { money: 800, barbarianRel: 10 } },
+      { text: '限市（金钱+300）', effect: { money: 300 } }
+    ]
+  },
+
+  // ============================================================
+  // V7.5 新增随机事件（天文/文化/军事/经济/政治/特殊 共20个）
+  // 技术：沿用现有 EVENTS 格式 { id, name, illustration, description, options:[{text,effect}] }
+  //       effect 字段与 events.js applyEvent 支持的类型一一对应。
+  // ============================================================
+  // ---- 天文（4） ----
+  // 荧惑守心：火星停留在心宿（天蝎座），古人以为大凶，主天子驾崩
+  {
+    id: 'yinghuo_shouxin', name: '荧惑守心', illustration: 'plague',
+    description: '荧惑（火星）守于心宿，经月不移。太史占之曰：大人恶之，天子恐有大祸。朝野震恐，星夜不安。',
+    options: [
+      { text: '下诏罪己，大赦天下（民心+10，耗金500）', effect: { money: -500, morale: 10 } },
+      { text: '密令太史禳星（民心-8，军心+5）', effect: { morale: -8, armyMorale: 5 } }
+    ]
+  },
+  // 老人星见：南天寿星（船底座α）出现，主长治久安
+  {
+    id: 'laoren_xing', name: '老人星见', illustration: 'harvest',
+    description: '南极老人星见于南郊，色黄而明。太史奏曰：此寿星也，见则天下安宁，仁寿无疆。百姓争相传颂。',
+    options: [
+      { text: '南郊祭祀庆贺（民心+12，耗金400）', effect: { money: -400, morale: 12, prosperity: 5 } },
+      { text: '史官记录祥瑞（繁荣+5）', effect: { prosperity: 5 } }
+    ]
+  },
+  // 客星犯紫微：新星闯入紫微垣，主大臣擅权
+  {
+    id: 'kexing_ziwei', name: '客星犯紫微', illustration: 'plague',
+    description: '忽有客星苍白色，渐入紫微垣，光芒侵逼帝座。太史令惶惶奏报：此非人臣之象，恐有权臣谋逆。',
+    options: [
+      { text: '收揽兵权，整肃朝纲（众将忠诚+6，耗金600）', effect: { money: -600, generalLoyalty: { amt: 6 } } },
+      { text: '不以为意（众将忠诚-6）', effect: { generalLoyalty: { amt: -6 } } }
+    ]
+  },
+  // 月食：月被地影遮蔽，女主之象
+  {
+    id: 'yue_shi', name: '月食', illustration: 'plague',
+    description: '月食既，赤如丹霞，良久乃复。百姓惊走，以为天狗吞月。宫中击鼓救月，彻夜不宁。',
+    options: [
+      { text: '宫中击鼓救月，大赦天下（民心+8，耗金300）', effect: { money: -300, morale: 8 } },
+      { text: '命史官记之（民心-3）', effect: { morale: -3 } }
+    ]
+  },
+  // ---- 文化（3） ----
+  // 书法大家：王羲之式的书法家出现
+  {
+    id: 'shufa_dajia', name: '书法大家', illustration: 'harvest',
+    description: '有书家隐居东山，一笔行书飘若浮云、矫若惊龙。求书者踏破门槛，片纸只字皆为珍宝。',
+    options: [
+      { text: '聘为侍书，弘扬书道（耗金500，繁荣+10，文化+20）', effect: { money: -500, prosperity: 10, culture: 20 } }
+    ]
+  },
+  // 诗会雅集：文人集会赋诗
+  {
+    id: 'shihui_yaji', name: '诗会雅集', illustration: 'harvest',
+    description: '江东文士会于兰亭曲水，流觞赋诗，江左风流复振。有献诗者，篇篇珠玉。',
+    options: [
+      { text: '命百官和诗，编为集子（耗金400，繁荣+8，文化+15）', effect: { money: -400, prosperity: 8, culture: 15 } }
+    ]
+  },
+  // 胡乐东来：西域音乐传入
+  {
+    id: 'huyue_donglai', name: '胡乐东来', illustration: 'harvest',
+    description: '西域龟兹乐师东来，琵琶、箜篌、羌胡之声铿锵悦耳。宫廷教坊争相习之，胡汉交融。',
+    options: [
+      { text: '设教坊教习胡乐（耗金300，繁荣+6，文化+10）', effect: { money: -300, prosperity: 6, culture: 10 } },
+      { text: '以礼乐为正，拒胡乐（繁荣-3）', effect: { prosperity: -3 } }
+    ]
+  },
+  // ---- 军事（3） ----
+  // 战马繁殖：牧马蕃息
+  {
+    id: 'zhanma_fanzhi', name: '战马繁殖', illustration: 'harvest',
+    description: '陇右牧场水草丰美，战马蕃息，骟驹成群。牧马监报：今年马驹翻倍，骑兵可大强。',
+    options: [
+      { text: '扩建牧场（耗金500，骑兵战力提升，军心+8）', effect: { money: -500, armyMorale: 8 } }
+    ]
+  },
+  // 军械改良：改进兵器
+  {
+    id: 'junxie_gailiang', name: '军械改良', illustration: 'harvest',
+    description: '有匠人改良百炼钢法，铠甲强韧锋利，弩机射程大增。诸营争相仿制，军备焕然一新。',
+    options: [
+      { text: '推广新法（耗金700，军心+10）', effect: { money: -700, armyMorale: 10 } },
+      { text: '仅试造（军心+4）', effect: { armyMorale: 4 } }
+    ]
+  },
+  // 水军操练：操练水师
+  {
+    id: 'shuijun_caochuan', name: '水军操练', illustration: 'harvest',
+    description: '沿江诸郡操练楼船水军，习水战、习接舷、习火攻。江面旌旗蔽日，楼船千艘。',
+    options: [
+      { text: '大阅水军（耗金600，军心+8，民心+3）', effect: { money: -600, armyMorale: 8, morale: 3 } }
+    ]
+  },
+  // ---- 经济（3） ----
+  // 市集扩建：扩建市场
+  {
+    id: 'shiji_kuojian', name: '市集扩建', illustration: 'harvest',
+    description: '城中旧市狭小，商贾拥挤。父老请扩建新市，分列谷物、布帛、珠玉、马市四区。',
+    options: [
+      { text: '扩建新市（耗金800，商业+10，繁荣+8）', effect: { money: -800, comm: 10, prosperity: 8 } },
+      { text: '因陋就简（商业+3）', effect: { comm: 3 } }
+    ]
+  },
+  // 水利兴修：兴修水利
+  {
+    id: 'shuili_xingxiu', name: '水利兴修', illustration: 'harvest',
+    description: '有河渠年久淤塞，诸将建议征发民夫疏浚旧渠，引水灌田。功成则旱涝保收。',
+    options: [
+      { text: '大兴水利（耗金700，粮草+4000，民心+5）', effect: { money: -700, food: 4000, morale: 5 } }
+    ]
+  },
+  // 五谷丰登：好收成
+  {
+    id: 'wugu_fengdeng', name: '五谷丰登', illustration: 'harvest',
+    description: '风调雨顺，五谷丰登。田野金黄，仓廪充实。百姓奔走相告，歌于途，舞于室。',
+    options: [
+      { text: '减免今年赋税（民心+12，粮草+3000）', effect: { food: 3000, morale: 12 } },
+      { text: '照常征收（粮草+5000）', effect: { food: 5000, morale: -5 } }
+    ]
+  },
+  // ---- 政治（3） ----
+  // 大臣谏言：直臣进谏
+  {
+    id: 'dachen_jianyan', name: '大臣谏言', illustration: 'harvest',
+    description: '有直臣当殿叩头，痛陈时政得失，言辞恳切，涕泪横流。或纳之则社稷安，或拒之则忠良寒心。',
+    options: [
+      { text: '虚心纳谏（民心+8，众将忠诚+5）', effect: { morale: 8, generalLoyalty: { amt: 5 } } },
+      { text: '斥其狂妄（众将忠诚-5，民心-3）', effect: { generalLoyalty: { amt: -5 }, morale: -3 } }
+    ]
+  },
+  // 宗室和睦：宗室团结
+  {
+    id: 'zongshi_hemu', name: '宗室和睦', illustration: 'harvest',
+    description: '宗室诸王放下嫌隙，宴饮于朝堂，携手共辅王室。国中宗室雍睦，人心安定。',
+    options: [
+      { text: '厚赏诸王（耗金500，众将忠诚+8）', effect: { money: -500, generalLoyalty: { amt: 8 } } }
+    ]
+  },
+  // 百姓拥戴：万民拥戴
+  {
+    id: 'baixiong_yongdai', name: '百姓拥戴', illustration: 'harvest',
+    description: '治下百姓感主公恩德，父老牵羊担酒，叩伏于道，争献万民伞。歌曰：明公在世，父母不过。',
+    options: [
+      { text: '慰劳父老（民心+15，金钱+500）', effect: { morale: 15, money: 500 } }
+    ]
+  },
+  // ---- 特殊（4） ----
+  // 异人献宝：异人献宝物
+  {
+    id: 'yiren_xianbao', name: '异人献宝', illustration: 'harvest',
+    description: '有异人自称自昆仑来，献上古宝剑一口，剑锷晶莹，削铁如泥。云此剑当赠明主。',
+    options: [
+      { text: '厚赏异人（金钱+1500，招募一将）', effect: { money: 1500, recruitRandom: true } },
+      { text: '疑其为妖，逐之（民心-3）', effect: { morale: -3 } }
+    ]
+  },
+  // 高僧译经：高僧翻译佛经
+  {
+    id: 'gaoseng_yijing', name: '高僧译经', illustration: 'harvest',
+    description: '有西域高僧携贝叶经东来，于寺中开译场，手执笔授，口诵梵音。十年译经千卷，佛法大明。',
+    options: [
+      { text: '护持译场（耗金600，文化+50，民心+5）', effect: { money: -600, culture: 50, morale: 5 } },
+      { text: '仅以客礼待之（文化+20）', effect: { culture: 20 } }
+    ]
+  },
+  // 道士飞升：道士尸解
+  {
+    id: 'daoshi_feisheng', name: '道士飞升', illustration: 'harvest',
+    description: '有道士于山中炼形辟谷，忽一日云气绕室，异香满谷，弟子启户，但余衣履在榻，人已羽化而去。',
+    options: [
+      { text: '敕建观宇供奉（耗金500，文化+30，科技+10）', effect: { money: -500, culture: 30, tech: 10 } }
+    ]
+  },
+  // 名医预防：防疫
+  {
+    id: 'mingyi_yufang', name: '名医备瘟', illustration: 'harvest',
+    description: '有名医言今岁疠气将流行，建议预遣医官巡行郡县，施药散、掘深井、烧熏辟瘟。',
+    options: [
+      { text: '遣使巡行防疫（耗金500，人口+5000，民心+5）', effect: { money: -500, pop: 5000, morale: 5 } },
+      { text: '备而不用（人口+1000）', effect: { pop: 1000 } }
+    ]
   }
 ];
 
@@ -1184,6 +1579,127 @@ export const HISTORICAL_EVENTS = [
     options: [
       { text: '顺天应人（自动大战，民心+15，触发统一结局检测）', effect: { massBattle: true, factionMorale: 15 } },
       { text: '缓师抚民（耗金2000，民心+5）', effect: { money: -2000, factionMorale: 5 } }
+    ]
+  },
+
+  // ---- V6.5 新增历史事件（5个：尔朱荣/陈霸先破齐/宇文护专政/齐后主/杨坚受禅） ----
+  {
+    id: 'erzhu_rong_hetian', name: '尔朱荣入洛', illustration: 'plague',
+    minTurn: 1, factions: ['dongwei', 'xiwei'],
+    description: '契胡酋长尔朱荣举兵入洛，沉胡太后及幼主于河阴，纵兵杀百官两千余人，史称"河阴之变"。朝士为之一空，魏室遂衰。',
+    options: [
+      { text: '收编尔朱余部（招募一将，耗金500）', effect: { recruitRandom: true, money: -500, factionMorale: 5 } },
+      { text: '声讨尔朱氏（民心+8，军心+5）', effect: { factionMorale: 8, armyMorale: 5 } }
+    ]
+  },
+  {
+    id: 'chen_baikuan', name: '陈霸先破齐', illustration: 'cavalry_charge',
+    minTurn: 5, faction: 'nanchao',
+    description: '北齐大军十万逼建康，陈霸先率精兵潜出北郊，于白下/莫府山大破齐师，斩数千人，虏萧轨等。江左转危为安。',
+    options: [
+      { text: '重演白下大捷（自动大战，民心+12）', effect: { massBattle: true, factionMorale: 12 } }
+    ]
+  },
+  {
+    id: 'yuwen_hu_regent', name: '宇文护专政', illustration: 'plague',
+    minTurn: 8, faction: 'xiwei',
+    description: '宇文护连废三帝，大权独揽，群臣屏息。或亲之以为援，或除之以安社稷。',
+    options: [
+      { text: '隐忍待命（众将忠诚-5，军心+5）', effect: { generalLoyalty: { amt: -5 }, armyMorale: 5 } },
+      { text: '密谋诛护（耗金800，众将忠诚+8）', effect: { money: -800, generalLoyalty: { amt: 8 } } }
+    ]
+  },
+  {
+    id: 'gao_wei_ainin', name: '齐后主宠佞', illustration: 'plague',
+    minTurn: 20, faction: 'dongwei',
+    description: '齐后主高纬宠信陆令萱、和士开等奸佞，诛杀忠良，朝政日坏。北周闻之，皆曰可伐。',
+    options: [
+      { text: '直言极谏（耗金500，众将忠诚+5）', effect: { money: -500, generalLoyalty: { amt: 5 } } },
+      { text: '同流合污（民心-10，商业+5）', effect: { factionMorale: -10, comm: 5 } }
+    ]
+  },
+  {
+    id: 'yang_jian_shouchan', name: '杨坚受禅建隋', illustration: 'harvest',
+    minTurn: 28, faction: 'xiwei',
+    condition: (game) => {
+      const g = game.generals.get('yang_jian');
+      return g && g.faction === game.playerFaction;
+    },
+    description: '随国公杨坚受周静帝禅让，即皇帝位，国号隋，改元开皇。大崇改革，北镇突厥，南图江左。',
+    options: [
+      { text: '与民更始（民心+15，金钱+1500，全兵buff）', effect: { factionMorale: 15, money: 1500, garrisonBuff: true } },
+      { text: '大杀周室（众将忠诚-8，军心+5）', effect: { generalLoyalty: { amt: -8 }, armyMorale: 5 } }
+    ]
+  },
+
+  // ============================================================
+  // V7.5 新增历史事件（5个详细版：孝文改革/六镇起义/河阴之变/沙苑之战/周武灭佛）
+  // 技术：沿用 HISTORICAL_EVENTS 格式。minTurn 以开局年份折算回合。
+  //       condition 回调用于校验城市归属/武将存活/势力存续。
+  // ============================================================
+  // 北魏孝文帝改革（494年）：迁都洛阳，全面汉化
+  // 历史：太和十七年，孝文帝以南伐为名，率众至洛阳，定迁都之计。
+  // 禁胡服、断北语、改鲜卑姓为汉姓（拓跋→元），定族姓，鼓励胡汉通婚。
+  // 改革文治大兴，但六镇武人地位骤降，埋下分裂隐患。
+  {
+    id: 'xiaowen_banjin', name: '孝文汉化迁都', illustration: 'harvest',
+    minTurn: 1, faction: 'dongwei',
+    description: '孝文帝驾至洛阳，诏禁胡服、断北语，改拓跋氏为元氏，定国族四姓，鼓励胡汉通婚。文武衣冠，一如中原。然六镇旧人怨望，北边将有大变。',
+    options: [
+      { text: '全面推行汉化（繁荣+20，文化+60，民心+10，军心-8）', effect: { prosperity: 20, culture: 60, morale: 10, armyMorale: -8 } },
+      { text: '渐进改革，兼顾武人（繁荣+8，文化+25，军心+5）', effect: { prosperity: 8, culture: 25, armyMorale: 5 } }
+    ]
+  },
+  // 六镇起义详细版（523年）：沃野镇破六韩拔陵起义
+  // 历史：正光四年，沃野镇民破六韩拔陵聚众杀镇将，改元真王。
+  // 六镇并应，武川、怀朔相继陷落。魏廷束手无策，引柔然夹击，事虽暂平，
+  // 然高欢、宇文泰皆起于六镇，北魏遂分裂。
+  {
+    id: 'liuzhen_qiyi_full', name: '六镇烽烟', illustration: 'rebellion',
+    minTurn: 1, factions: ['dongwei', 'xiwei'],
+    description: '沃野镇民破六韩拔陵杀镇将，改元真王。六镇并起，烽火千里。镇兵皆百战余勇，官军望风奔溃。收揽其众，可成霸业之基。',
+    options: [
+      { text: '出兵镇压（损兵3000，民心+5）', effect: { armyLoss: 3000, morale: 5 } },
+      { text: '招抚收编（耗金1000，招募两将）', effect: { money: -1000, recruitRandom: true } }
+    ]
+  },
+  // 河阴之变详细版（528年）：尔朱荣屠百官
+  // 历史：胡太后毒杀孝明帝，尔朱荣以清君侧为名举兵入洛。
+  // 迎立孝庄帝，沉胡太后及幼主于河阴，纵兵杀丞相以下百官两千余人。
+  // 朝士为之一空，元氏宗室凋零，魏室名存实亡。
+  {
+    id: 'heyin_tusha', name: '河阴之变', illustration: 'plague',
+    minTurn: 3, factions: ['dongwei', 'xiwei'],
+    description: '尔朱荣引百官迎驾于河阴，责天下丧乱皆由朝臣不忠，纵骑杀两千余人，朝士为之一空。元氏公卿，喋血涂地。自此魏政归尔朱氏。',
+    options: [
+      { text: '收罗幸存朝士（招募一将，耗金500）', effect: { recruitRandom: true, money: -500, factionMorale: 5 } },
+      { text: '引兵自保（民心-8，军心+5）', effect: { factionMorale: -8, armyMorale: 5 } }
+    ]
+  },
+  // 沙苑之战详细版（537年）：宇文泰以少胜多
+  // 历史：东魏高欢率二十万大军攻西魏，宇文泰不满万人屯沙苑。
+  // 李弼建议于渭曲芦苇荡中设伏。东魏军见西魏兵少，争先进击，军阵乱。
+  // 伏兵四起，于谨等合战，李弼横击其腹，东魏军大败，丧甲士八万。
+  // 关中遂安，东西魏鼎立之势成。
+  {
+    id: 'shayuan_dajie', name: '沙苑芦伏', illustration: 'cavalry_charge',
+    minTurn: 4, factions: ['xiwei', 'dongwei'],
+    description: '东魏军大至，连营数十里。宇文泰以轻骑万人伏于渭曲芦苇荡中。敌兵争进，阵列紊乱，伏鼓骤鸣，芦中戈甲如林。高欢大败，丧甲士八万，丧服资仗无数。',
+    options: [
+      { text: '重演沙苑大捷（自动大战，民心+12，金钱+1000）', effect: { massBattle: true, factionMorale: 12, money: 1000 } }
+    ]
+  },
+  // 北周武帝灭佛详细版（574年）：毁佛道二教
+  // 历史：北周武帝宇文邕亲御大德殿，集百僚讨论释老。
+  // 下诏断佛道二教，经像悉毁，沙门道士并令还俗。
+  // 三百万僧尼编入户贯，寺观财产皆没官。国库大增，兵源广拓，为灭齐奠基。
+  {
+    id: 'zhoushu_miefu', name: '周武灭佛', illustration: 'harvest',
+    minTurn: 16, faction: 'xiwei',
+    description: '周武帝御大德殿，集百僚及沙门道士，亲讲《礼记》，下诏断佛道二教。经像毁弃，僧尼还俗三百万，寺观财物县官。国用大饶，兵源广拓。',
+    options: [
+      { text: '推行灭佛（金钱+2000，人口+30000，民心-10）', effect: { money: 2000, pop: 30000, factionMorale: -10, destroyTemple: true } },
+      { text: '尊崇释道（民心+10，金钱-800）', effect: { factionMorale: 10, money: -800 } }
     ]
   }
 ];

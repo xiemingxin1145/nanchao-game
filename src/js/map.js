@@ -188,6 +188,13 @@ export class IsometricMap {
     this.render();
   }
 
+  // V7.5：切换大地图/小地图缩放（M 键）
+  toggleZoom() {
+    this.scale = this.scale > 1.2 ? 1.0 : 1.5;
+    this.dirty = true;
+    this.render();
+  }
+
   // V5.0：视口裁剪 —— 屏幕坐标是否落在可见区域（含余量）
   _onScreen(x, y, margin = 120) {
     return x > -margin && x < this.canvas.width + margin &&

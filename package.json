@@ -1,13 +1,13 @@
 {
   "name": "nanchao",
-  "version": "6.0.0",
+  "version": "8.0.0",
   "description": "南北朝 - 2.5D 回合制历史策略游戏",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
     "build:update": "electron-builder --linux AppImage",
-    "test": "node test/smoke_v50.mjs && node test/smoke_v55.mjs"
+    "test": "node test/smoke_v50.mjs && node test/smoke_v55.mjs && node test/smoke_v60.mjs && node test/smoke_v65.mjs && node test/smoke_v70.mjs"
   },
   "author": "Nanchao Studio",
   "license": "MIT",

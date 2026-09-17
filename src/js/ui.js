@@ -1,7 +1,7 @@
 // ============================================================
 // ui.js — UI 渲染、面板、弹窗、交互（表现层强化版）
 // ============================================================
-import { FACTIONS, SEASONS, SEASON_ICON, UNIT_TYPES, IMG, CITY_LINKS, TERRAIN, SCENARIOS, DEFAULT_SCENARIO } from './data.js';
+import { FACTIONS, SEASONS, SEASON_ICON, UNIT_TYPES, IMG, CITY_LINKS, TERRAIN, SCENARIOS, DEFAULT_SCENARIO, GENERALS } from './data.js';
 import { Game } from './game.js';
 import { IsometricMap } from './map.js';
 import { saveGame, loadGame, hasSave, getSaveInfo, getCurrentNGPlusLevel } from './save.js';
@@ -11,6 +11,7 @@ import { Animator } from './animation.js';
 import { IntroPlayer } from './intro.js';
 import { isIntroCompleted } from './ngplus.js';
 import { TITLES, MAX_ACTIVE_TITLES } from './titles.js';
+import { OFFICES, TITLES as RANKS, getOffice } from './office.js'; // V7.0 官职爵位
 import { formatPlayTime } from './stats.js';
 // V4.0: 模组系统
 import { modManager } from './modding.js';
@@ -103,10 +104,22 @@ export class UI {
   // ---------- 主菜单 ----------
   showMainMenu() {
     const ngLevel = getCurrentNGPlusLevel();
+    // V7.5：生成 10 个金色飘浮粒子（萤火虫/星光）
+    const particles = Array.from({ length: 10 }, (_, i) => {
+      const left = Math.random() * 100;
+      const top = 20 + Math.random() * 70;
+      const dx = (Math.random() - 0.5) * 80;
+      const dy = -30 - Math.random() * 60;
+      const dur = 6 + Math.random() * 8;
+      const delay = Math.random() * 6;
+      return `<span class="menu-particle" style="left:${left}%;top:${top}%;` +
+        `--dx:${dx}px;--dy:${dy}px;--dur:${dur}s;--delay:${delay}s"></span>`;
+    }).join('');
     this.container.innerHTML = `
       <div class="main-menu">
         <div class="title-screen">
           <img src="${IMG.titleBg}" class="title-bg kenburns" onerror="this.style.display='none'">
+          <div class="menu-particles">${particles}</div>
           <div class="title-overlay">
             <h1 class="game-title title-glow">南北朝</h1>
             <p class="subtitle">—— 乱世英雄起四方 ——</p>
@@ -121,6 +134,7 @@ export class UI {
               <button class="btn-ancient" id="btn-quit">退出</button>
             </div>
           </div>
+          <div class="version-badge">V7.5 · 深度精修版</div>
         </div>
       </div>
     `;
@@ -584,6 +598,14 @@ export class UI {
     return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
+  // V7.5：都城 ID → 中文名
+  _capitalName(cid) {
+    const map = { jiankang: '建康', yecheng: '邺城', changan: '长安', luoyang: '洛阳',
+                  jinyang: '晋阳', jiangling: '江陵', yingcheng: '郢城', yuzhou: '豫州',
+                  pingcheng: '平城', chengdu: '成都', guangzhou: '广州' };
+    return map[cid] || cid;
+  }
+
   // ---------- 势力选择（含剧本选择 / 热座多选） ----------
   // opts: { hotSeat:boolean, scenario?:string }
   showFactionSelect(opts = {}) {
@@ -613,16 +635,28 @@ export class UI {
           <p class="scenario-desc hint">${sc.description}</p>
           ${hotSeat ? '<p class="hint" style="color:#E8D5A3">勾选 2~6 个由人类操控的势力，其余自动由 AI 执政。</p>' : ''}
           <div class="faction-cards" id="faction-cards">
-            ${activeFactions.map(f => `
+            ${activeFactions.map(f => {
+              // V7.5：难度星级（按初始城市数估算，城多=简单）
+              const cityCount = (f.startCities || []).length;
+              const diff = cityCount >= 8 ? 2 : cityCount >= 4 ? 3 : 4;
+              const stars = '★'.repeat(diff) + '<span class="star-dim">' + '★'.repeat(5 - diff) + '</span>';
+              // V7.5：该势力前3位核心武将头像预览
+              const topGens = GENERALS.filter(g => g.faction === f.id).slice(0, 3);
+              const genThumbs = topGens.map(g =>
+                `<img class="gen-thumb" src="${IMG.portrait(g.portrait || g.id)}" title="${g.name}" onerror="this.style.display='none'">`
+              ).join('');
+              return `
               <div class="faction-card ${hotSeat ? 'multi-select' : ''}" data-fid="${f.id}">
                 ${hotSeat ? '<div class="multi-check">□</div>' : ''}
                 <div class="faction-color-bar" style="background:${f.color}"></div>
                 <h3 style="color:${f.color}">${f.name}</h3>
-                <p class="faction-capital">都城：${FACTIONS[f.id].capital === 'jiankang' ? '建康' : FACTIONS[f.id].capital === 'yecheng' ? '邺城' : FACTIONS[f.id].capital === 'changan' ? '长安' : FACTIONS[f.id].capital}</p>
+                <p class="faction-capital">都城：${this._capitalName(f.capital)}</p>
+                <p class="faction-stars">难度 ${stars}</p>
                 <p class="faction-desc">${f.description}</p>
                 <p class="faction-bonus"><b>特色：</b>${f.bonus}</p>
-              </div>
-            `).join('')}
+                <div class="faction-generals-preview">${genThumbs}</div>
+              </div>`;
+            }).join('')}
           </div>
           ${hotSeat ? `<button class="btn-ancient" id="btn-hotseat-start" disabled>开始热座（已选 <span id="hs-count">0</span> 方）</button>` : ''}
           <button class="btn-ancient" id="btn-back-menu">返回</button>
@@ -691,10 +725,14 @@ export class UI {
             <b style="color:${myFac.color}">${myFac.name}</b>
           </div>
           <div class="top-item">回合 <b id="hdr-turn">1</b></div>
+          <div class="top-item" id="era-wrap" title="点击查看王朝"> <b id="hdr-era" class="era-click">—</b></div>
+          <div class="top-item" title="正统性">正统 <b id="hdr-legit" style="color:#e8c060">0</b>
+            <span class="legit-bar-wrap"><span class="legit-bar-fill" id="hdr-legit-bar" style="width:0%"></span></span>
+          </div>
           <div class="top-item">季节 <b id="hdr-season">春</b></div>
-          <div class="top-item">金 <b id="hdr-money">0</b></div>
-          <div class="top-item">粮 <b id="hdr-food">0</b></div>
-          <div class="top-item">兵 <b id="hdr-army">0</b></div>
+          <div class="top-item"><span class="res-icon">金</span><b id="hdr-money">0</b></div>
+          <div class="top-item"><span class="res-icon">粮</span><b id="hdr-food">0</b></div>
+          <div class="top-item"><span class="res-icon">兵</span><b id="hdr-army">0</b></div>
           <div class="top-item">民心 <b id="hdr-morale">60</b></div>
           <div class="top-bar-btns">
             <button class="btn-icon" id="btn-mute" title="静音">🔊</button>
@@ -702,6 +740,9 @@ export class UI {
             <button class="btn-icon" id="btn-ach" title="成就">🏆</button>
             <button class="btn-icon" id="btn-stats" title="统计">📊</button>
             ${this.game.netRole ? '<button class="btn-icon" id="btn-lan-chat" title="聊天">💬</button>' : ''}
+            <button class="btn-small" id="btn-dynasty" title="王朝/禅让">王朝</button>
+            <button class="btn-small" id="btn-office" title="官职/爵位">官职</button>
+            <button class="btn-small" id="btn-trade" title="贸易商路">贸易</button>
             <button class="btn-small" id="btn-save">存档</button>
             <button class="btn-small" id="btn-diplomacy">外交</button>
             <button class="btn-small" id="btn-recruit">招募</button>
@@ -753,6 +794,11 @@ export class UI {
     document.getElementById('btn-stats').onclick = () => this.showStatsPanel();
     document.getElementById('btn-mute').onclick = () => this.toggleMute();
     document.getElementById('top-faction').onclick = () => this.showFactionIntel();
+    // V7.0：王朝/官职/贸易面板
+    const bd = document.getElementById('btn-dynasty'); if (bd) bd.onclick = () => this.showDynastyPanel();
+    const bo = document.getElementById('btn-office'); if (bo) bo.onclick = () => this.showOfficePanel();
+    const bt = document.getElementById('btn-trade'); if (bt) bt.onclick = () => this.showTradePanel();
+    const era = document.getElementById('era-wrap'); if (era) era.onclick = () => this.showDynastyPanel();
     const chatBtn = document.getElementById('btn-lan-chat');
     if (chatBtn) chatBtn.onclick = () => this._showLanChatPanel();
 
@@ -952,6 +998,15 @@ export class UI {
     const exp = gen.exp || 0;
     const expNeed = 100;
     const skills = Array.isArray(gen.skills) ? gen.skills : [];
+    // V7.5：五维属性进度条
+    const aptBar = (label, val) => {
+      const v = Math.max(0, Math.min(100, Math.round(val || 0)));
+      return `<div class="apt-bar-wrap"><span class="apt-label">${label}</span>` +
+        `<span class="apt-track"><span class="apt-fill" style="width:${v}%"></span></span>` +
+        `<span class="apt-val">${v}</span></div>`;
+    };
+    // V7.5：武将历史简介（按ID查找，50字以内）
+    const intro = this._generalIntro(gen.id);
 
     slot.innerHTML = `
       <div class="general-detail">
@@ -960,18 +1015,88 @@ export class UI {
         </div>
         <div style="font-size:15px;color:#FFD700" class="name-glow">${gen.name} <small style="color:#9A8B6A">Lv.${level}</small></div>
         <div class="general-meta-row"><span>身份</span><b>${gen.role}</b></div>
-        <div class="general-meta-row"><span>忠诚</span><b>${Math.round(gen.loyalty)}</b></div>
-        <div class="general-meta-row"><span>统/武</span><b>${gen.command} / ${gen.force}</b></div>
-        <div class="general-meta-row"><span>智/政</span><b>${gen.intel} / ${gen.politics}</b></div>
+        <div class="general-meta-row"><span>官职</span><b style="color:#e8c060">${gen.office ? (getOffice(gen.office).name) : '—'}</b></div>
+        <div class="general-meta-row"><span>爵位</span><b style="color:#c98be0">${gen.title ? (RANKS.find(t=>t.id===gen.title)||{}).name : '—'}</b></div>
+        ${aptBar('统', gen.command)}
+        ${aptBar('武', gen.force)}
+        ${aptBar('智', gen.intel)}
+        ${aptBar('政', gen.politics)}
+        ${aptBar('忠', gen.loyalty)}
         <div class="radar-wrap"><canvas id="gen-radar" width="160" height="160"></canvas></div>
         <div class="exp-bar-label"><span>经验</span><b>${exp}/${expNeed}</b></div>
         <div class="exp-bar-wrap"><div class="exp-bar" style="width:${Math.min(100, exp / expNeed * 100)}%"></div></div>
         ${skills.length > 0 ? `<div class="skill-chips">${skills.map(s => `<span class="skill-chip">${typeof s === 'string' ? s : (s.name || '技能')}</span>`).join('')}</div>` : ''}
         ${this._renderGeneralTitles(gen)}
+        ${intro ? `<p class="hint" style="margin-top:6px;font-size:11px;line-height:1.5">${intro}</p>` : ''}
       </div>
     `;
     const cv = document.getElementById('gen-radar');
     if (cv) this.drawRadar(cv, gen);
+  }
+
+  // V7.5：武将历史简介（50字以内）
+  _generalIntro(genId) {
+    const intros = {
+      chen_baxian: '陈朝开国之君，起于江东，定祸乱，建陈社稷。',
+      wang_sengbian: '梁朝名将，与陈霸先共平侯景之乱，后为霸先所杀。',
+      wei_rui: '梁朝儒将，善战有谋，钟离大捷以少胜多。',
+      yang_kan: '梁朝猛将，善守城，侯景之乱中坚守台城。',
+      chen_qian: '陈文帝，起自布衣，知民疾苦，治国清明。',
+      chen_xu: '陈宣帝，太建北伐，一度收复淮南。',
+      chen_qingzhi: '白袍统帅，七千白袍军北伐，四十七战皆捷。',
+      wu_mingche: '陈朝名将，太建北伐主力，后吕梁兵败。',
+      hou_andu: '陈朝猛将，从陈霸先定天下，性忠勇。',
+      hou_zhen: '陈朝名将，治军严整，屡立战功。',
+      zhang_zhaoda: '陈朝名将，平定湘郢，屡破周师。',
+      hu_luguang: '北齐名将，落雕都督，守城百战百胜，后被冤杀。',
+      gao_huan: '北齐神武帝，起于怀朔，挟魏帝令诸侯，奠定齐基。',
+      gao_cheng: '北齐文襄帝，高欢长子，继父业，后遇刺。',
+      gao_yang: '北齐文宣帝，代魏建齐，初期英明，后昏暴。',
+      gao_yan: '北齐孝昭帝，在位短暂，文治尚可。',
+      gao_zhan: '北齐武成帝，宠信奸佞，朝政渐坏。',
+      gao_rui: '北齐宗室名将，宗室贤王，后被冤死。',
+      gao_changgong: '兰陵王，戴面具冲阵，邙山大捷，后被鸩死。',
+      gao_aocao: '北齐猛将，从高欢起义，勇冠三军。',
+      duan_xiaoxian: '北齐名将，与斛律光并称，治军严明。',
+      duan_shao: '北齐名将，善谋能战，镇守晋阳。',
+      he_shikai: '北齐佞臣，和士开，宠信于齐后主。',
+      wang_lin: '南朝忠臣之后，据郢州，志在匡复梁室。',
+      xiao_mohe: '陈朝猛将，勇力过人，从吴明彻北伐。',
+      xiao_zhuang: '南朝宗室，北齐所立的梁主。',
+      xiao_cha: '后梁宣帝，附庸于西魏/北周。',
+      xiao_kui: '后梁明帝，守江陵一隅。',
+      li_hu: '北周开国功臣，八柱国之一，唐高祖李渊祖父。',
+      yuwen_tai: '北周奠基人，据关中，创府兵制，行苏绰六条诏书。',
+      yuwen_jue: '北周孝闵帝，代西魏建周。',
+      yuwen_hu: '北周权臣，连废三帝，后被武帝诛。',
+      yuwen_yong: '北周武帝，灭佛强国，灭北齐，统一北方。',
+      yuwen_yu: '北周明帝，聪敏有器量，被宇文护毒杀。',
+      yang_jian: '隋文帝，代周建隋，后灭陈统一全国。',
+      yang_zhong: '北周名将，隋文帝之父，封隋国公。',
+      yu_chijiong: '北周名将，后起兵反杨坚，败死。',
+      dugu_xin: '北周名将，八柱国之一，三朝外戚。',
+      wei_xiaokuan: '北周名将，玉璧守城战之名将。',
+      wei_xuan: '北周将领。',
+      li_bi: '北周名将，沙苑之战献计横击。',
+      wang_xiong: '北周猛将，以忠勇闻。',
+      pan_chuntuo: '北周猛将。',
+      zhao_gui: '北周将领。',
+      zhou_wenyuan: '北周将领。',
+      yu_jin: '北周名将，于谨，破江陵，谋略过人。',
+      du_sengming: '南陈水军将领。',
+      fan_yi: '南朝文人，官员。',
+      lei_cizong: '南陈将领。',
+      ren_zhong: '南陈将领。',
+      he_ruodun: '北周/隋名将，贺若敦。',
+      hu_luxian: '北齐将领，斛律光之弟。',
+      yuan_jingshan: '北齐/北周将领。',
+      wang_cao: '北齐将领。',
+      wang_lin: '南朝忠臣之后，据郢州抗陈。',
+      shen_ke: '南陈将领。',
+      hu_ruodun: '北周名将，善射。',
+      pan_chuntuo: '北周猛将。',
+    };
+    return intros[genId] || '';
   }
 
   // V3.5：渲染武将称号区
@@ -1734,7 +1859,177 @@ export class UI {
     this.refreshUI();
   }
 
-  // ---------- 招募在野武将 ----------
+  // ============================================================
+  // V7.0 — 王朝 / 正统 / 禅让面板
+  // ============================================================
+  showDynastyPanel() {
+    const info = this.game.getDynastyInfo();
+    if (!info) { this.toast('王朝数据未初始化'); return; }
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    const canAb = info.canAbdicate.ok;
+    const candHtml = this.game.getAbdicateCandidates().map(d =>
+      `<button class="btn-small" ${canAb ? '' : 'disabled'} onclick="__ui_.doAbdicate('${d.id}')">受禅建${d.name}</button>`
+    ).join('');
+    modal.innerHTML = `
+      <div class="modal">
+        <h2 class="modal-title">👑 王朝 · ${this._escHtml(info.dynastyName)}</h2>
+        <div class="dynasty-hero">
+          <div class="stat-row"><span>当朝年号</span><b>${this._escHtml(info.eraName)} ${info.eraYear}年</b></div>
+          <div class="stat-row"><span>正统</span><b style="color:${info.legitimacy>=80?'#e8c060':'#e8d5a3'}">${info.legitimacy}/100</b></div>
+          <div class="stat-row"><span>皇帝</span><b>${info.emperor ? info.emperor.name : '—'}（政${info.emperor?info.emperor.politics:0}）</b></div>
+          <div class="stat-row"><span>太子</span><b>${info.heir ? info.heir.name : '未定'}</b></div>
+        </div>
+        <h3 class="panel-subtitle">故都得失（每占一都 +18 正统）</h3>
+        <div class="stat-grid">
+          ${info.ancientCapitals.map(c =>
+            `<div class="stat-row"><span>${c.name}</span><b style="color:${c.owned?'#55cc55':'#888'}">${c.owned?'✓ 据有':'○ 未取'}</b></div>`).join('')}
+        </div>
+        <h3 class="panel-subtitle">禅让大典</h3>
+        <p class="hint">条件：正统≥80、城市≥20、君主政治≥80。</p>
+        ${canAb
+          ? `<p class="hint" style="color:#55cc55">◆ 天命攸归，可受前朝禅让！</p><div class="action-buttons">${candHtml}</div>`
+          : `<p class="hint">${this._escHtml(info.canAbdicate.msg)}</p>`}
+        <button class="btn-ancient" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  doAbdicate(newDynastyId) {
+    const r = this.game.doAbdicate(newDynastyId);
+    this.toast(r.msg);
+    if (this.audio) try { this.audio.playTitleUnlock(); } catch(e){}
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    this.refreshUI();
+  }
+
+  // ============================================================
+  // V7.0 — 官职 / 爵位面板
+  // ============================================================
+  showOfficePanel() {
+    const me = this.game.playerFaction;
+    const gens = this.game.getFactionGenerals(me).filter(g => !g.inArmy && !g.onHostage && !g.onMission);
+    const held = this.game.getOffices(me);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.innerHTML = `
+      <div class="modal wide">
+        <h2 class="modal-title">🏛 官职 · 爵位</h2>
+        <h3 class="panel-subtitle">中央/武官任命（每职仅一人）</h3>
+        <div class="office-list">
+          ${OFFICES.map(off => {
+            const holderId = held[off.id];
+            const holder = holderId ? this.game.getGeneral(holderId) : null;
+            const cand = gens
+              .filter(g => g.id !== holderId)
+              .map(g => {
+                const ok = g.politics >= (off.req.politics||0) && g.command >= (off.req.command||0);
+                return ok ? `<option value="${g.id}">${g.name}</option>` : '';
+              }).join('');
+            return `
+              <div class="office-row" style="border-left:4px solid #c9a86a">
+                <b>${off.name}</b> <span class="hint">${this._escHtml(off.desc)}</span>
+                <span>现任：<b class="general-name-link" onclick="${holder?`__ui_.showGeneralDetail('${holder.id}')`:''}">${holder?holder.name:'空缺'}</b></span>
+                <div class="diplo-actions">
+                  <select class="select-small" id="off-sel-${off.id}">${cand}</select>
+                  <button class="btn-small" onclick="__ui_.appointOffice('${off.id}')">拜任</button>
+                  ${holder ? `<button class="btn-small" onclick="__ui_.dismissOffice('${off.id}')">解任</button>` : ''}
+                </div>
+              </div>`;
+          }).join('')}
+        </div>
+        <h3 class="panel-subtitle">封赏爵位（六等爵，可多人同爵）</h3>
+        <div class="office-list">
+          ${gens.map(g => {
+            const t = RANKS.find(t => t.id === g.title);
+            return `<div class="office-row">
+              <b>${g.name}</b>
+              <span>现爵：<b>${t ? t.name : '无'}</b>（忠诚${g.loyalty}）</span>
+              <div class="diplo-actions">
+                <select class="select-small" id="title-sel-${g.id}">
+                  ${RANKS.map(t => `<option value="${t.id}">${t.name}(耗${t.level*800}金)</option>`).join('')}
+                </select>
+                <button class="btn-small" onclick="__ui_.grantTitle('${g.id}')">封赏</button>
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+        <button class="btn-ancient" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  appointOffice(officeId) {
+    const sel = document.getElementById(`off-sel-${officeId}`);
+    if (!sel || !sel.value) { this.toast('无可拜任武将'); return; }
+    const r = this.game.appointOffice(sel.value, officeId);
+    this.toast(r.msg);
+    this.showOfficePanel(); this.refreshUI();
+  }
+  dismissOffice(officeId) {
+    const r = this.game.dismissOffice(officeId);
+    this.toast(r.msg);
+    this.showOfficePanel(); this.refreshUI();
+  }
+  grantTitle(generalId) {
+    const sel = document.getElementById(`title-sel-${generalId}`);
+    if (!sel) return;
+    const r = this.game.grantTitle(generalId, sel.value);
+    this.toast(r.msg);
+    this.showOfficePanel(); this.refreshUI();
+  }
+
+  // ============================================================
+  // V7.0 — 贸易商路面板
+  // ============================================================
+  showTradePanel() {
+    const info = this.game.getTradeInfo();
+    const me = this.game.playerFaction;
+    const cities = this.game.getFactionCities(me);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    const cityOpts = (sel) => cities.map(c => `<option value="${c.id}" ${c.id===sel?'selected':''}>${c.name}</option>`).join('');
+    modal.innerHTML = `
+      <div class="modal wide">
+        <h2 class="modal-title">🐫 贸易商路</h2>
+        <h3 class="panel-subtitle">长距商路（控制端点即岁入）</h3>
+        ${info.longRoutes.length ? info.longRoutes.map(r =>
+          `<div class="office-row"><b>${r.name}</b><span>${this._escHtml(r.desc)}</span><b style="color:#e8c060">+${r.income}/回合</b></div>`).join('')
+          : '<p class="hint">未控制任何长距商路端点（据长安/洛阳/姑臧开丝路，据广州开海丝路）。</p>'}
+        <p class="hint">通商协定加成：+${Math.round(info.agreementMult*100)}%</p>
+        <h3 class="panel-subtitle">派遣商队（耗 800金/400粮，3回合抵达）</h3>
+        <div class="office-row">
+          <select class="select-small" id="caravan-from">${cityOpts(cities[0]?cities[0].id:null)}</select>
+          <span>→</span>
+          <select class="select-small" id="caravan-to">${cityOpts(cities[1]?cities[1].id:null)}</select>
+          <button class="btn-small" onclick="__ui_.dispatchCaravan()">遣使商队</button>
+        </div>
+        ${info.caravans.length ? `<h3 class="panel-subtitle">在途商队</h3>` + info.caravans.map(c =>
+          `<div class="office-row"><b>${c.goodsName}</b><span>${this._escHtml(c.from)}→${this._escHtml(c.to)}</span><b>剩${c.turnsLeft}回合 · 利${c.estProfit}</b></div>`).join('') : ''}
+        <h3 class="panel-subtitle">通商互市（外交关系≥40）</h3>
+        ${Object.values(FACTIONS).filter(f => f.id !== me).map(f => {
+          const rel = this.game.diplomacy.getRelation(me, f.id);
+          const has = this.game.tradeSystem.hasAgreement(me, f.id);
+          return `<div class="diplo-row" style="border-left:4px solid ${f.color}">
+            <b style="color:${f.color}">${f.name}</b><span>关系${rel.relation} ${has?'[已互市]':''}</span>
+            ${has?'':`<button class="btn-small" onclick="__ui_.proposeTrade('${f.id}')">通商</button>`}
+          </div>`;
+        }).join('')}
+        <button class="btn-ancient" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  dispatchCaravan() {
+    const f = document.getElementById('caravan-from').value;
+    const t = document.getElementById('caravan-to').value;
+    const r = this.game.dispatchCaravan(f, t);
+    this.toast(r.msg);
+    this.showTradePanel(); this.refreshUI();
+  }
+  proposeTrade(targetFid) {
+    const r = this.game.proposeTradeAgreement(targetFid);
+    this.toast(r.msg);
+    this.showTradePanel(); this.refreshUI();
+  }
+
   showRecruitPanel() {
     const idle = this.game.getIdleGenerals();
     const modal = document.createElement('div');
@@ -2067,14 +2362,63 @@ export class UI {
             if (this.map) { this.map.dirty = true; this.map.render(); this._updateMapMarker(); }
           }
           break;
-        case '1': this.showTechTree(); break;
-        case '2': this.showAchievements(); break;
-        case '3': this.showDiplomacy(); break;
-        case '4': this.showRecruitPanel(); break;
-        case '5': this.showStatsPanel(); break;
-        case '6': if (this.game.netRole) this._showLanChatPanel(); break;
+        // V7.5：1-6 快速切换面板（城市/武将/科技/外交/贸易/王朝）
+        case '1': this._showCityList(); break;
+        case '2': this._showGeneralList(); break;
+        case '3': this.showTechTree(); break;
+        case '4': this.showDiplomacy(); break;
+        case '5': this.showTradePanel(); break;
+        case '6': this.showDynastyPanel(); break;
+        // V7.5：M=切换大地图/小地图, C=城市列表, W=武将列表, B=战斗记录
+        case 'm': case 'M':
+          if (this.map && this.map.toggleZoom) { this.map.toggleZoom(); this.toast('切换地图缩放'); }
+          break;
+        case 'c': case 'C': this._showCityList(); break;
+        case 'w': case 'W': this._showGeneralList(); break;
+        case 'b': case 'B': this.showStatsPanel(); break;
       }
     });
+  }
+
+  // V7.5：城市列表面板
+  _showCityList() {
+    const cities = this.game.getFactionCities(this.game.playerFaction);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    const rows = cities.map(c => `
+      <div class="general-row" style="cursor:pointer" onclick="__ui_._cityListPick('${c.id}')">
+        <div class="gen-info"><b>${c.name}</b>（${c.morale}%民心）<br>驻军 ${c.garrison || 0}</div>
+      </div>`).join('');
+    modal.innerHTML = `<div class="modal"><h2 class="modal-title">我的城市</h2>
+      ${rows || '<p>暂无城市</p>'}
+      <button class="btn-ancient" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>`;
+    document.body.appendChild(modal);
+  }
+  _cityListPick(cid) {
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    const c = this.game.cities.get(cid);
+    if (c) { this.game.selectedCity = cid; this.showCityPanel(c); if (this.map) { this.map.dirty = true; this.map.render(); this._updateMapMarker(); } }
+  }
+  // V7.5：武将列表面板
+  _showGeneralList() {
+    const gens = this.game.getFactionGenerals(this.game.playerFaction);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    const rows = gens.map(g => `
+      <div class="general-row" style="cursor:pointer" onclick="__ui_._genListPick('${g.id}')">
+        <div class="portrait-anim-wrap" style="width:40px;height:40px;flex-shrink:0">
+          <img src="${IMG.portrait(g.portrait)}" class="gen-portrait" style="width:40px;height:40px;object-fit:cover" onerror="this.style.display='none'">
+        </div>
+        <div class="gen-info"><b>${g.name}</b>（${g.role}）<br>统${g.command} 武${g.force} 智${g.intel} 政${g.politics}</div>
+      </div>`).join('');
+    modal.innerHTML = `<div class="modal wide"><h2 class="modal-title">我的武将（${gens.length}）</h2>
+      ${rows || '<p>暂无武将</p>'}
+      <button class="btn-ancient" onclick="this.closest('.modal-overlay').remove()">关闭</button></div>`;
+    document.body.appendChild(modal);
+  }
+  _genListPick(gid) {
+    document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+    this.showGeneralDetail(gid);
   }
 
   // ---------- 结束回合 ----------
@@ -2173,22 +2517,63 @@ export class UI {
   showEventModal(event) {
     this.audio.playEventTrigger();
     this.audio.switchBGM('event');
+    // V7.5：根据事件名称推断类型图标
+    const typeIcon = this._eventTypeIcon(event);
+    // V7.5：将 effect 对象转为可读的效果预览文本
+    const effectPreview = (eff) => {
+      if (!eff) return '';
+      const parts = [];
+      const fmt = (v, label) => (v > 0 ? `${label}+${v}` : v < 0 ? `${label}${v}` : '');
+      if (eff.money) parts.push(fmt(eff.money, '金钱'));
+      if (eff.food) parts.push(fmt(eff.food, '粮草'));
+      if (eff.morale) parts.push(fmt(eff.morale, '民心'));
+      if (eff.pop) parts.push(fmt(eff.pop, '人口'));
+      if (eff.comm) parts.push(fmt(eff.comm, '商业'));
+      if (eff.prosperity) parts.push(fmt(eff.prosperity, '繁荣'));
+      if (eff.armyMorale) parts.push(fmt(eff.armyMorale, '军心'));
+      if (eff.factionMorale) parts.push(fmt(eff.factionMorale, '民心'));
+      if (eff.culture) parts.push(fmt(eff.culture, '文化'));
+      if (eff.tech) parts.push(fmt(eff.tech, '科技'));
+      if (eff.barbarianRel) parts.push(fmt(eff.barbarianRel, '蛮族关系'));
+      if (eff.recruitRandom) parts.push('招募一将');
+      if (eff.massBattle) parts.push('触发大战');
+      if (eff.garrisonBuff) parts.push('守城buff');
+      if (eff.armyLoss) parts.push(`损兵${eff.armyLoss}`);
+      if (eff.destroyTemple) parts.push('灭佛');
+      if (eff.generalLoyalty && typeof eff.generalLoyalty === 'object')
+        parts.push(`忠诚${eff.generalLoyalty.amt > 0 ? '+' : ''}${eff.generalLoyalty.amt}`);
+      return parts.join('，') || '';
+    };
     const modal = document.createElement('div');
     modal.className = 'modal-overlay';
     modal.innerHTML = `
       <div class="modal event-modal">
-        <h2 class="modal-title">📜 ${event.name}</h2>
+        <h2 class="modal-title"><span class="event-type-icon">${typeIcon}</span>${event.name}</h2>
         <img src="${IMG.event(event.illustration)}" class="event-img kenburns" onerror="this.style.display='none'">
         <p class="event-desc">${event.description}</p>
         <div class="event-options">
-          ${event.options.map((opt, i) =>
-            `<button class="btn-ancient" onclick="__ui_.chooseEvent(${i})">${opt.text}</button>`
-          ).join('')}
+          ${event.options.map((opt, i) => {
+            const prev = effectPreview(opt.effect);
+            return `<button class="btn-ancient event-option" onclick="__ui_.chooseEvent(${i})">${opt.text}
+              ${prev ? `<span class="effect-preview">${prev}</span>` : ''}</button>`;
+          }).join('')}
         </div>
       </div>
     `;
     document.body.appendChild(modal);
     this._currentEvent = event;
+  }
+
+  // V7.5：根据事件名称/ID推断类型图标
+  _eventTypeIcon(event) {
+    const n = event.name || '';
+    const id = event.id || '';
+    if (/星/ .test(n) || /sun|eclipse|meteor|comet|taibai|baihong|yinghuo|laoren|kexing|yue_shi/.test(id)) return '☀';
+    if (/寺|佛|禅|经|僧|儒|史|书|诗|画|文|学|雅|胡乐/.test(n)) return '📜';
+    if (/战|兵|军|马|城|防|练|弩|铠|燧|水/.test(n)) return '⚔';
+    if (/商|市|钱|粮|收|价|丰|水|渠|互|贡/.test(n)) return '💰';
+    if (/谏|宗室|和睦|拥戴|安定|朝|党|储|位|禅|帝/.test(n)) return '🏛';
+    return '✦';
   }
 
   chooseEvent(idx) {
@@ -2224,22 +2609,60 @@ export class UI {
   // ---------- 胜负判定 ----------
   checkGameOver() {
     if (this.game.gameOver) {
+      const g = this.game;
+      const stats = (g.getStats && typeof g.getStats === 'function') ? g.getStats() : null;
+      // V7.5：S/A/B/C/D 五级评分（基于回合数/战斗胜率/占领城市）
+      let rating = 'C', ratingClass = 'rating-c';
+      if (g.gameOver.win) {
+        const t = g.turn || 50;
+        if (t <= 20) { rating = 'S'; ratingClass = 'rating-s'; }
+        else if (t <= 30) { rating = 'A'; ratingClass = 'rating-a'; }
+        else if (t <= 40) { rating = 'B'; ratingClass = 'rating-b'; }
+        else { rating = 'C'; ratingClass = 'rating-c'; }
+      } else {
+        rating = 'D'; ratingClass = 'rating-d';
+      }
+      // V7.5：周目继承提示
+      const ngLevel = getCurrentNGPlusLevel();
+      const ngHint = g.gameOver.win
+        ? `<p class="hint" style="margin-top:10px">◆ 周目继承：新周目 AI 兵力+${(ngLevel+1)*10}% · AI经济+${(ngLevel+1)*5}% ◆</p>` : '';
       const modal = document.createElement('div');
       modal.className = 'modal-overlay';
       modal.innerHTML = `
         <div class="modal gameover-modal">
-          <h2 class="modal-title ${this.game.gameOver.win ? 'win' : 'lose'}">
-            ${this.game.gameOver.win ? '★ 天下一统 ★' : '霸业成空'}
+          <h2 class="modal-title ${g.gameOver.win ? 'win' : 'lose'}">
+            ${g.gameOver.win ? '★ 天下一统 ★' : '霸业成空'}
           </h2>
-          <p class="gameover-text">${this.game.gameOver.text}</p>
-          <p class="gameover-sub">历经 ${this.game.turn} 回合</p>
-          <button class="btn-ancient" onclick="__ui_.showMainMenu()">返回主菜单</button>
+          <div class="ending-rating ${ratingClass}">${rating}</div>
+          <p class="gameover-text">${g.gameOver.text}</p>
+          <p class="gameover-sub">历经 ${g.turn} 回合</p>
+          ${stats ? `
+          <div class="ending-stats">
+            <div class="stat-row"><span>战斗/胜利/胜率</span><b>${stats.battles || 0} / ${stats.victories || 0} / ${stats.winRate || 0}%</b></div>
+            <div class="stat-row"><span>占领城市</span><b>${stats.citiesConquered || 0}</b></div>
+            <div class="stat-row"><span>招募武将</span><b>${stats.recruited || 0}</b></div>
+            <div class="stat-row"><span>研究科技</span><b>${stats.researched || 0}</b></div>
+            <div class="stat-row"><span>触发事件</span><b>${stats.eventsTriggered || 0}</b></div>
+            <div class="stat-row"><span>当前金钱/粮草</span><b>${stats.currentMoney || 0} / ${stats.currentFood || 0}</b></div>
+          </div>` : ''}
+          ${ngHint}
+          <div style="margin-top:14px;display:flex;gap:12px;justify-content:center">
+            <button class="btn-ancient" id="btn-again">再来一局</button>
+            <button class="btn-ancient" onclick="__ui_.showMainMenu()">返回主菜单</button>
+          </div>
         </div>
       `;
       document.body.appendChild(modal);
-      if (this.game.gameOver.win) this.audio.playVictory();
-      else this.audio.playDefeat();
+      // V7.5：统一/亡国对应音效
+      if (g.gameOver.win) { this.audio.playUnifyChina(); }
+      else { this.audio.playDynastyFall(); }
       this.audio.switchBGM('ending');
+      // 再来一局
+      const againBtn = document.getElementById('btn-again');
+      if (againBtn) againBtn.onclick = () => {
+        document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
+        this.showFactionSelect();
+      };
     }
   }
 
@@ -2276,6 +2699,25 @@ export class UI {
     const res = this.game.getPlayerRes();
     const turnEl = document.getElementById('hdr-turn');
     if (turnEl) turnEl.textContent = this.game.turn;
+
+    // V7.0：年号 / 正统显示
+    if (this.game.dynastySystem) {
+      const rec = this.game.dynastySystem.get(this.game.playerFaction);
+      const eraEl = document.getElementById('hdr-era');
+      if (rec && eraEl) {
+        eraEl.textContent = `${rec.eraName} ${rec.eraYear}`;
+        if (this._prevEra !== rec.eraName + rec.eraYear) {
+          eraEl.classList.remove('bump'); void eraEl.offsetWidth; eraEl.classList.add('bump');
+        }
+        this._prevEra = rec.eraName + rec.eraYear;
+      }
+      const leg = this.game.dynastySystem.calcLegitimacy(this.game, this.game.playerFaction);
+      const legEl = document.getElementById('hdr-legit');
+      if (legEl) legEl.textContent = leg;
+      // V7.5：正统值进度条
+      const legBar = document.getElementById('hdr-legit-bar');
+      if (legBar) legBar.style.width = Math.max(0, Math.min(100, leg)) + '%';
+    }
 
     // 季节：变化时旋转动画 + 音效
     const season = this.game.getSeason();
@@ -2344,6 +2786,12 @@ export class UI {
     this._updateMapMarker();
     // V5.0：热座当前玩家指示器
     this._updateHotSeatIndicator();
+    // V7.5：结束回合按钮脉冲（游戏进行中时可结束回合）
+    const endBtn = document.getElementById('btn-end-turn');
+    if (endBtn) {
+      if (this.game.state === 'playing') endBtn.classList.add('pulse');
+      else endBtn.classList.remove('pulse');
+    }
   }
 
   // ---------- 提示 ----------

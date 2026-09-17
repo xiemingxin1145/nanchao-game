@@ -48,6 +48,10 @@ import { TECHS as MOD_TECHS } from './tech.js';
 import { EQUIPMENT_ITEMS as MOD_EQUIP } from './equipment.js';
 import { FORMATIONS as MOD_FORMATIONS } from './formation.js';
 import { BUILDINGS as MOD_BUILDINGS } from './building.js';
+// V7.0 新系统
+import { DynastySystem, DYNASTIES, ANCIENT_CAPITALS } from './dynasty.js';
+import { TradeSystem } from './trade.js';
+import { OFFICES, TITLES as RANKS, getOffice, getTitle, canHoldOffice, aggregateOfficeBag } from './office.js';
 
 let armyIdCounter = 100;
 
@@ -124,6 +128,10 @@ export class Game {
     this.religionSystem = new ReligionSystem();  // 宗教文化系统
     this.navyBuilt = {};                     // { cityId: [navyUnitIds] } 已建造水军
     this.cultureVictoryTurns = 0;            // 文化胜利维持回合数
+
+    // ---- V7.0 新系统状态 ----
+    this.dynastySystem = new DynastySystem(); // 王朝/正统/年号/禅让
+    this.tradeSystem = new TradeSystem();      // 贸易商路/商队/协定
   }
 
   _defaultStats() {
@@ -225,6 +233,9 @@ export class Game {
     this.religionSystem = new ReligionSystem();
     this.navyBuilt = {};
     this.cultureVictoryTurns = 0;
+    // V7.0 重置
+    this.dynastySystem = new DynastySystem();
+    this.tradeSystem = new TradeSystem();
 
     const cityList = createInitialCities();
     for (const c of cityList) this.cities.set(c.id, c);
@@ -310,6 +321,10 @@ export class Game {
     this.currentPlayerIndex = this.isHotSeat
       ? Math.max(0, this.turnOrder.indexOf(playerFactionId)) : 0;
     this.setupInitialArmies();
+
+    // ---- V7.0：初始化王朝系统（君主/年号/正统）----
+    this.dynastySystem.init(sc.factions, this.generals);
+    for (const fid of sc.factions) this.dynastySystem.calcLegitimacy(this, fid);
 
     // ---- V3.5：应用周目继承加成（热座模式下跳过，避免人类间数值失衡）----
     if (!this.isHotSeat) this._applyNGPlusBonus(playerFactionId);
@@ -637,6 +652,16 @@ export class Game {
     // ---- V2.0：羁绊效果并入（同势力组合加成） ----
     for (const [k, v] of Object.entries(this.getBondBag(factionId))) {
       bag[k] = (bag[k] || 0) + v;
+    }
+    // ---- V7.0：官职全局加成并入 ----
+    for (const [k, v] of Object.entries(aggregateOfficeBag(this.generals, factionId))) {
+      bag[k] = (bag[k] || 0) + v;
+    }
+    // ---- V7.0：皇帝（君主）声望 buff 并入 ----
+    if (this.dynastySystem) {
+      for (const [k, v] of Object.entries(this.dynastySystem.getEmperorBag(this, factionId))) {
+        bag[k] = (bag[k] || 0) + v;
+      }
     }
     return bag;
   }
@@ -970,6 +995,120 @@ export class Game {
       const c2 = this.cities.get(r.city2);
       return c1 && c2 && c1.owner && c1.owner === c2.owner;
     });
+  }
+
+  // ============================================================
+  // V7.0 — 官职 / 爵位系统（UI 接口）
+  // ============================================================
+  _factionName(fid) { return (FACTIONS[fid] && FACTIONS[fid].name) || fid; }
+
+  // 某势力当前在任官职 { officeId: generalId }
+  getOffices(fid) {
+    const map = {};
+    for (const g of this.getFactionGenerals(fid)) {
+      if (g.office) map[g.office] = g.id;
+    }
+    return map;
+  }
+
+  // 任命官职
+  appointOffice(generalId, officeId) {
+    const g = this.generals.get(generalId);
+    const off = getOffice(officeId);
+    if (!g) return { ok: false, msg: '武将不存在' };
+    if (g.faction !== this.playerFaction) return { ok: false, msg: '该武将不属我方' };
+    if (!off) return { ok: false, msg: '官职不存在' };
+    if (g.onHostage || g.onMission) return { ok: false, msg: '该武将为质/出使，不能任职' };
+    const chk = canHoldOffice(g, officeId);
+    if (!chk.ok) return { ok: false, msg: `${g.name} 不堪此职：${chk.msg}` };
+    // 唯一性：若该职已由他人担任，先解任
+    if (off.unique) {
+      for (const other of this.getFactionGenerals(this.playerFaction)) {
+        if (other.office === officeId && other.id !== generalId) {
+          this.pushLog(`${other.name} 卸去 ${off.name} 之职。`);
+          other.office = null;
+        }
+      }
+    }
+    // 免去旧职
+    if (g.office && g.office !== officeId) g.office = null;
+    g.office = officeId;
+    g.loyalty = Math.min(100, g.loyalty + 5);
+    this.pushLog(`🎖 ${g.name} 拜受 ${off.name}，众臣拭目。`);
+    return { ok: true, msg: `${g.name} 出任 ${off.name}` };
+  }
+
+  // 解除官职
+  dismissOffice(officeId) {
+    for (const g of this.getFactionGenerals(this.playerFaction)) {
+      if (g.office === officeId) { g.office = null; this.pushLog(`${g.name} 已解去 ${getOffice(officeId).name}。`); return { ok: true, msg: '已解任' }; }
+    }
+    return { ok: false, msg: '该职无人担任' };
+  }
+
+  // 封赏爵位
+  grantTitle(generalId, titleId) {
+    const g = this.generals.get(generalId);
+    const t = getTitle(titleId);
+    if (!g) return { ok: false, msg: '武将不存在' };
+    if (g.faction !== this.playerFaction) return { ok: false, msg: '该武将不属我方' };
+    if (!t) return { ok: false, msg: '爵位不存在' };
+    const res = this.getPlayerRes();
+    const cost = t.level * 800; // 封赏需耗金
+    if (res.money < cost) return { ok: false, msg: `封赏需 ${cost} 金` };
+    res.money -= cost;
+    g.title = titleId;
+    g.loyalty = Math.min(100, g.loyalty + t.loyaltyBonus);
+    this.pushLog(`🏅 封 ${g.name} 为「${t.name}」，食邑有加，忠诚 +${t.loyaltyBonus}。`);
+    return { ok: true, msg: `已封 ${g.name} 为 ${t.name}` };
+  }
+
+  // ============================================================
+  // V7.0 — 王朝 / 禅让系统（UI 接口）
+  // ============================================================
+  getDynastyInfo() {
+    const rec = this.dynastySystem.get(this.playerFaction);
+    if (!rec) return null;
+    const dyn = (typeof DYNASTIES !== 'undefined' && DYNASTIES[rec.dynastyId]) || null;
+    const leg = this.dynastySystem.calcLegitimacy(this, this.playerFaction);
+    const emperor = rec.emperorId ? this.getGeneral(rec.emperorId) : null;
+    const heir = rec.heirId ? this.getGeneral(rec.heirId) : null;
+    return {
+      dynastyId: rec.dynastyId, dynastyName: dyn ? dyn.name : FACTIONS[this.playerFaction].name,
+      eraName: rec.eraName, eraYear: rec.eraYear, legitimacy: leg,
+      emperor, heir,
+      canAbdicate: this.dynastySystem.canAbdicate(this, this.playerFaction),
+      ancientCapitals: [...ANCIENT_CAPITALS].map(cid => {
+        const c = this.cities.get(cid);
+        return { id: cid, name: c ? c.name : cid, owned: c ? c.owner === this.playerFaction : false };
+      })
+    };
+  }
+
+  // 可受禅的新王朝候选（仅北方/统一格局给出隋，其余给出泛用）
+  getAbdicateCandidates() {
+    return Object.values(DYNASTIES);
+  }
+
+  doAbdicate(newDynastyId) {
+    return this.dynastySystem.abdicate(this, this.playerFaction, newDynastyId);
+  }
+
+  // ============================================================
+  // V7.0 — 贸易系统（UI 接口）
+  // ============================================================
+  dispatchCaravan(fromCityId, toCityId) {
+    return this.tradeSystem.dispatchCaravan(this, this.playerFaction, fromCityId, toCityId);
+  }
+  proposeTradeAgreement(targetFid) {
+    return this.tradeSystem.proposeAgreement(this, this.playerFaction, targetFid);
+  }
+  getTradeInfo() {
+    return {
+      longRoutes: this.tradeSystem.getActiveLongRoutes(this, this.playerFaction),
+      caravans: this.tradeSystem.caravans.filter(c => c.factionId === this.playerFaction),
+      agreementMult: this.tradeSystem.getAgreementMult(this.playerFaction)
+    };
   }
 
   // ============================================================
@@ -1846,6 +1985,14 @@ export class Game {
           this.pushLog(`${gen.name} 因忠诚过低下野而去！`);
         }
       }
+
+      // ---- V7.0：贸易系统回合结算（长距商路岁入直接入账；商队利润在 settleTurn 内入账）----
+      if (this.tradeSystem) {
+        const tr = this.tradeSystem.settleTurn(this, fid);
+        res.money += tr.income;
+      }
+      // ---- V7.0：王朝系统回合结算（年号推进/君主更替/正统重算）----
+      if (this.dynastySystem) this.dynastySystem.settleTurn(this, fid);
     }
 
     // ---- V2.5：新系统回合推进 ----
@@ -1965,7 +2112,10 @@ export class Game {
       // V6.0: 宗教文化系统
       religionSystem: this.religionSystem.serialize(),
       navyBuilt: this.navyBuilt,
-      cultureVictoryTurns: this.cultureVictoryTurns
+      cultureVictoryTurns: this.cultureVictoryTurns,
+      // V7.0: 王朝 / 贸易系统
+      dynastySystem: this.dynastySystem.serialize(),
+      tradeSystem: this.tradeSystem.serialize()
     };
   }
 
@@ -2082,6 +2232,21 @@ export class Game {
     // 旧城市补 religion 字段
     for (const city of g.cities.values()) {
       if (!city.religion) city.religion = { buddhist: 0, daoist: 0, culture: 0 };
+    }
+
+    // V7.0：旧存档补全王朝 / 贸易系统
+    g.dynastySystem = (data.dynastySystem && typeof data.dynastySystem === 'object')
+      ? DynastySystem.deserialize(data.dynastySystem) : new DynastySystem();
+    g.tradeSystem = (data.tradeSystem && typeof data.tradeSystem === 'object')
+      ? TradeSystem.deserialize(data.tradeSystem) : new TradeSystem();
+    // 还原禅让后势力名/旗色（FACTIONS 为模块级对象，需按存档王朝记录重放）
+    for (const [fid, rec] of Object.entries(g.dynastySystem.factions || {})) {
+      const dyn = (typeof DYNASTIES !== 'undefined') ? DYNASTIES[rec.dynastyId] : null;
+      if (dyn && FACTIONS[fid]) {
+        FACTIONS[fid].name = dyn.name;
+        FACTIONS[fid].color = dyn.color;
+        FACTIONS[fid].colorLight = dyn.colorLight;
+      }
     }
 
     // V3.0/V5.0：为「激活势力」创建 AI。
