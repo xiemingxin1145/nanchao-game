@@ -11,22 +11,29 @@ export class EventSystem {
 
   // 每回合随机触发事件
   rollEvent(game) {
-    // 30% 概率触发随机事件
+    // 35% 概率触发随机事件
     if (Math.random() < 0.35) {
       const evt = EVENTS[Math.floor(Math.random() * EVENTS.length)];
       this.pendingEvents.push(evt);
       game.pushLog(`事件触发：${evt.name}`);
     }
 
-    // 历史事件
+    // 历史事件（支持 faction 单值 / factions 数组 / condition 回调）
     for (const hevt of HISTORICAL_EVENTS) {
-      if (game.turn >= hevt.minTurn && hevt.faction === game.playerFaction) {
-        if (!this.history.includes(hevt.id)) {
-          this.pendingEvents.push(hevt);
-          this.history.push(hevt.id);
-          game.pushLog(`历史事件：${hevt.name}`);
-        }
+      if (this.history.includes(hevt.id)) continue;
+      if (game.turn < (hevt.minTurn || 0)) continue;
+      const factionOk = hevt.factions
+        ? hevt.factions.includes(game.playerFaction)
+        : (hevt.faction === game.playerFaction);
+      if (!factionOk) continue;
+      let condOk = true;
+      if (typeof hevt.condition === 'function') {
+        try { condOk = !!hevt.condition(game); } catch (e) { condOk = false; }
       }
+      if (!condOk) continue;
+      this.pendingEvents.push(hevt);
+      this.history.push(hevt.id);
+      game.pushLog(`历史事件：${hevt.name}`);
     }
   }
 
@@ -41,13 +48,14 @@ export class EventSystem {
     if (eff.money) res.money = Math.max(0, res.money + eff.money);
     if (eff.food) res.food = Math.max(0, res.food + eff.food);
     if (eff.morale) {
-      // 影响所有己方城市民心
       for (const c of playerCities) {
         c.morale = Math.max(0, Math.min(100, c.morale + eff.morale));
       }
     }
+    if (eff.armyMorale && res) {
+      res.totalMorale = Math.max(0, Math.min(100, (res.totalMorale || 60) + eff.armyMorale));
+    }
     if (eff.pop) {
-      // 随机一个城市增加人口
       if (playerCities.length > 0) {
         const c = playerCities[Math.floor(Math.random() * playerCities.length)];
         c.pop = Math.max(0, c.pop + eff.pop);
@@ -59,8 +67,19 @@ export class EventSystem {
         c.agri = Math.max(0, c.agri + eff.agri);
       }
     }
+    if (eff.comm) {
+      if (playerCities.length > 0) {
+        const c = playerCities[Math.floor(Math.random() * playerCities.length)];
+        c.comm = Math.max(0, Math.min(100, c.comm + eff.comm));
+      }
+    }
+    if (eff.prosperity) {
+      if (playerCities.length > 0) {
+        const c = playerCities[Math.floor(Math.random() * playerCities.length)];
+        c.prosperity = Math.max(0, Math.min(100, c.prosperity + eff.prosperity));
+      }
+    }
     if (eff.armyLoss) {
-      // 从己方军队/驻军中扣除
       const myArmies = game.getFactionArmies(game.playerFaction);
       let remaining = eff.armyLoss;
       for (const a of myArmies) {
@@ -79,6 +98,31 @@ export class EventSystem {
       if (idle.length > 0) {
         const gen = idle[Math.floor(Math.random() * idle.length)];
         game.recruitIdleGeneral(gen.id);
+      }
+    }
+    if (eff.recruitGeneral) {
+      const gen = game.generals.get(eff.recruitGeneral);
+      if (gen && gen.faction === null) {
+        gen.faction = game.playerFaction;
+        gen.loyalty = 75;
+        const capital = game.cities.get(FACTIONS[game.playerFaction].capital);
+        gen.location = capital.id;
+        game.pushLog(`${gen.name} 加入我方！`);
+      }
+    }
+    if (eff.garrisonBuff) {
+      game.garrisonBuffTurns = 2; // 守城战力大幅提升，持续2回合
+      game.pushLog('全城誓死守城！接下来两回合守城战力大增。');
+    }
+    if (eff.massBattle) {
+      game.resolveMassBattle();
+    }
+    if (eff.recaptureJiankang) {
+      const c = game.cities.get('shouyang');
+      if (c && c.owner === null) {
+        c.owner = game.playerFaction;
+        c.morale = 50;
+        game.pushLog('官军收复寿阳，建康之围遂解！');
       }
     }
     if (eff.shouyang_rebel) {

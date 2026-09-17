@@ -31,22 +31,32 @@ export class City {
   calcIncome(season) {
     // 金钱 = 人口 × 商业/100 × 税率/100 × 民心系数
     const moraleFactor = this.morale / 50; // 0~2，50为基准
-    let income = (this.pop * (this.comm / 100) * (this.taxRate / 100) * moraleFactor) / 10;
-    // 太守政治加成
+    // 科技/技能加成（由 game.getTechBonus 汇总）
+    const bonus = (key) => (window.__game && typeof window.__game.getTechBonus === 'function')
+      ? (window.__game.getTechBonus(this.owner, key) || 0) : 0;
+    const commEff = this.comm * (1 + bonus('commMult'));
+    let income = (this.pop * (commEff / 100) * (this.taxRate / 100) * moraleFactor) / 10;
+    // 太守政治加成（三省制/代周建隋 提升政治效果）
+    const polEffMult = 1 + bonus('politicsEffMult');
     if (this.mayor) {
       const gen = window.__game?.getGeneral(this.mayor);
-      if (gen) income *= (1 + gen.politics / 200);
+      if (gen) income *= (1 + (gen.effPolitics / 200) * polEffMult);
     }
+    // 税收类科技/技能加成（均在最终收入上乘算）
+    income *= (1 + bonus('incomeMult'));
     return Math.round(income);
   }
 
   // 计算粮草产出
   calcFood(season) {
     const seasonMult = SEASON_FOOD_MULT[season] || 1;
+    const bonus = (key) => (window.__game && typeof window.__game.getTechBonus === 'function')
+      ? (window.__game.getTechBonus(this.owner, key) || 0) : 0;
     let food = (this.pop * (this.agri / 100) * seasonMult) / 10;
+    food *= (1 + bonus('foodMult')); // 均田制/水利兴修
     if (this.mayor) {
       const gen = window.__game?.getGeneral(this.mayor);
-      if (gen) food *= (1 + gen.politics / 300);
+      if (gen) food *= (1 + gen.effPolitics / 300);
     }
     return Math.round(food);
   }
@@ -55,7 +65,10 @@ export class City {
   recruit(unitType, count, factionRes) {
     const unit = UNIT_TYPES[unitType];
     if (!unit) return { ok: false, msg: '兵种不存在' };
-    const cost = unit.cost * count;
+    // 府兵制：征兵费用 -30%（recruitCostMult 为负）
+    const costMult = (window.__game && typeof window.__game.getTechBonus === 'function')
+      ? (1 + (window.__game.getTechBonus(this.owner, 'recruitCostMult') || 0)) : 1;
+    const cost = Math.round(unit.cost * count * Math.max(0.1, costMult));
     if (factionRes.money < cost) return { ok: false, msg: `金钱不足（需${cost}金）` };
     if (this.pop < count) return { ok: false, msg: `人口不足（需${count}人）` };
     factionRes.money -= cost;
@@ -103,8 +116,10 @@ export class City {
     const food = this.calcFood(season);
     // 民心自然波动
     this.morale = Math.max(0, Math.min(100, this.morale + (Math.random() * 4 - 2)));
-    // 人口自然增长
-    this.pop = Math.round(this.pop * (1 + (this.morale - 50) / 5000));
+    // 人口自然增长（大索貌阅 +10%）
+    const popMult = (window.__game && typeof window.__game.getTechBonus === 'function')
+      ? (1 + (window.__game.getTechBonus(this.owner, 'popMult') || 0)) : 1;
+    this.pop = Math.round(this.pop * (1 + (this.morale - 50) / 5000) * popMult);
     return { income, food };
   }
 
