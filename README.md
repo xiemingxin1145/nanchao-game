@@ -18,11 +18,11 @@
 
 ### 方式一：下载安装包（推荐）
 
-前往 [Releases 页面](https://github.com/xiemingxin1145/nanchao-game/releases) 下载 `南北朝-1.0.0.AppImage`：
+前往 [Releases 页面](https://github.com/xiemingxin1145/nanchao-game/releases) 下载 `NanChao-1.0.0.AppImage`：
 
 ```bash
-chmod +x 南北朝-1.0.0.AppImage
-./南北朝-1.0.0.AppImage
+chmod +x NanChao-1.0.0.AppImage
+./NanChao-1.0.0.AppImage
 ```
 
 > 如提示缺少 FUSE：`sudo apt install libfuse2`（Debian/Ubuntu）或 `sudo dnf install fuse`（Fedora）
