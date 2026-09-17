@@ -1,0 +1,30 @@
+{
+  "name": "nanchao",
+  "version": "1.0.0",
+  "description": "南北朝 - 2.5D 回合制历史策略游戏",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "author": "Nanchao Studio",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.4.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.nanchao.game",
+    "productName": "南北朝",
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Game"
+    },
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ]
+  }
+}

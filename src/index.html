@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>南北朝</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <!-- 古风 loading 画面（卷轴展开效果） -->
+  <div id="loading-screen">
+    <div class="loading-scroll">
+      <div class="loading-roller left"></div>
+      <div class="loading-body">
+        <h1 class="loading-title">南北朝</h1>
+        <p class="loading-sub">——  loading  ——</p>
+        <div class="loading-bar"><div class="loading-bar-fill"></div></div>
+      </div>
+      <div class="loading-roller right"></div>
+    </div>
+  </div>
+
+  <div id="app"></div>
+
+  <!-- 音效与教程模块（ES Module，先于 ui 加载，保证单例） -->
+  <script type="module" src="js/audio.js"></script>
+  <script type="module" src="js/tutorial.js"></script>
+  <script type="module">
+    import { UI } from './js/ui.js';
+    window.__ui_ = new UI();
+    window.__ui_.start();
+  </script>
+</body>
+</html>
