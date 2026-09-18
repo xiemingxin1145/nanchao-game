@@ -1,0 +1,9 @@
+{
+  "appId": "com.nanchao.game",
+  "appName": "南北朝",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#1A1A1A"
+  }
+}

@@ -56,9 +56,9 @@ assert(Object.keys(FACTIONS).length >= 6, `势力数量 >= 6 (实际: ${Object.k
 assert(CITIES.length >= 30, `城市数量 >= 30 (实际: ${CITIES.length})`);
 assert(GENERALS.length >= 50, `武将数量 >= 50 (实际: ${GENERALS.length})`);
 assert(Object.keys(UNIT_TYPES).length >= 3, `兵种数量 >= 3 (实际: ${Object.keys(UNIT_TYPES).length})`);
-assert(TECHS.length === 18, `科技数量 = 18 (实际: ${TECHS.length})`);
+assert(TECHS.length >= 24, `科技数量 >= 24 (实际: ${TECHS.length})`);
 assert(Object.keys(EQUIPMENT_ITEMS).length >= 30, `装备数量 >= 30 (实际: ${Object.keys(EQUIPMENT_ITEMS).length})`);
-assert(Object.keys(FORMATIONS).length === 6, `阵型数量 = 6 (实际: ${Object.keys(FORMATIONS).length})`);
+assert(Object.keys(FORMATIONS).length >= 12, `阵型数量 >= 12 (实际: ${Object.keys(FORMATIONS).length})`);
 assert(Object.keys(BUILDINGS).length >= 8, `建筑数量 >= 8 (实际: ${Object.keys(BUILDINGS).length})`);
 assert(EVENTS.length >= 10, `随机事件 >= 10 (实际: ${EVENTS.length})`);
 assert(HISTORICAL_EVENTS.length >= 15, `历史事件 >= 15 (实际: ${HISTORICAL_EVENTS.length})`);

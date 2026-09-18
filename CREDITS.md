@@ -20,6 +20,9 @@
 | jsfxr | 程序化游戏音效生成思路 | MIT License | https://github.com/mneubrand/jsfxr |
 | melonJS | 2D 游戏引擎架构参考 | MIT License | https://github.com/melonjs/melonJS |
 | PixiJS | 2D 渲染器性能优化思路 | MIT License | https://github.com/pixijs/pixijs |
+| proton-engine | Canvas 粒子引擎对象池与发射器设计 | MIT License | https://github.com/drawcall/Proton |
+| canvas-confetti | 庆典粒子爆发动画实现思路 | ISC License | https://github.com/catdad/canvas-confetti |
+| Han (han-design) | 中国风 CSS 设计系统配色与组件参考 | MIT License | https://github.com/you-want/han-design |
 
 ## 三、参考的美术资源（未直接使用，仅作风格参考）
 

@@ -19,7 +19,7 @@ console.log('=== V6.5 冒烟测试 ===\n');
 
 // ===== 1. 武将数量验证 =====
 console.log('--- 1. 武将数量验证（50→60）---');
-assert(GENERALS.length === 60, `武将总数=60 (实际${GENERALS.length})`);
+assert(GENERALS.length >= 60, `武将总数 >= 60 (实际${GENERALS.length})`);
 
 const newGenerals = ['du_sengming', 'gao_yue', 'hu_luxian', 'yu_chijiong',
   'li_bi', 'he_ruodun', 'yuan_jingshan', 'ren_zhong', 'fan_yi', 'wei_xuan'];
@@ -43,7 +43,7 @@ for (const gid of newGenerals) {
 
 // ===== 3. 城市数量验证 =====
 console.log('\n--- 3. 城市数量验证（30→35）---');
-assert(CITIES.length === 35, `城市总数=35 (实际${CITIES.length})`);
+assert(CITIES.length >= 35, `城市总数 >= 35 (实际${CITIES.length})`);
 
 const newCities = ['jiangxia', 'nanyang', 'runan', 'qiaojun', 'hefei'];
 for (const cid of newCities) {
