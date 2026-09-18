@@ -41,7 +41,11 @@ export function attackBarbarian(game, factionId, tribeId) {
   if (!tribe) return { ok: false, msg: '蛮族部落不存在' };
   if (tribe.vassal) return { ok: false, msg: '该部落已是附庸，不宜征讨' };
   const army = pickArmyForBarbarian(game, factionId, tribe.anchorCity);
-  if (!army) return { ok: false, msg: `需在【${game.cities.get(tribe.anchorCity).name}】驻扎一支军队方可征讨` };
+  // BUG修复（barbarian.js #4a）：锚点城被摧毁/数据缺失时 game.cities.get 返回 undefined，
+  //   直接取 .name 会抛 TypeError。此处做空值兜底。
+  const anchorCity = game.cities.get(tribe.anchorCity);
+  if (!anchorCity) return { ok: false, msg: `【${tribe.anchorCity}】已无城邑，无法征讨` };
+  if (!army) return { ok: false, msg: `需在【${anchorCity.name}】驻扎一支军队方可征讨` };
 
   const attGen = game.generals.get(army.generalId);
   const attData = {
@@ -104,6 +108,9 @@ export function recruitBarbarian(game, factionId, tribeId) {
   res.money -= BARBARIAN_RECRUIT_COST;
   tribe.vassal = true;
   tribe.relation = Math.min(100, tribe.relation + 30);
+  // BUG修复（barbarian.js #4b）：记录宗主势力——否则下回合 settleBarbarians 会把
+  //   进贡错误地发给玩家势力（即使是 AI 招安的附庸也给玩家进贡）。
+  tribe.suzerain = factionId;
   game.pushLog(`🏮 ${FACTIONS[factionId].name} 招抚${tribe.name}成功！其岁岁进贡，可供驱策。`);
   return { ok: true, msg: `${tribe.name} 归附！每回合进贡 ${BARBARIAN_VASSAL_TRIBUTE} 金` };
 }
@@ -126,9 +133,13 @@ export function tradeBarbarian(game, factionId, tribeId) {
 // 回合结算：附庸进贡 + 敌对蛮族劫掠
 export function settleBarbarians(game) {
   for (const tribe of (game.barbarianTribes || [])) {
-    // 附庸进贡（进贡给其宗主——按关系最高的玩家势力结算；简化为玩家）
+    // 附庸进贡（进贡给招安它的宗主——见 recruitBarbarian 记录的 tribe.suzerain；
+    //   旧存档无 suzerain 字段时兜底给玩家，保持向后兼容）
+    // BUG修复（barbarian.js #4b）：原先无条件发给 game.playerFaction，导致 AI 招安的附庸
+    //   也向玩家进贡（钱算错势力）。
     if (tribe.vassal) {
-      const res = game.factionRes.get(game.playerFaction);
+      const suzerain = tribe.suzerain || game.playerFaction;
+      const res = game.factionRes.get(suzerain);
       if (res) res.money += BARBARIAN_VASSAL_TRIBUTE;
     }
     // 敌对蛮族劫掠：关系 < 0 且非附庸时，15% 概率袭扰相邻城市

@@ -1,5 +1,5 @@
 // ============================================================
-// trade.js — V7.0 贸易商路 / 商队 / 贸易协定系统
+// trade.js — V7.0 贸易商路 / 商队 / 贸易协定系统（V15.0 系统深化版）
 // ------------------------------------------------------------
 // 历史背景（据《宋书·蛮夷传》《梁书·诸夷》《广州市志》）：
 //  · 陆上丝路：自长安/洛阳经河西姑臧出西域，通波斯、大秦(罗马)。
@@ -11,7 +11,36 @@
 //  - 商品 GOODS：不同城市产出不同，价差构成商队利润。
 //  - 商队 caravans：玩家耗金粮派遣，3 回合抵达，途中有被劫掠风险。
 //  - 贸易协定 agreements：与外交关系≥友好势力互市，双方增收。
+//
+// V15.0 新增：
+//  - 城市特产：丝绸/茶叶/盐/铁/马（按城市产出）
+//  - 贸易路线：按距离与城市商业等级计算收入
+//  - 贸易事件：商队被劫/贸易繁荣/新商路开辟
+//  - 新增 API：getTradeRoute / calculateTradeIncome / getTradeGoods
 // ============================================================
+
+// ---------- V15.0 城市特产映射 ----------
+// 每城产出的特色商品（在 GOODS 基础上扩展盐/铁/马）
+export const CITY_SPECIALTIES = {
+  silk:   { name: '丝绸', basePrice: 120, cities: ['jinyang', 'xiangguo', 'qingzhou', 'luoyang'] },
+  tea:    { name: '茶叶', basePrice: 60,  cities: ['chengdu', 'jiangling', 'xiangyang', 'kuaiji'] },
+  salt:   { name: '食盐', basePrice: 80,  cities: ['pengcheng', 'xuzhou_placeholder', 'haimeng'] },
+  iron:   { name: '铁器', basePrice: 100, cities: ['yeccheng', 'jinyang', 'changshan'] },
+  horse:  { name: '良马', basePrice: 150, cities: ['guzang', 'longyou', 'tianshui', 'pingcheng', 'youzhou'] }
+};
+
+// V15.0：贸易事件表
+export const TRADE_EVENTS = [
+  { id: 'v15_robbery',  name: '商队被劫', weight: 3,
+    description: '商队于途中为山胡所掠，损失惨重。',
+    effect: { money: -800, morale: -2 } },
+  { id: 'v15_boom',     name: '贸易繁荣', weight: 2,
+    description: '胡商云集，商税大增。',
+    effect: { money: 1500, morale: 3 } },
+  { id: 'v15_newroute', name: '新商路开辟', weight: 1,
+    description: '商旅发现新道，商路倍增。',
+    effect: { money: 2000, tradeBonus: 0.1 } }
+];
 
 // ---------- 商品表 ----------
 // producedBy: 主要产地城市 id；basePrice 基准价（低买高卖）
@@ -148,6 +177,63 @@ export class TradeSystem {
     return n * 0.10;
   }
 
+  // ============ V15.0 新增贸易 API ============
+
+  // 查询某城产出的特色商品列表
+  getTradeGoods(cityId) {
+    const result = [];
+    for (const [gid, g] of Object.entries(CITY_SPECIALTIES)) {
+      if (g.cities.includes(cityId)) {
+        result.push({ id: gid, name: g.name, basePrice: g.basePrice });
+      }
+    }
+    // 也合并原有 GOODS 中 producedBy 包含该城的
+    for (const g of GOODS) {
+      if ((g.producedBy || []).includes(cityId)) {
+        result.push({ id: g.id, name: g.name, basePrice: g.basePrice });
+      }
+    }
+    return result;
+  }
+
+  // 查询两城间贸易路线信息（距离、可贸易商品、预估利润）
+  getTradeRoute(game, fromCityId, toCityId) {
+    const from = game.cities.get(fromCityId);
+    const to = game.cities.get(toCityId);
+    if (!from || !to) return null;
+    // 简化距离：用城市商业等级差作为距离代理
+    const fromComm = from.comm || 50;
+    const toComm = to.comm || 50;
+    // 基础距离估算（0~20）
+    const distance = Math.round(Math.abs(fromComm - toComm) / 10) + 2;
+    // 可贸易商品：两地特产互补
+    const fromGoods = this.getTradeGoods(fromCityId);
+    const toGoods = this.getTradeGoods(toCityId);
+    const tradable = fromGoods.filter(g => !toGoods.find(t => t.id === g.id));
+    return {
+      from: from.name, to: to.name,
+      distance,
+      fromGoods, toGoods,
+      tradable,
+      estimatedIncome: this.calculateTradeIncome(game, fromCityId, toCityId)
+    };
+  }
+
+  // 计算两城间贸易收入：基于距离与双方商业等级
+  calculateTradeIncome(game, fromCityId, toCityId) {
+    const from = game.cities.get(fromCityId);
+    const to = game.cities.get(toCityId);
+    if (!from || !to) return 0;
+    const fromComm = from.comm || 50;
+    const toComm = to.comm || 50;
+    // 距离因子：越远利润越高（但有风险）
+    const distance = Math.round(Math.abs(fromComm - toComm) / 10) + 2;
+    // 收入 = 平均商业等级 × 距离 × 系数
+    const avgComm = (fromComm + toComm) / 2;
+    const baseIncome = Math.round(avgComm * distance * 0.8);
+    return baseIncome;
+  }
+
   // 回合结算：推进商队、结算长距商路与协定
   settleTurn(game, fid) {
     let income = 0;
@@ -172,6 +258,23 @@ export class TradeSystem {
       arrived.push(c);
       return false;
     });
+    // V15.0：随机贸易事件（10% 概率触发）
+    if (Math.random() < 0.10 && TRADE_EVENTS.length > 0) {
+      const totalWeight = TRADE_EVENTS.reduce((s, e) => s + e.weight, 0);
+      let roll = Math.random() * totalWeight;
+      let ev = TRADE_EVENTS[0];
+      for (const e of TRADE_EVENTS) { roll -= e.weight; if (roll <= 0) { ev = e; break; } }
+      const res = game.factionRes.get(fid);
+      if (res && ev.effect) {
+        if (ev.effect.money) res.money = Math.max(0, (res.money || 0) + ev.effect.money);
+        if (ev.effect.morale) {
+          for (const c of game.getFactionCities(fid)) {
+            c.morale = Math.max(0, Math.min(100, (c.morale || 50) + ev.effect.morale));
+          }
+        }
+      }
+      game.pushLog(`【贸易事件】${ev.name}：${ev.description}`);
+    }
     return { income: Math.round(income), arrived };
   }
 

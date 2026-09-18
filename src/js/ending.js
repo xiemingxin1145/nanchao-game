@@ -1,8 +1,10 @@
 // ============================================================
-// ending.js — V3.0 多结局系统
-// 8+ 种结局，根据游戏进程触发。game.checkEnding() 遍历 ENDINGS，
-// 返回第一个满足条件的结局 id（按优先级排序）。每个结局含名称、
-// 文本（300~500字）、触发条件、评分（S/A/B/C/D）、解锁成就。
+// ending.js — V3.0 多结局系统（V15.0 系统深化版）
+// V3.0：8 种结局，根据游戏进程触发。
+// V15.0：从 8 个扩充到 14 个，新增 v15_ 前缀结局 6 个，
+//   新增 getEndingRank / getEndingUnlockedList 两个 API。
+// game.checkEnding() 遍历 ENDINGS，返回第一个满足条件的结局 id（按优先级排序）。
+// 每个结局含名称、文本（300~500字）、触发条件、评分（S/A/B/C/D）、解锁成就。
 // ============================================================
 
 // 工具：统计某势力存活城市数 / 武将数
@@ -33,6 +35,24 @@ export const ENDINGS = [
     achievement: null
   },
 
+  // V15.0 新增：英年早逝（D）— 玩家君主壮年殒命
+  {
+    id: 'v15_early_death', name: '英年早逝', rank: 'D',
+    text: '春秋方富，而陛下忽焉崩殂。储君幼弱，母后临朝，权臣辅政。' +
+          '一统之志，未及展布，而鼎祚已移。天下英雄，莫不叹息。' +
+          '史臣曰：有为之君而不永年，此非人事，乃天命也。',
+    condition: (game) => {
+      try {
+        const lord = game.getFactionGenerals(game.playerFaction).find(g => g.role === '君主');
+        if (!lord) return false;
+        // 君主死亡（faction=null 或 alive=false）或在位不足40回合且身体衰败
+        if (lord.faction === null || lord.alive === false) return game.turn < 60;
+        return false;
+      } catch (e) { return false; }
+    },
+    achievement: null
+  },
+
   // 3. 权臣篡位（S/A）— 某忠诚过低的强臣取而代之
   {
     id: 'usurp', name: '权臣篡位', rank: 'A',
@@ -48,6 +68,23 @@ export const ENDINGS = [
         (g.command + g.force + g.intel + g.politics) > 380);
     },
     achievement: 'usurp_throne'
+  },
+
+  // V15.0 新增：权臣篡国（B）— 权臣掌权但未称帝
+  {
+    id: 'v15_powerful_minister', name: '权臣篡国', rank: 'B',
+    text: '主少国疑，大将军入朝辅政。政令皆出其门，天子拱手而已。' +
+          '然犹未敢称帝，犹假禅让之名，行威福之实。' +
+          '朝野侧目，而宗室拱手。他日移鼎，特须时耳。',
+    condition: (game) => {
+      if (game.turn < 30) return false;
+      const mine = game.getFactionGenerals(game.playerFaction);
+      // 存在一位非君主、忠诚<50、四维总和>350 的强臣（但未达到篡位阈值380）
+      return mine.some(g =>
+        g.role !== '君主' && g.loyalty < 50 && g.loyalty >= 35 &&
+        (g.command + g.force + g.intel + g.politics) > 350);
+    },
+    achievement: 'v15_powerful_minister'
   },
 
   // 4. 南北对峙（B）— 与另一强藩各占半壁
@@ -67,6 +104,21 @@ export const ENDINGS = [
     achievement: 'north_south_balance'
   },
 
+  // V15.0 新增：偏安江南（B）— 南方势力保有半壁江山
+  {
+    id: 'v15_partial_south', name: '偏安江南', rank: 'B',
+    text: '划江而治，保有江南半壁。荆扬富庶，海贸辐辏，足以立国。' +
+          '然中原未复，神州陆沉，士大夫每有新亭之泣。' +
+          '偏安之业，足以偏安，不足以混一。后世犹以「南朝」目之。',
+    condition: (game) => {
+      if (game.turn < 40) return false;
+      const mine = factionCities(game, game.playerFaction);
+      // 保有8座以上南方城池且未统一
+      return mine >= 8 && mine < totalCities(game) - 5;
+    },
+    achievement: 'v15_partial_south'
+  },
+
   // 5. 偏安一隅（C）— 仅存1~3城但存活80回合以上
   {
     id: 'refuge', name: '偏安一隅', rank: 'C',
@@ -80,6 +132,22 @@ export const ENDINGS = [
     achievement: 'small_realm'
   },
 
+  // V15.0 新增：外贸兴国（B）— 贸易立国
+  {
+    id: 'v15_trade_nation', name: '外贸兴国', rank: 'B',
+    text: '不恃兵革之强，而以商税立国。南海舶交，西域贾胡，' +
+          '金银珠犀，委输王府。府库盈溢，而武备稍弛。' +
+          '国富而兵弱者，终为强邻所图，然市井之间，已号乐土。',
+    condition: (game) => {
+      try {
+        const routes = (game.tradeRoutes || []).length;
+        const tradeIncome = game.gameStats?.totalTradeIncome || 0;
+        return routes >= 10 && tradeIncome >= 20000;
+      } catch (e) { return false; }
+    },
+    achievement: 'v15_trade_nation'
+  },
+
   // 6. 蛮族入主（A）— 蛮族占中原≥5城（由蛮族事件结算触发）
   {
     id: 'barbarian_takeover', name: '蛮族入主', rank: 'A',
@@ -91,6 +159,29 @@ export const ENDINGS = [
       return (game.barbarianControlCenters || 0) >= 5;
     },
     achievement: 'barbarian_rise'
+  },
+
+  // V15.0 新增：宗教治国（C）— 宗教影响力过大
+  {
+    id: 'v15_religion_state', name: '宗教治国', rank: 'C',
+    text: '佛道二教，遍于州郡。僧尼不耕而食，道观不织而衣。' +
+          '国用不足，而斋供无度。大臣多与方丈游，朝政渐废。' +
+          '史臣曰：以儒术治天下，以神道设教化则可，以宗教治国则殆矣。',
+    condition: (game) => {
+      try {
+        const cities = game.getFactionCities(game.playerFaction) || [];
+        if (cities.length < 5) return false;
+        let religiousBuildings = 0;
+        for (const c of cities) {
+          religiousBuildings += (c.buildings?.buddhist_temple || 0);
+          religiousBuildings += (c.buildings?.daoist_temple || 0);
+          religiousBuildings += (c.buildings?.grotto || 0);
+        }
+        // 宗教建筑总数超过城市数的3倍
+        return religiousBuildings >= cities.length * 3;
+      } catch (e) { return false; }
+    },
+    achievement: 'v15_religion_state'
   },
 
   // 7. 禅让贤君（S）— 德政积累，和平过渡
@@ -110,6 +201,20 @@ export const ENDINGS = [
     achievement: 'virtuous_abdication'
   },
 
+  // V15.0 新增：禅让立国（A）— 通过禅让取得政权
+  {
+    id: 'v15_abdication_state', name: '禅让立国', rank: 'A',
+    text: '权臣辅政三世，威望日隆。九锡既加，禅让之礼行矣。' +
+          '旧主退位，改元建国，郊祀天地，班爵宗室。' +
+          '虽曰禅让，实同篡夺。然不失兵戈，百姓晏然，亦足称矣。',
+    condition: (game) => {
+      try {
+        return !!(game.dynastySystem && (game.dynastySystem.abdicated || game.dynastySystem.founded));
+      } catch (e) { return false; }
+    },
+    achievement: 'v15_abdication_state'
+  },
+
   // 8. 历史重演（B）— 玩家为南陈且隋灭陈事件已触发
   {
     id: 'history_repeat', name: '历史重演', rank: 'B',
@@ -124,6 +229,29 @@ export const ENDINGS = [
     achievement: 'history_repeats'
   }
 ];
+
+// ---------- V15.0 新增 API ----------
+
+// 根据结局 id 返回其评分等级（S/A/B/C/D）
+export function getEndingRank(endingId) {
+  const e = ENDINGS.find(x => x.id === endingId);
+  return e ? e.rank : null;
+}
+
+// 返回玩家已解锁（已见过）的结局列表
+// 读取 game.endings?.triggered 及 game.unlockedEndings 累计记录
+export function getEndingUnlockedList(game) {
+  const seen = new Set();
+  // 本次游戏已触发的结局
+  if (game.endings && game.endings.triggered) seen.add(game.endings.triggered);
+  // 跨周目累计解锁（若存在）
+  if (Array.isArray(game.unlockedEndings)) {
+    for (const id of game.unlockedEndings) seen.add(id);
+  }
+  return ENDINGS
+    .filter(e => seen.has(e.id))
+    .map(e => ({ id: e.id, name: e.name, rank: e.rank }));
+}
 
 // ---------- 结局系统运行时 ----------
 export class EndingSystem {

@@ -186,7 +186,9 @@ export class DynastySystem {
     if (!chk.ok) return chk;
     const rec = this.factions[fid];
     const dyn = DYNASTIES[newDynastyId] || DYNASTIES.sui;
-    const oldName = FACTIONS[fid].name;
+    // BUG修复（dynasty.js #3）：hotseat/模组场景下 FACTIONS[fid] 可能缺失，
+    //   直接取 .name 会抛 TypeError。此处做空值兜底。
+    const oldName = (FACTIONS[fid] && FACTIONS[fid].name) || rec.dynastyId || '本朝';
     rec.dynastyId = dyn.id;
     rec.abdicated = true;
     rec.abdicateBonus += LEGIT_ABDICATE_BONUS;

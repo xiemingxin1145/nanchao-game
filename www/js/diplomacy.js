@@ -1,12 +1,25 @@
 // ============================================================
-// diplomacy.js — 外交系统
-// 含 V2.5：联姻系统、人质系统
+// diplomacy.js — 外交系统（V15.0 系统深化版）
+// V2.5：联姻系统、人质系统
+// V15.0：新增五级关系数值化（友好/中立/紧张/敌对/战争），
+//   新增 6 项外交行动：和亲、质子交换、联合讨伐、贸易协定、
+//   军事通行、策反（强化）。新增对应 API。
 // ============================================================
 import { FACTIONS, MARRIAGE_REL_BONUS, MARRIAGE_BREAK_REL_PENALTY,
          HOSTAGE_RANSOM_COST, HOSTAGE_RECALL_REL_MIN } from './data.js';
 
+// V15.0：外交关系五级定义（基于 relation 数值 -100~100 映射）
+export const RELATION_LEVELS = [
+  { id: 'war',      name: '战争', min: -100, max: -80, tradeMod: -0.5, intelMod: 0.2  },
+  { id: 'hostile',  name: '敌对', min: -80,  max: -40, tradeMod: -0.3, intelMod: 0.1  },
+  { id: 'tense',    name: '紧张', min: -40,  max: 0,   tradeMod: -0.1, intelMod: 0.05 },
+  { id: 'neutral',  name: '中立', min: 0,    max: 40,  tradeMod: 0,    intelMod: 0    },
+  { id: 'friendly', name: '友好', min: 40,   max: 100, tradeMod: 0.1,  intelMod: -0.05 }
+];
+
 let marriageCounter = 0;
 let hostageCounter = 0;
+let coalitionCounter = 0;
 
 export class DiplomacySystem {
   constructor() {
@@ -282,13 +295,182 @@ export class DiplomacySystem {
     game.hostages = survivors;
   }
 
+  // ============ V15.0 五级关系查询 ============
+  // 根据 relation 数值返回当前关系等级对象
+  getRelationLevel(fid1, fid2) {
+    const rel = this.getRelation(fid1, fid2);
+    if (!rel) return RELATION_LEVELS[3]; // 默认中立
+    const v = rel.relation;
+    for (const lv of RELATION_LEVELS) {
+      if (v >= lv.min && v <= lv.max) return lv;
+    }
+    return RELATION_LEVELS[3];
+  }
+
+  // ============ V15.0 新增外交行动 ============
+
+  // 1. 联姻和亲：将宗女嫁给对方君主/继承人（无需己方未婚武将）
+  //    与既有 proposeMarriage（武将互婚）不同，和亲仅送宗女，关系+20
+  proposeHeqin(game, factionA, factionB) {
+    if (factionA === factionB) return { ok: false, msg: '不能与本势力和亲' };
+    const rel = this.getRelation(factionA, factionB);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    if (rel.relation <= -40) return { ok: false, msg: '两国交恶，难以和亲' };
+    // 检查对方是否已有和亲
+    const existing = (game.heqins || []).find(h =>
+      (h.f1 === factionA && h.f2 === factionB) ||
+      (h.f1 === factionB && h.f2 === factionA));
+    if (existing) return { ok: false, msg: '两国已为姻亲' };
+    const heqin = {
+      id: 'heqin_' + (++hostageCounter),
+      f1: factionA, f2: factionB,
+      turn: game.turn, active: true
+    };
+    game.heqins = game.heqins || [];
+    game.heqins.push(heqin);
+    rel.relation = Math.min(100, rel.relation + 20);
+    rel.ceasefire = true;
+    game.pushLog(`💍 ${FACTIONS[factionA].name} 以宗女和亲 ${FACTIONS[factionB].name}，两国之好益固。关系+20。`);
+    return { ok: true, msg: `和亲成立：${FACTIONS[factionA].name} 宗女嫁 ${FACTIONS[factionB].name}`, heqin };
+  }
+
+  // 2. 质子交换：双方各送一名王子为质
+  proposeHostageExchange(game, factionA, factionB) {
+    if (factionA === factionB) return { ok: false, msg: '不能与本势力交换质子' };
+    const rel = this.getRelation(factionA, factionB);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    if (rel.relation < 0) return { ok: false, msg: '两国关系未睦，不宜交换质子' };
+    // 双方各选一名闲居武将（王子优先）
+    const pickHeir = (fid) => {
+      const gens = game.getFactionGenerals(fid).filter(g =>
+        !g.inArmy && !g.onHostage && g.role !== '君主');
+      // 优先政治/智力较高者（视为王子）
+      gens.sort((a, b) => (b.politics + b.intel) - (a.politics + a.intel));
+      return gens[0] || null;
+    };
+    const genA = pickHeir(factionA);
+    const genB = pickHeir(factionB);
+    if (!genA || !genB) return { ok: false, msg: '双方各需一名闲居王子为质' };
+    // 执行交换
+    const resA = game.factionRes.get(factionA);
+    const resB = game.factionRes.get(factionB);
+    const capB = game.cities.get(FACTIONS[factionB].capital);
+    const capA = game.cities.get(FACTIONS[factionA].capital);
+    if (capB) { genA.onHostage = true; genA.location = capB.id; }
+    if (capA) { genB.onHostage = true; genB.location = capA.id; }
+    rel.relation = Math.min(100, rel.relation + 15);
+    game.pushLog(`🕊 质子交换：${FACTIONS[factionA].name} ${genA.name} 与 ${FACTIONS[factionB].name} ${genB.name} 互换为质。关系+15。`);
+    return { ok: true, msg: `质子交换成立：${genA.name} ↔ ${genB.name}` };
+  }
+
+  // 3. 联合讨伐：号召多个势力共同讨伐某势力
+  proposeCoalition(game, factionA, targets, enemy) {
+    if (!Array.isArray(targets) || targets.length === 0) {
+      return { ok: false, msg: '需指定至少一个参与势力' };
+    }
+    if (!enemy || enemy === factionA) return { ok: false, msg: '讨伐目标无效' };
+    const joined = [];
+    const failed = [];
+    for (const t of targets) {
+      if (t === factionA || t === enemy) continue;
+      const rel = this.getRelation(factionA, t);
+      if (!rel) { failed.push(t); continue; }
+      // 关系越好越易加入
+      const acceptProb = 0.3 + rel.relation / 150;
+      if (Math.random() < acceptProb) {
+        joined.push(t);
+        const relEnemy = this.getRelation(t, enemy);
+        if (relEnemy) relEnemy.relation = Math.max(-100, relEnemy.relation - 20);
+      } else {
+        failed.push(t);
+      }
+    }
+    if (joined.length === 0) {
+      game.pushLog(`🚫 ${FACTIONS[factionA].name} 号召讨伐 ${FACTIONS[enemy].name}，无人响应。`);
+      return { ok: false, msg: '无人响应联盟', joined, failed };
+    }
+    const coalition = {
+      id: 'coal_' + (++coalitionCounter),
+      leader: factionA, targets: [factionA, ...joined],
+      enemy, turn: game.turn
+    };
+    game.coalitions = game.coalitions || [];
+    game.coalitions.push(coalition);
+    game.pushLog(`⚔ 联盟成立：${FACTIONS[factionA].name} 号召 ${joined.map(t => FACTIONS[t].name).join('、')} 共讨 ${FACTIONS[enemy].name}！`);
+    return { ok: true, msg: `联盟成立！${joined.length} 方响应。`, coalition, joined, failed };
+  }
+
+  // 4. 贸易协定：双方互通有无，增加贸易收入
+  proposeTradeAgreement(game, factionA, factionB) {
+    if (factionA === factionB) return { ok: false, msg: '不能与本势力通商' };
+    const rel = this.getRelation(factionA, factionB);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    if (rel.relation < 20) return { ok: false, msg: '两国关系未睦（需关系≥20）' };
+    // 检查是否已有协定
+    const key = this._key(factionA, factionB);
+    this.tradeAgreements = this.tradeAgreements || {};
+    if (this.tradeAgreements[key]) return { ok: false, msg: '已签贸易协定' };
+    this.tradeAgreements[key] = { turn: game.turn, incomeBonus: 0.15 };
+    rel.relation = Math.min(100, rel.relation + 10);
+    game.pushLog(`⚖ 贸易协定：${FACTIONS[factionA].name} 与 ${FACTIONS[factionB].name} 互通有无，双方贸易收入+15%。`);
+    return { ok: true, msg: `已签订贸易协定，双方贸易收入+15%` };
+  }
+
+  // 查询贸易协定加成
+  getTradeAgreementBonus(factionId) {
+    let bonus = 0;
+    if (!this.tradeAgreements) return 0;
+    for (const [k, v] of Object.entries(this.tradeAgreements)) {
+      if (!v) continue;
+      const [a, b] = k.split('_');
+      if (a === factionId || b === factionId) bonus += (v.incomeBonus || 0.15);
+    }
+    return bonus;
+  }
+
+  // 5. 军事通行：允许军队通过对方领地
+  proposePassage(game, factionA, factionB, armyId) {
+    if (factionA === factionB) return { ok: false, msg: '不能向本势力要求通行' };
+    const rel = this.getRelation(factionA, factionB);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    if (rel.relation < 30) return { ok: false, msg: '两国关系未睦（需关系≥30），不允借道' };
+    // 记录通行许可
+    this.passages = this.passages || {};
+    const key = this._key(factionA, factionB);
+    this.passages[key] = { turn: game.turn, expires: game.turn + 10, armyId };
+    game.pushLog(`🚶 ${FACTIONS[factionA].name} 获准借道 ${FACTIONS[factionB].name} 领地（10回合有效）。`);
+    return { ok: true, msg: `军事通行许可已授予（10回合）`, armyId };
+  }
+
+  // 检查是否有通行权
+  hasPassage(factionA, factionB, currentTurn) {
+    if (!this.passages) return false;
+    const key = this._key(factionA, factionB);
+    const p = this.passages[key];
+    if (!p) return false;
+    if (currentTurn && p.expires && currentTurn > p.expires) return false;
+    return true;
+  }
+
+  // 6. 策反（强化版）：花重金策反对方武将（低忠诚加成）
+  //    既有 bribeGeneral 保留不变；此为 V15.0 强化接口
+  proposeDefection(game, targetFid, generalId, cost) {
+    return this.bribeGeneral(game, targetFid, generalId, cost);
+  }
+
   serialize() {
-    return { relations: this.relations };
+    return {
+      relations: this.relations,
+      tradeAgreements: this.tradeAgreements || {},
+      passages: this.passages || {}
+    };
   }
 
   static deserialize(data) {
     const d = new DiplomacySystem();
     if (data && data.relations) d.relations = data.relations;
+    if (data && data.tradeAgreements) d.tradeAgreements = data.tradeAgreements;
+    if (data && data.passages) d.passages = data.passages;
     return d;
   }
 }

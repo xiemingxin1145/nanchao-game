@@ -1,5 +1,5 @@
 // ============================================================
-// titles.js — V3.5 称号系统
+// titles.js — V3.5 称号系统（V15.0 系统深化版）
 // ------------------------------------------------------------
 // 技术参考：
 // 1) 称号/勋章系统通用设计：TITLES 表每项含 {id,name,desc,condition,bonus}，
@@ -11,6 +11,10 @@
 // 3) 称号状态：game.unlockedTitles = { generalId: [titleId,...] }
 //    每武将已解锁；game.activeTitles = { generalId: [titleId,...] }
 //    每武将当前装备（最多 3 个）。
+//
+// V15.0 新增：官职品级序列（从九品~正一品，共 18 级）
+//   每级含俸禄/可分配兵权/影响力加成；任免影响武将忠诚与能力发挥。
+//   新增 API：getTitleRank / getTitleBenefits / appointTitle / dismissTitle
 // ============================================================
 
 // 称号表：condition 接收 (game, general)，bonus 为加成袋
@@ -194,4 +198,88 @@ export function equipTitle(game, generalId, titleId, toggle) {
     if (idx >= 0) arr.splice(idx, 1);
   }
   return { ok: true, msg: toggle ? '已装备称号' : '已卸下称号', equipped: arr.slice() };
+}
+
+// ============================================================
+// V15.0 官职品级序列（从九品~正一品，共 18 级）
+// ============================================================
+// rank: 1=从九品（最低） ... 18=正一品（最高）
+// salary: 每回合俸禄（金钱）
+// militaryAuthority: 可分配兵权（统率上限，影响可领兵数）
+// influence: 影响力加成（政治/外交效果加成）
+// loyaltyEffect: 任命时忠诚变化
+export const OFFICIAL_RANKS = [
+  { id: 'v15_rank_cong9',   rank: 1,  name: '从九品', salary: 50,   militaryAuthority: 1000,  influence: 1,  loyaltyEffect: 2 },
+  { id: 'v15_rank_zheng9',  rank: 2,  name: '正九品', salary: 80,   militaryAuthority: 2000,  influence: 2,  loyaltyEffect: 3 },
+  { id: 'v15_rank_cong8',   rank: 3,  name: '从八品', salary: 120,  militaryAuthority: 3000,  influence: 3,  loyaltyEffect: 3 },
+  { id: 'v15_rank_zheng8',  rank: 4,  name: '正八品', salary: 160,  militaryAuthority: 5000,  influence: 4,  loyaltyEffect: 4 },
+  { id: 'v15_rank_cong7',   rank: 5,  name: '从七品', salary: 220,  militaryAuthority: 7000,  influence: 5,  loyaltyEffect: 4 },
+  { id: 'v15_rank_zheng7',  rank: 6,  name: '正七品', salary: 300,  militaryAuthority: 10000, influence: 6,  loyaltyEffect: 5 },
+  { id: 'v15_rank_cong6',   rank: 7,  name: '从六品', salary: 400,  militaryAuthority: 13000, influence: 7,  loyaltyEffect: 5 },
+  { id: 'v15_rank_zheng6',  rank: 8,  name: '正六品', salary: 520,  militaryAuthority: 16000, influence: 8,  loyaltyEffect: 6 },
+  { id: 'v15_rank_cong5',   rank: 9,  name: '从五品', salary: 680,  militaryAuthority: 20000, influence: 9,  loyaltyEffect: 6 },
+  { id: 'v15_rank_zheng5',  rank: 10, name: '正五品', salary: 880,  militaryAuthority: 25000, influence: 10, loyaltyEffect: 7 },
+  { id: 'v15_rank_cong4',   rank: 11, name: '从四品', salary: 1100, militaryAuthority: 30000, influence: 12, loyaltyEffect: 7 },
+  { id: 'v15_rank_zheng4',  rank: 12, name: '正四品', salary: 1400, militaryAuthority: 36000, influence: 14, loyaltyEffect: 8 },
+  { id: 'v15_rank_cong3',   rank: 13, name: '从三品', salary: 1800, militaryAuthority: 42000, influence: 16, loyaltyEffect: 8 },
+  { id: 'v15_rank_zheng3',  rank: 14, name: '正三品', salary: 2300, militaryAuthority: 50000, influence: 18, loyaltyEffect: 9 },
+  { id: 'v15_rank_cong2',   rank: 15, name: '从二品', salary: 3000, militaryAuthority: 60000, influence: 22, loyaltyEffect: 10 },
+  { id: 'v15_rank_zheng2',  rank: 16, name: '正二品', salary: 4000, militaryAuthority: 75000, influence: 26, loyaltyEffect: 10 },
+  { id: 'v15_rank_cong1',   rank: 17, name: '从一品', salary: 5500, militaryAuthority: 90000, influence: 32, loyaltyEffect: 12 },
+  { id: 'v15_rank_zheng1',  rank: 18, name: '正一品', salary: 8000, militaryAuthority: 120000, influence: 40, loyaltyEffect: 15 }
+];
+
+// 根据官职 id 返回品级数字（1~18）
+export function getTitleRank(titleId) {
+  const r = OFFICIAL_RANKS.find(x => x.id === titleId);
+  return r ? r.rank : 0;
+}
+
+// 根据官职 id 返回俸禄/兵权/影响力等福利
+export function getTitleBenefits(titleId) {
+  const r = OFFICIAL_RANKS.find(x => x.id === titleId);
+  if (!r) return { salary: 0, militaryAuthority: 0, influence: 0 };
+  return {
+    salary: r.salary,
+    militaryAuthority: r.militaryAuthority,
+    influence: r.influence,
+    loyaltyEffect: r.loyaltyEffect
+  };
+}
+
+// 任命武将为某官职：写入 general.officialRank，影响忠诚与能力发挥
+export function appointTitle(general, titleId) {
+  const r = OFFICIAL_RANKS.find(x => x.id === titleId);
+  if (!r) return { ok: false, msg: '官职不存在' };
+  if (!general) return { ok: false, msg: '武将不存在' };
+  general.officialRank = titleId;
+  general.officialRankName = r.name;
+  // 任命影响忠诚
+  general.loyalty = Math.min(100, (general.loyalty || 50) + r.loyaltyEffect);
+  // 影响力加成作用于政治属性
+  if (r.influence) {
+    general.politics = (general.politics || 50) + Math.floor(r.influence / 4);
+  }
+  return {
+    ok: true,
+    msg: `任命 ${general.name} 为【${r.name}】，俸禄 ${r.salary}/回合，兵权上限 ${r.militaryAuthority}。忠诚+${r.loyaltyEffect}。`,
+    rank: r
+  };
+}
+
+// 罢免武将官职：忠诚下降，收回兵权
+export function dismissTitle(general) {
+  if (!general) return { ok: false, msg: '武将不存在' };
+  if (!general.officialRank) return { ok: false, msg: '该武将无官职' };
+  const oldRank = general.officialRank;
+  const oldBenefits = getTitleBenefits(oldRank);
+  general.officialRank = null;
+  general.officialRankName = null;
+  // 罢免降低忠诚
+  general.loyalty = Math.max(0, (general.loyalty || 50) - 15);
+  // 收回影响力加成
+  if (oldBenefits.influence) {
+    general.politics = Math.max(1, (general.politics || 50) - Math.floor(oldBenefits.influence / 4));
+  }
+  return { ok: true, msg: `已罢免 ${general.name} 的官职，忠诚-15。` };
 }

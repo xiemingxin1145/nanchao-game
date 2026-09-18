@@ -150,7 +150,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge">V14.0 · 霸业宏图版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge">V15.0 · 盛世华章版</div>
         </div>
       </div>
     `;
@@ -1020,6 +1020,8 @@ export class UI {
             <button class="btn-small" id="btn-harem" title="后宫/皇室/子嗣">后宫</button>
             <button class="btn-small" id="btn-save">存档</button>
             <button class="btn-small" id="btn-diplomacy">外交</button>
+            <button class="btn-small" id="btn-espionage">谍报</button>
+            <button class="btn-small" id="btn-religion">宗教</button>
             <button class="btn-small" id="btn-recruit">招募</button>
             <button class="btn-small" id="btn-menu">菜单</button>
           </div>
@@ -1061,7 +1063,11 @@ export class UI {
       const r = saveGame(this.game);
       this.toast(r.msg);
     };
-    document.getElementById('btn-diplomacy').onclick = () => this.showDiplomacy();
+    document.getElementById('btn-diplomacy').onclick = () => this.showDiplomacyV15();
+    const v15SpyBtn = document.getElementById('btn-espionage');
+    if (v15SpyBtn) v15SpyBtn.onclick = () => this.showEspionagePanel();
+    const v15RelBtn = document.getElementById('btn-religion');
+    if (v15RelBtn) v15RelBtn.onclick = () => this.showReligionPanel();
     document.getElementById('btn-recruit').onclick = () => this.showRecruitPanel();
     document.getElementById('btn-menu').onclick = () => this.showSettings();
     document.getElementById('btn-tech').onclick = () => this.showTechTree();
@@ -2348,32 +2354,8 @@ export class UI {
 
   // ---------- 外交面板 ----------
   showDiplomacy() {
-    const otherFactions = Object.values(FACTIONS).filter(f => f.id !== this.game.playerFaction);
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-      <div class="modal">
-        <h2 class="modal-title">外交</h2>
-        ${otherFactions.map(f => {
-          const rel = this.game.diplomacy.getRelation(this.game.playerFaction, f.id);
-          const bribable = this.game.getFactionGenerals(f.id).filter(g => g.loyalty < 40);
-          return `
-            <div class="diplo-row" style="border-left:4px solid ${f.color}">
-              <b style="color:${f.color}">${f.name}</b>
-              <span>关系：${rel.relation > 20 ? '友好' : rel.relation < -20 ? '敌对' : '中立'} ${rel.alliance ? '[同盟]' : ''} ${rel.ceasefire ? '[停战]' : ''}</span>
-              <div class="diplo-actions">
-                <button class="btn-small" onclick="__ui_.diploAction('alliance','${f.id}')">同盟</button>
-                <button class="btn-small" onclick="__ui_.diploAction('ceasefire','${f.id}')">停战</button>
-                <button class="btn-small" onclick="__ui_.diploAction('tribute','${f.id}')">进贡500金</button>
-                ${bribable.length > 0 ? `<button class="btn-small" onclick="__ui_.diploAction('bribe','${f.id}','${bribable[0].id}')">策反${bribable[0].name}</button>` : ''}
-              </div>
-            </div>
-          `;
-        }).join('')}
-        <button class="btn-ancient" onclick="this.parentElement.parentElement.remove()">关闭</button>
-      </div>
-    `;
-    document.body.appendChild(modal);
+    // V15.0：委托到盛世华章版外交中枢（关系等级/行动/确认弹窗/通知横幅）
+    this.showDiplomacyV15();
   }
 
   diploAction(action, targetFid, generalId) {
@@ -2602,6 +2584,9 @@ export class UI {
   // V7.0 — 官职 / 爵位面板
   // ============================================================
   showOfficePanel() {
+    // V15.0：委托到盛世华章版官职任免（九品品级条/俸禄/兵权）
+    this.showOfficePanelV15();
+    return;
     const me = this.game.playerFaction;
     const gens = this.game.getFactionGenerals(me).filter(g => !g.inArmy && !g.onHostage && !g.onMission);
     const held = this.game.getOffices(me);
@@ -2677,6 +2662,9 @@ export class UI {
   // V7.0 — 贸易商路面板
   // ============================================================
   showTradePanel() {
+    // V15.0：委托到盛世华章版贸易商路（路线图光点/收入明细）
+    this.showTradePanelV15();
+    return;
     const info = this.game.getTradeInfo();
     const me = this.game.playerFaction;
     const cities = this.game.getFactionCities(me);
@@ -2826,6 +2814,9 @@ export class UI {
   }
 
   showExamResultModal(result) {
+    // V15.0：委托到盛世华章版金榜（三甲特殊标识/进士品质）
+    this.showExamResultModalV15(result);
+    return;
     if (!result) return;
     try { this.unlockSceneBGM('exam'); if (this.audio.playExamHuangbang) this.audio.playExamHuangbang(); } catch(e){}
     const modal = document.createElement('div');
@@ -3079,55 +3070,9 @@ export class UI {
   // 成就面板
   // ============================================================
   showAchievements() {
-    if (typeof this.game.getAchievements !== 'function') {
-      this.toast('成就系统尚未开放');
-      return;
-    }
-    let list;
-    try { list = this.game.getAchievements() || []; } catch (e) { this.toast('成就数据异常'); return; }
-    const unlocked = list.filter(a => a.unlocked).length;
-    const pts = getAchievementPoints(this.game);
-    const tier = getAchievementTier(pts);
-    // 按分类分组
-    const catOrder = ['military', 'politics', 'economy', 'person', 'special'];
-    const groups = catOrder.map(c => ({
-      cat: c,
-      meta: ACH_CATEGORIES[c] || { name: c, icon: '•' },
-      items: list.filter(a => (a.category || 'special') === c)
-    })).filter(g => g.items.length);
-    const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    modal.innerHTML = `
-      <div class="modal ach-modal v95-ach">
-        <div class="ach-hero" style="background-image:url('assets/images/achievement_hall.png')">
-          <h2 class="modal-title">成就殿堂</h2>
-          <div class="ach-tier" style="color:${tier.color}">${tier.icon||''} ${tier.name} · ${pts} 点</div>
-          <div class="ach-progress-bar">已解锁 ${unlocked} / ${list.length}</div>
-        </div>
-        <div class="ach-body">
-          ${groups.map(g => `
-            <div class="ach-cat">
-              <h3 class="ach-cat-title">${g.meta.icon} ${g.meta.name}</h3>
-              <div class="ach-grid">
-                ${g.items.map(a => `
-                  <div class="ach-item ${a.unlocked ? '' : 'locked'}">
-                    <div class="ach-icon">${a.icon || '🏆'}</div>
-                    <div class="ach-name">${a.unlocked ? (a.name || '???') : '？？？'}</div>
-                    <div class="ach-desc">${a.unlocked ? (a.description || '') : '未解锁'}</div>
-                    <div class="ach-reward">${this._achRewardText(a)}</div>
-                    <div class="ach-points">+${a.points||10} 分</div>
-                    ${a.unlocked && a.unlockTurn ? `<div class="ach-turn">第 ${a.unlockTurn} 回合</div>` : ''}
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-        <button class="btn-ancient" style="margin-top:14px" onclick="this.closest('.modal-overlay').remove()">关闭</button>
-      </div>
-    `;
-    document.body.appendChild(modal);
-    if (this.audio) try { this.audio.playPanelOpen(); } catch(e){}
+    if (!this.game) { this.toast('开始游戏后可查看成就'); return; }
+    // V15.0：委托到盛世华章版成就殿堂（段位徽章/分类/进度/统计）
+    this.showAchievementsV15();
   }
 
   // 成就奖励文字
@@ -3277,25 +3222,8 @@ export class UI {
   // 右上角成就通知横幅
   showAchToast(a) {
     if (!a) return;
-    const t = document.createElement('div');
-    t.className = 'ach-toast';
-    t.innerHTML = `
-      <div class="ach-toast-icon">${a.icon || '🏆'}</div>
-      <div>
-        <div class="ach-toast-title">★ 成就解锁 ★</div>
-        <div class="ach-toast-name">${a.name || ''}</div>
-        <div class="ach-toast-desc">${a.description || ''}</div>
-      </div>
-    `;
-    document.body.appendChild(t);
-    requestAnimationFrame(() => t.classList.add('show'));
-    this.audio.playAchievement();
-    // V8.1：同步推送顶部通知横幅
-    try { this.showNotification(`成就解锁：${a.name || ''}`, 'success'); } catch (e) {}
-    setTimeout(() => {
-      t.classList.remove('show');
-      setTimeout(() => t.remove(), 600);
-    }, 3200);
+    // V15.0：金色闪光 + 奖杯旋转 + 粒子 成就解锁动画
+    this._v15AchievementFlash(a);
   }
 
   // ============================================================
@@ -3771,45 +3699,9 @@ export class UI {
       const ngLevel = getCurrentNGPlusLevel();
       const ngHint = g.gameOver.win
         ? `<p class="hint" style="margin-top:10px">◆ 周目继承：新周目 AI 兵力+${(ngLevel+1)*10}% · AI经济+${(ngLevel+1)*5}% ◆</p>` : '';
-      const modal = document.createElement('div');
-      modal.className = 'modal-overlay';
-      modal.innerHTML = `
-        <div class="modal gameover-modal">
-          <h2 class="modal-title ${g.gameOver.win ? 'win' : 'lose'}">
-            ${g.gameOver.win ? '★ 天下一统 ★' : '霸业成空'}
-          </h2>
-          <div class="ending-rating ${ratingClass}">${rating}</div>
-          <p class="gameover-text">${g.gameOver.text}</p>
-          <p class="gameover-sub">历经 ${g.turn} 回合</p>
-          ${stats ? `
-          <div class="ending-stats">
-            <div class="stat-row"><span>战斗/胜利/胜率</span><b>${stats.battles || 0} / ${stats.victories || 0} / ${stats.winRate || 0}%</b></div>
-            <div class="stat-row"><span>占领城市</span><b>${stats.citiesConquered || 0}</b></div>
-            <div class="stat-row"><span>招募武将</span><b>${stats.recruited || 0}</b></div>
-            <div class="stat-row"><span>研究科技</span><b>${stats.researched || 0}</b></div>
-            <div class="stat-row"><span>触发事件</span><b>${stats.eventsTriggered || 0}</b></div>
-            <div class="stat-row"><span>当前金钱/粮草</span><b>${stats.currentMoney || 0} / ${stats.currentFood || 0}</b></div>
-          </div>` : ''}
-          ${ngHint}
-          <div style="margin-top:14px;display:flex;gap:12px;justify-content:center">
-            <button class="btn-ancient" id="btn-again">再来一局</button>
-            <button class="btn-ancient" onclick="__ui_.showMainMenu()">返回主菜单</button>
-          </div>
-        </div>
-      `;
-      document.body.appendChild(modal);
-      // V7.5：统一/亡国对应音效
-      if (g.gameOver.win) { this.audio.playUnifyChina(); }
-      else { this.audio.playDynastyFall(); }
-      // V9.5：通关解锁王朝/文化乐谱
+      // V15.0：通关解锁王朝/文化乐谱 + 盛世华章版结局画面
       try { this.unlockSceneBGM('dynasty'); this.unlockSceneBGM('culture'); } catch(e){}
-      this.audio.switchBGM('ending');
-      // 再来一局
-      const againBtn = document.getElementById('btn-again');
-      if (againBtn) againBtn.onclick = () => {
-        document.querySelectorAll('.modal-overlay').forEach(m => m.remove());
-        this.showFactionSelect();
-      };
+      this._v15ShowEnding(g);
     }
   }
 
@@ -4075,6 +3967,8 @@ export class UI {
       });
       this.game.pendingAchievements.length = 0;
     }
+    // V15.0：主菜单/顶栏成就入口红点提示（有待解锁成就）
+    try { this._v15UpdateAchBadge(); } catch (e) {}
     // V3.5：待弹出称号通知
     if (this.game.pendingTitles && this.game.pendingTitles.length > 0) {
       [...this.game.pendingTitles].forEach(t => {
@@ -4734,5 +4628,828 @@ export class UI {
     t.classList.add('show');
     clearTimeout(this._toastTimer);
     this._toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+  }
+
+  // ============================================================
+  // ============== V15.0「盛世华章」UI 精修 ======================
+  //  约定：所有新类名使用 v15- 前缀；所有模型 API 调用带
+  //        typeof === 'function' / 存在性守卫，优雅降级。
+  // ============================================================
+
+  // ---------- 通用：古风弹窗骨架（四角装饰 + 标题） ----------
+  _v15ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v15-overlay';
+    modal.innerHTML = `
+      <div class="modal v15-modal v15-scroll ${extraCls}">
+        <div class="v15-corner tl"></div><div class="v15-corner tr"></div>
+        <div class="v15-corner bl"></div><div class="v15-corner br"></div>
+        <h2 class="modal-title v15-title">${titleHtml}</h2>
+        <div class="v15-body">${bodyHtml}</div>
+        <button class="btn-ancient v15-close" onclick="this.closest('.v15-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && this.audio.playPanelOpen) try { this.audio.playPanelOpen(); } catch (e) {}
+    return modal;
+  }
+
+  // ============================================================
+  // 一、成就系统 UI（对接 achievements.js）
+  // ============================================================
+
+  // 段位信息（含到下一段位进度）
+  _v15TierInfo(pts) {
+    const tiers = [
+      { id: 'legendary', name: '传奇', min: 1000, color: '#FF4D6D' },
+      { id: 'diamond',   name: '钻石', min: 700,  color: '#4FC3F7' },
+      { id: 'platinum',  name: '白金', min: 450,  color: '#E0E0E0' },
+      { id: 'gold',      name: '黄金', min: 250,  color: '#FFD54F' },
+      { id: 'silver',    name: '白银', min: 100,  color: '#B0BEC5' },
+      { id: 'bronze',    name: '青铜', min: 0,    color: '#B8845A' }
+    ];
+    let cur = tiers[tiers.length - 1];
+    let next = null;
+    for (const t of tiers) { if (pts >= t.min) { cur = t; break; } }
+    const idx = tiers.indexOf(cur);
+    if (idx > 0) next = tiers[idx - 1];
+    let pct = 100, needText = '已达最高段位';
+    if (next) {
+      const span = next.min - cur.min;
+      pct = Math.max(0, Math.min(100, Math.round((pts - cur.min) / Math.max(1, span) * 100)));
+      needText = `距「${next.name}」还需 ${next.min - pts} 点`;
+    }
+    return { cur, next, pct, needText, pts };
+  }
+
+  // 成就进度（启发式：已解锁=100%；否则按已知数据估算）
+  _v15AchProgress(ach) {
+    if (!ach || ach.unlocked) return ach && ach.unlocked ? { pct: 100, text: '已解锁' } : { pct: 0, text: '' };
+    let pct = 0, text = '';
+    const g = this.game;
+    try {
+      const res = (g && g.getPlayerRes) ? g.getPlayerRes() : null;
+      switch (ach.id) {
+        case 'rich': if (res) { pct = Math.min(100, res.money / 100); text = `金钱 ${Math.round(res.money)}/10000`; } break;
+        case 'money_100k': if (res) { pct = Math.min(100, res.money / 1000); text = `金钱 ${Math.round(res.money)}/100000`; } break;
+        case 'food_50k': if (res) { pct = Math.min(100, res.food / 500); text = `粮草 ${Math.round(res.food)}/50000`; } break;
+        case 'first_turn': pct = Math.min(100, (g.turn || 0) / 2 * 100); text = `第 ${g.turn || 1} 回合`; break;
+        case 'cities_20': pct = Math.min(100, ((g.stats && g.stats.citiesConquered) || 0) / 20 * 100); text = `占城 ${(g.stats && g.stats.citiesConquered) || 0}/20`; break;
+        case 'conquer_first': pct = Math.min(100, ((g.stats && g.stats.citiesConquered) || 0) > 0 ? 100 : 0); break;
+        case 'warlord': pct = Math.min(100, (g.turn || 0) / 50 * 100); text = `第 ${g.turn || 0}/50 回合`; break;
+        default: pct = 0; text = '未解锁';
+      }
+    } catch (e) { pct = 0; text = '未解锁'; }
+    return { pct: Math.round(pct), text };
+  }
+
+  // 成就总览面板（按分类 + 段位徽章 + 统计）
+  showAchievementsV15() {
+    let list = [];
+    try { list = (this.game.getAchievements && typeof this.game.getAchievements === 'function') ? (this.game.getAchievements() || []) : []; }
+    catch (e) { list = []; }
+    const pts = getAchievementPoints(this.game);
+    const tier = this._v15TierInfo(pts);
+    const unlocked = list.filter(a => a.unlocked).length;
+    const total = list.length;
+    const unlockedPts = list.filter(a => a.unlocked).reduce((s, a) => s + (a.points || 10), 0);
+
+    const catOrder = ['military', 'politics', 'economy', 'person', 'special'];
+    const groups = catOrder.map(c => ({
+      cat: c,
+      meta: (typeof ACH_CATEGORIES !== 'undefined' && ACH_CATEGORIES[c]) || { name: c, icon: '•' },
+      items: list.filter(a => (a.category || 'special') === c)
+    })).filter(g => g.items.length);
+
+    // 分类切换（默认全部分类）
+    const tabBar = `<div class="v15-ach-tabs">
+        <button class="v15-ach-tab active" data-cat="all">全部</button>
+        ${catOrder.map(c => {
+          const m = (typeof ACH_CATEGORIES !== 'undefined' && ACH_CATEGORIES[c]) || { name: c, icon: '•' };
+          return `<button class="v15-ach-tab" data-cat="${c}">${m.icon} ${m.name}</button>`;
+        }).join('')}
+      </div>`;
+
+    const hero = `
+      <div class="v15-ach-hero" style="--v15-tier:${tier.cur.color}">
+        <div class="v15-tier-badge" style="color:${tier.cur.color};border-color:${tier.cur.color}">
+          <span class="v15-tier-gem">◆</span>${tier.cur.name}
+        </div>
+        <div class="v15-tier-progress">
+          <div class="v15-tier-track"><div class="v15-tier-fill" style="width:${tier.pct}%;background:${tier.cur.color}"></div></div>
+          <div class="v15-tier-num">${pts} 成就点 · ${tier.needText}</div>
+        </div>
+        <div class="v15-ach-stats">
+          <div class="v15-stat"><span>已解锁</span><b>${unlocked}/${total}</b></div>
+          <div class="v15-stat"><span>成就总分</span><b>${unlockedPts}</b></div>
+          <div class="v15-stat"><span>完成率</span><b>${total ? Math.round(unlocked / total * 100) : 0}%</b></div>
+        </div>
+      </div>`;
+
+    const grid = groups.map(g => `
+      <div class="v15-ach-group" data-cat="${g.cat}">
+        <h3 class="v15-ach-cat-title">${g.meta.icon} ${g.meta.name}</h3>
+        <div class="v15-ach-grid">
+          ${g.items.map(a => {
+            const pr = this._v15AchProgress(a);
+            return `<div class="v15-ach-item ${a.unlocked ? 'unlocked' : 'locked'}">
+              <div class="v15-ach-icon">${a.unlocked ? (a.icon || '🏆') : '🔒'}</div>
+              <div class="v15-ach-name">${a.unlocked ? this._escHtml(a.name || '???') : '？？？'}</div>
+              <div class="v15-ach-desc">${a.unlocked ? this._escHtml(a.description || '') : '尚未解锁，继续努力'}</div>
+              <div class="v15-ach-prog"><div class="v15-ach-prog-track"><div class="v15-ach-prog-fill" style="width:${pr.pct}%"></div></div><span>${pr.text}</span></div>
+              <div class="v15-ach-reward">${this._achRewardText(a)}</div>
+              <div class="v15-ach-points">+${a.points || 10} 分 ${a.unlocked && a.unlockTurn ? `· 第${a.unlockTurn}回合` : ''}</div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`).join('');
+
+    const modal = this._v15ModalShell('🏆 成就殿堂 · 盛世华章', hero + tabBar + `<div class="v15-ach-groups">${grid}</div>`);
+    // 分类切换
+    modal.querySelectorAll('.v15-ach-tab').forEach(btn => {
+      btn.onclick = () => {
+        modal.querySelectorAll('.v15-ach-tab').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const cat = btn.dataset.cat;
+        modal.querySelectorAll('.v15-ach-group').forEach(grp => {
+          grp.style.display = (cat === 'all' || grp.dataset.cat === cat) ? '' : 'none';
+        });
+        if (this.audio && this.audio.playClick) try { this.audio.playClick(); } catch (e) {}
+      };
+    });
+  }
+
+  // 成就解锁弹窗（金色闪光 + 奖杯旋转 + 粒子，性能保护）
+  _v15AchievementFlash(ach) {
+    if (!ach) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'v15-ach-flash';
+    wrap.innerHTML = `
+      <div class="v15-flash-golden"></div>
+      <div class="v15-flash-card">
+        <div class="v15-flash-trophy">${ach.icon || '🏆'}</div>
+        <div class="v15-flash-label">★ 成就解锁 ★</div>
+        <div class="v15-flash-name">${this._escHtml(ach.name || '')}</div>
+        <div class="v15-flash-desc">${this._escHtml(ach.description || '')}</div>
+        <div class="v15-flash-reward">${this._achRewardText(ach)}</div>
+      </div>`;
+    document.body.appendChild(wrap);
+    // 金色粒子（DOM，上限 28 个，自动清理）
+    const N = 28;
+    for (let i = 0; i < N; i++) {
+      const p = document.createElement('span');
+      p.className = 'v15-flash-particle';
+      const ang = Math.random() * Math.PI * 2;
+      const dist = 60 + Math.random() * 140;
+      p.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
+      p.style.setProperty('--dy', Math.sin(ang) * dist + 'px');
+      p.style.animationDelay = (Math.random() * 0.3) + 's';
+      wrap.appendChild(p);
+    }
+    requestAnimationFrame(() => wrap.classList.add('show'));
+    if (this.audio && this.audio.playAchievement) try { this.audio.playAchievement(); } catch (e) {}
+    try { this.showNotification(`成就解锁：${ach.name || ''}`, 'success'); } catch (e) {}
+    setTimeout(() => {
+      wrap.classList.remove('show');
+      setTimeout(() => wrap.remove(), 700);
+    }, 3200);
+  }
+
+  // ============================================================
+  // 二、结局画面 UI（对接 ending.js / gameOver）
+  // ============================================================
+
+  // 结局类型 → 背景风格
+  _v15EndingBgClass(endingObj, win) {
+    const id = (endingObj && endingObj.id) || '';
+    if (id === 'unify' || id === 'abdicate' || id === 'perfect') return 'v15-ending-gold';
+    if (id === 'perish') return 'v15-ending-dark';
+    if (id === 'refuge') return 'v15-ending-mist';
+    if (id === 'standoff' || id === 'history_repeat') return 'v15-ending-twilight';
+    if (id === 'usurp' || id === 'barbarian_takeover') return 'v15-ending-crimson';
+    return win ? 'v15-ending-gold' : 'v15-ending-dark';
+  }
+
+  // 评级颜色 / 动画等级
+  _v15RankStyle(rank) {
+    const map = {
+      S: { color: '#FFD700', cls: 'v15-rank-s' },
+      A: { color: '#D9D9D9', cls: 'v15-rank-a' },
+      B: { color: '#CD7F32', cls: 'v15-rank-b' },
+      C: { color: '#9AA58C', cls: 'v15-rank-c' },
+      D: { color: '#8C8C8C', cls: 'v15-rank-d' }
+    };
+    return map[rank] || map.C;
+  }
+
+  // 结局结算画面
+  _v15ShowEnding(g) {
+    const endingObj = (g.currentEndingObj && typeof g.currentEndingObj === 'object')
+      ? g.currentEndingObj : (g.endings && g.endings.current) || null;
+    const win = !!(g.gameOver && g.gameOver.win);
+    // 结局名称
+    const title = (endingObj && endingObj.name) ? endingObj.name : (win ? '一统天下' : '亡国之君');
+    // 评级：优先结局自带 rank，否则按回合推算
+    let rank = (endingObj && endingObj.rank) ? endingObj.rank : (win ? 'S' : 'D');
+    rank = String(rank).toUpperCase();
+    const rStyle = this._v15RankStyle(rank);
+    // 叙事文本：结局自带文本优先，否则用 gameOver.text
+    let narrative = (endingObj && endingObj.text) ? endingObj.text : (g.gameOver.text || '');
+    // 战绩统计
+    const stats = (g.getStats && typeof g.getStats === 'function') ? g.getStats() : {};
+    const playTime = (typeof formatPlayTime === 'function') ? formatPlayTime(stats.playTime) : '—';
+    const achCount = Object.keys(g.achievements || {}).length;
+    const citiesConq = stats.citiesConquered || 0;
+    const genRecruited = stats.recruited || 0;
+    const turns = g.turn || 0;
+    const bgCls = this._v15EndingBgClass(endingObj, win);
+
+    const statsHtml = `
+      <div class="v15-ending-stats">
+        <div class="v15-estat"><span>游戏时长</span><b>${playTime}</b></div>
+        <div class="v15-estat"><span>回合数</span><b>${turns}</b></div>
+        <div class="v15-estat"><span>占领城市</span><b>${citiesConq}</b></div>
+        <div class="v15-estat"><span>招募武将</span><b>${genRecruited}</b></div>
+        <div class="v15-estat"><span>成就数</span><b>${achCount}</b></div>
+        <div class="v15-estat"><span>战斗胜率</span><b>${stats.winRate || 0}%</b></div>
+      </div>`;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-overlay v15-ending-overlay';
+    wrap.innerHTML = `
+      <div class="v15-ending-bg ${bgCls}"></div>
+      <div class="v15-ending-stage">
+        <div class="v15-ending-scroll">
+          <div class="v15-ending-title">${this._escHtml(title)}</div>
+          <div class="v15-ending-rank ${rStyle.cls}" style="color:${rStyle.color};text-shadow:0 0 24px ${rStyle.color}">${rank}</div>
+          <div class="v15-ending-rank-label">${win ? '盛世华章' : '乱世余音'} · 评级</div>
+          <div class="v15-ending-narrative">${this._escHtml(narrative)}</div>
+          ${statsHtml}
+          <div class="v15-ending-actions">
+            <button class="btn-ancient v15-btn-again" id="v15-again">重新开始</button>
+            <button class="btn-ancient v15-btn-save" id="v15-save-record">保存战绩</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    // 评级金光爆发（按等级）
+    this._v15RatingBurst(rank, wrap);
+    // 结局配乐
+    if (this.audio) {
+      try { this.audio.switchBGM && this.audio.switchBGM('ending'); } catch (e) {}
+      if (win && this.audio.playUnifyChina) try { this.audio.playUnifyChina(); } catch (e) {}
+      if (!win && this.audio.playDynastyFall) try { this.audio.playDynastyFall(); } catch (e) {}
+    }
+    // 重新开始
+    const again = wrap.querySelector('#v15-again');
+    if (again) again.onclick = () => {
+      wrap.remove();
+      this.showFactionSelect && this.showFactionSelect();
+    };
+    const saveBtn = wrap.querySelector('#v15-save-record');
+    if (saveBtn) saveBtn.onclick = () => {
+      try {
+        if (typeof saveGame === 'function') { saveGame(g); }
+        this.toast('战绩已保存至存档');
+      } catch (e) { this.toast('保存失败'); }
+    };
+  }
+
+  // 评级爆发动画：S 金光四射 / A 银辉 / B 铜光 / C / D 灰寂
+  _v15RatingBurst(rank, wrap) {
+    const rankMap = { S: 36, A: 24, B: 16, C: 8, D: 4 };
+    const N = rankMap[rank] || 8;
+    const colors = {
+      S: 'rgba(255,215,0,0.95)', A: 'rgba(220,225,235,0.9)',
+      B: 'rgba(205,127,50,0.9)', C: 'rgba(154,165,140,0.8)', D: 'rgba(140,140,140,0.7)'
+    };
+    const color = colors[rank] || colors.C;
+    const stage = wrap.querySelector('.v15-ending-stage');
+    if (!stage) return;
+    for (let i = 0; i < N; i++) {
+      const p = document.createElement('span');
+      p.className = 'v15-rank-spark';
+      const ang = (i / N) * Math.PI * 2 + Math.random() * 0.4;
+      const dist = (rank === 'S' ? 180 : 120) + Math.random() * 120;
+      p.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
+      p.style.setProperty('--dy', Math.sin(ang) * dist + 'px');
+      p.style.background = color;
+      p.style.boxShadow = `0 0 8px ${color}`;
+      p.style.animationDelay = (Math.random() * 0.25) + 's';
+      stage.appendChild(p);
+    }
+    // 3.5s 后清理粒子
+    setTimeout(() => { wrap.querySelectorAll('.v15-rank-spark').forEach(p => p.remove()); }, 4000);
+  }
+
+  // ============================================================
+  // 三、外交面板 UI（对接 diplomacy.js）
+  // ============================================================
+
+  // 关系等级 → {name,color,icon}
+  _v15RelLevel(rel, flags) {
+    const v = (rel == null ? 0 : rel.relation);
+    const war = flags && flags.war;
+    if (war || v <= -60) return { name: '战争', color: '#B3242A', icon: '⚔' };
+    if (v <= -30) return { name: '敌对', color: '#E05555', icon: '☠' };
+    if (v < 0) return { name: '紧张', color: '#E8A33C', icon: '⚠' };
+    if (v < 20) return { name: '中立', color: '#B8A575', icon: '·' };
+    if (v < 50) return { name: '友好', color: '#6FCF6F', icon: '♥' };
+    return { name: '亲密', color: '#3FA66A', icon: '❤' };
+  }
+
+  // 外交接受概率（启发式，基于关系）
+  _v15DiploAcceptProb(relVal, base) {
+    const v = (relVal == null ? 0 : relVal);
+    const p = (base || 0.5) + v / 200;
+    return Math.max(5, Math.min(95, Math.round(p * 100)));
+  }
+
+  showDiplomacyV15() {
+    const g = this.game;
+    const me = g.playerFaction;
+    if (!g.diplomacy) { this.toast('外交系统未就绪'); return; }
+    const otherFactions = Object.values(FACTIONS).filter(f => f.id !== me);
+    const res = g.getPlayerRes ? g.getPlayerRes() : { money: 0 };
+
+    const rows = otherFactions.map(f => {
+      const rel = g.diplomacy.getRelation(me, f.id) || { relation: 0, alliance: false, ceasefire: false };
+      const lvl = this._v15RelLevel(rel);
+      const hasMarriage = (g.diplomacy.getActiveMarriage && typeof g.diplomacy.getActiveMarriage === 'function')
+        ? g.diplomacy.getActiveMarriage(g, me, f.id) : null;
+      const tradeOk = (g.tradeSystem && g.tradeSystem.hasAgreement) ? g.tradeSystem.hasAgreement(me, f.id) : false;
+      // 可策反武将
+      let bribable = [];
+      try { bribable = g.getFactionGenerals(f.id).filter(x => x.loyalty < 40); } catch (e) {}
+      const flags = [];
+      if (rel.alliance) flags.push('<span class="v15-dip-flag">同盟</span>');
+      if (rel.ceasefire) flags.push('<span class="v15-dip-flag">停战</span>');
+      if (hasMarriage) flags.push('<span class="v15-dip-flag">联姻</span>');
+      if (tradeOk) flags.push('<span class="v15-dip-flag">互市</span>');
+
+      return `<div class="v15-dip-row" style="--v15-fac:${f.color};border-left-color:${f.color}">
+        <div class="v15-dip-head">
+          <b style="color:${f.color}">${this._escHtml(f.name)}</b>
+          <span class="v15-dip-level" style="color:${lvl.color}">${lvl.icon} ${lvl.name}</span>
+          <span class="v15-dip-val">关系 ${rel.relation > 0 ? '+' : ''}${rel.relation}</span>
+        </div>
+        <div class="v15-dip-flags">${flags.join(' ') || '<span class="v15-dip-flag none">无盟好</span>'}</div>
+        <div class="v15-dip-actions">
+          <button class="btn-small" onclick="__ui_._v15DiploAsk('marriage','${f.id}')">💍 联姻</button>
+          <button class="btn-small" onclick="__ui_._v15DiploAsk('hostage','${f.id}')">🕊 质子</button>
+          <button class="btn-small" onclick="__ui_._v15DiploAsk('alliance','${f.id}')">🤝 联合讨伐</button>
+          <button class="btn-small" onclick="__ui_._v15DiploAsk('trade','${f.id}')">⚖ 贸易协定</button>
+          <button class="btn-small" onclick="__ui_._v15DiploAsk('pass','${f.id}')">🚩 军事通行</button>
+          ${bribable.length ? `<button class="btn-small" onclick="__ui_._v15DiploAsk('bribe','${f.id}','${bribable[0].id}')">🗡 策反${this._escHtml(bribable[0].name)}</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    const body = `<div class="v15-dip-banner">💰 当前金 ${Math.round(res.money || 0)} · 关系越好，外交越易成功</div>
+      <div class="v15-dip-list">${rows}</div>`;
+    this._v15ModalShell('🕊 外交中枢', body);
+  }
+
+  // 外交提议确认弹窗（内容 + 接受概率 + 消耗）
+  _v15DiploAsk(action, targetFid, generalId) {
+    const g = this.game;
+    const f = FACTIONS[targetFid];
+    const rel = g.diplomacy.getRelation(g.playerFaction, targetFid) || { relation: 0 };
+    const costMap = { marriage: { money: 0, food: 0 }, hostage: { money: 0, food: 0 },
+      alliance: { money: 0, food: 0 }, trade: { money: 0, food: 0 },
+      pass: { money: 200, food: 0 }, bribe: { money: 800, food: 0 } };
+    const baseMap = { marriage: 0.45, hostage: 0.6, alliance: 0.5, trade: 0.6, pass: 0.65, bribe: 0.3 };
+    const cost = costMap[action] || { money: 0, food: 0 };
+    const prob = this._v15DiploAcceptProb(rel.relation, baseMap[action] || 0.5);
+    const actionName = { marriage: '联姻', hostage: '送人质', alliance: '结盟/联合讨伐', trade: '贸易协定', pass: '军事通行', bribe: '策反' }[action] || action;
+    const desc = {
+      marriage: `与 ${f.name} 永结两姓之好，关系大增，互不攻伐，通商厚利。`,
+      hostage: `遣一名闲居武将赴 ${f.name} 为质，稳固盟好（关系≥0 可召回）。`,
+      alliance: `与 ${f.name} 结盟，共同讨伐不臣，关系+30。`,
+      trade: `与 ${f.name} 互市通商，双方商税互通（需关系≥40）。`,
+      pass: `获准借道 ${f.name} 疆域行军，耗金 200。`,
+      bribe: `重金收买 ${f.name} 麾下低忠诚武将，耗金 800。`
+    }[action];
+
+    const old = document.querySelector('.v15-overlay.v15-dip-confirm');
+    if (old) old.remove();
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v15-overlay v15-dip-confirm';
+    modal.innerHTML = `
+      <div class="modal v15-modal v15-scroll">
+        <div class="v15-corner tl"></div><div class="v15-corner tr"></div>
+        <div class="v15-corner bl"></div><div class="v15-corner br"></div>
+        <h2 class="modal-title v15-title">确认外交：${actionName}</h2>
+        <div class="v15-body">
+          <div class="v15-dip-desc">${this._escHtml(desc || '')}</div>
+          <div class="v15-dip-prob">
+            <span>对方接受概率</span>
+            <div class="v15-prob-track"><div class="v15-prob-fill" style="width:${prob}%;background:${prob > 60 ? '#6FCF6F' : prob > 35 ? '#E8A33C' : '#E05555'}"></div></div>
+            <b style="color:${prob > 60 ? '#6FCF6F' : prob > 35 ? '#E8A33C' : '#E05555'}">${prob}%</b>
+          </div>
+          <div class="v15-dip-cost">消耗：${cost.money ? `金 ${cost.money}` : ''}${cost.food ? `粮 ${cost.food}` : ''}${(!cost.money && !cost.food) ? '无' : ''}</div>
+          <div class="v15-dip-btns">
+            <button class="btn-ancient" id="v15-dip-yes">遣使</button>
+            <button class="btn-ancient" onclick="this.closest('.v15-overlay').remove()">作罢</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#v15-dip-yes').onclick = () => {
+      modal.remove();
+      this._v15DiploDo(action, targetFid, generalId);
+    };
+  }
+
+  // 执行外交行动（对接 game / diplomacy 接口）
+  _v15DiploDo(action, targetFid, generalId) {
+    const g = this.game;
+    let result = { ok: false, msg: '该外交行动暂不可用' };
+    try {
+      switch (action) {
+        case 'marriage': {
+          const cand = g.getFactionGenerals(g.playerFaction).filter(x => !x.married && !x.inArmy && x.role !== '君主')[0];
+          if (!cand) { this._v15Notify('联姻', '我方无未婚可联姻武将', 'warn'); return; }
+          result = (g.proposeMarriage && typeof g.proposeMarriage === 'function')
+            ? g.proposeMarriage(targetFid, cand.id) : { ok: false, msg: '联姻接口未就绪' };
+          break;
+        }
+        case 'hostage': {
+          const cand = g.getFactionGenerals(g.playerFaction).filter(x => !x.inArmy && x.role !== '君主')[0];
+          if (!cand) { this._v15Notify('质子', '无可用武将为质', 'warn'); return; }
+          result = (g.sendHostage && typeof g.sendHostage === 'function')
+            ? g.sendHostage(targetFid, cand.id) : { ok: false, msg: '质子接口未就绪' };
+          break;
+        }
+        case 'alliance':
+          result = g.diplomacy.proposeAlliance(g.playerFaction, targetFid);
+          break;
+        case 'trade':
+          result = (g.proposeTradeAgreement && typeof g.proposeTradeAgreement === 'function')
+            ? g.proposeTradeAgreement(targetFid) : { ok: false, msg: '通商接口未就绪' };
+          break;
+        case 'pass': {
+          const rel = g.diplomacy.getRelation(g.playerFaction, targetFid);
+          if (rel) rel.relation = Math.min(100, rel.relation + 5);
+          const res = g.getPlayerRes && g.getPlayerRes();
+          if (res && res.money >= 200) { res.money -= 200; result = { ok: true, msg: `已获准借道 ${FACTIONS[targetFid].name} 疆域` }; }
+          else result = { ok: false, msg: '金钱不足（需 200 金）' };
+          break;
+        }
+        case 'bribe':
+          result = g.diplomacy.bribeGeneral(g, targetFid, generalId || '', 800);
+          break;
+      }
+    } catch (e) { result = { ok: false, msg: String(e.message || e) }; }
+    this._v15Notify(action === 'marriage' ? '联姻' : action === 'hostage' ? '质子' : action === 'alliance' ? '盟约' : action === 'trade' ? '互市' : '外交', result.msg, result.ok ? 'success' : 'warn');
+    if (this.audio && result.ok && this.audio.playCoin) try { this.audio.playCoin(); } catch (e) {}
+    // 刷新外交面板
+    document.querySelectorAll('.v15-overlay').forEach(m => m.remove());
+    if (this.game.state === 'playing') this.showDiplomacyV15();
+    this.refreshUI && this.refreshUI();
+  }
+
+  // 外交/事件通知横幅
+  _v15Notify(title, text, type) {
+    const cls = type === 'success' ? 'v15-notify-success' : type === 'warn' ? 'v15-notify-warn' : '';
+    const bar = document.createElement('div');
+    bar.className = `v15-notify ${cls}`;
+    bar.innerHTML = `<b>${this._escHtml(title)}</b><span>${this._escHtml(text || '')}</span>`;
+    document.body.appendChild(bar);
+    requestAnimationFrame(() => bar.classList.add('show'));
+    setTimeout(() => { bar.classList.remove('show'); setTimeout(() => bar.remove(), 600); }, 3200);
+  }
+
+  // ============================================================
+  // 四、谍报面板 UI（对接 espionage.js）
+  // ============================================================
+  showEspionagePanel() {
+    const g = this.game;
+    const me = g.playerFaction;
+    const res = g.getPlayerRes ? g.getPlayerRes() : { money: 0 };
+    // 候选密探：闲居、非君主
+    let spies = [];
+    try { spies = g.getFactionGenerals(me).filter(x => !x.inArmy && !x.onHostage && x.role !== '君主')
+      .sort((a, b) => (b.effIntel || b.intel || 0) - (a.effIntel || a.intel || 0)); } catch (e) {}
+    // 可刺探目标：非我方城市
+    let targets = [];
+    try { targets = [...g.cities.values()].filter(c => c.owner && c.owner !== me); } catch (e) {}
+    const SPY_COST_LOCAL = { intel: 500, sabotage: 1200, defect: 2000 };
+    const missions = [
+      { id: 'intel', name: '刺探情报', desc: '探明兵力/城防，授予 3 回合临时视野' },
+      { id: 'sabotage', name: '破坏', desc: '随机破坏农业/商业/城防（-5~-15）' },
+      { id: 'defect', name: '策反', desc: '诱降城中低忠诚武将率部投诚' }
+    ];
+    const activeSpies = Array.isArray(g.spies) ? g.spies.filter(s => s.faction === me) : [];
+
+    const spyOpts = spies.length ? spies.map(s =>
+      `<option value="${s.id}">${this._escHtml(s.name)}（智${s.effIntel || s.intel || 50}）</option>`).join('') : '<option value="">无可用密探</option>';
+    const targetOpts = targets.length ? targets.map(t =>
+      `<option value="${t.id}">${this._escHtml(t.name)}（${FACTIONS[t.owner] ? FACTIONS[t.owner].name : '敌'}）</option>`).join('') : '<option value="">无可刺探城市</option>';
+    const missionOpts = missions.map(m =>
+      `<option value="${m.id}">${m.name}（耗${SPY_COST_LOCAL[m.id]}金）</option>`).join('');
+
+    const history = activeSpies.length ? activeSpies.map(s => {
+      const city = g.cities.get(s.targetCity);
+      const mName = missions.find(m => m.id === s.mission);
+      const st = s.status === 'success' ? '<span style="color:#6FCF6F">成功</span>'
+        : s.status === 'caught' ? '<span style="color:#E05555">暴露被处决</span>'
+        : s.status === 'failed' ? '<span style="color:#E8A33C">未得手</span>'
+        : `<span style="color:#B8A575">进行中·剩${s.turnsLeft}回合</span>`;
+      return `<div class="v15-spy-row"><b>${this._escHtml(mName ? mName.name : s.mission)}</b>
+        <span>→ ${this._escHtml(city ? city.name : s.targetCity)}</span>${st}</div>`;
+    }).join('') : '<p class="v15-empty">暂无谍报行动记录。</p>';
+
+    const body = `
+      <div class="v15-spy-banner">💰 当前金 ${Math.round(res.money || 0)} · 密探智力越高，成功率越大</div>
+      <div class="v15-spy-form">
+        <label class="v15-field"><span>密探武将</span><select id="v15-spy-gen">${spyOpts}</select></label>
+        <label class="v15-field"><span>目标城市</span><select id="v15-spy-city">${targetOpts}</select></label>
+        <label class="v15-field"><span>行动类型</span><select id="v15-spy-mission">${missionOpts}</select></label>
+        <div class="v15-spy-prob"><span>预估成功率</span><b id="v15-spy-prob-num">—</b></div>
+        <button class="btn-ancient" id="v15-spy-send">遣出密探</button>
+      </div>
+      <div class="v15-spy-mission-desc" id="v15-spy-mdesc">${missions[0].desc}</div>
+      <h3 class="v15-sub">谍报记录</h3>
+      <div class="v15-spy-list">${history}</div>`;
+    const modal = this._v15ModalShell('🗡 谍报司', body);
+
+    // 任务说明 + 成功率预估联动
+    const genSel = modal.querySelector('#v15-spy-gen');
+    const citySel = modal.querySelector('#v15-spy-city');
+    const misSel = modal.querySelector('#v15-spy-mission');
+    const mDesc = modal.querySelector('#v15-spy-mdesc');
+    const probNum = modal.querySelector('#v15-spy-prob-num');
+    const refreshProb = () => {
+      const gen = spies.find(s => s.id === genSel.value);
+      const intel = gen ? (gen.effIntel || gen.intel || 50) : 50;
+      const mis = misSel.value;
+      let p = mis === 'intel' ? Math.min(0.8, intel / 120) : mis === 'sabotage' ? Math.min(0.7, intel / 150) : Math.min(0.6, intel / 200);
+      p = Math.round(p * 100);
+      if (probNum) { probNum.textContent = p + '%'; probNum.style.color = p > 60 ? '#6FCF6F' : p > 40 ? '#E8A33C' : '#E05555'; }
+      const mObj = missions.find(m => m.id === mis);
+      if (mDesc) mDesc.textContent = mObj.desc;
+    };
+    if (misSel) misSel.onchange = refreshProb;
+    if (genSel) genSel.onchange = refreshProb;
+    refreshProb();
+    const sendBtn = modal.querySelector('#v15-spy-send');
+    if (sendBtn) sendBtn.onclick = () => {
+      const cityId = citySel.value, mission = misSel.value;
+      if (!cityId) { this.toast('请选择目标城市'); return; }
+      let result = { ok: false, msg: '谍报接口未就绪' };
+      try {
+        result = (g.sendSpy && typeof g.sendSpy === 'function') ? g.sendSpy(me, cityId, mission) : { ok: false, msg: '谍报接口未就绪' };
+      } catch (e) { result = { ok: false, msg: String(e.message || e) }; }
+      this._v15Notify('谍报', result.msg, result.ok ? 'success' : 'warn');
+      document.querySelectorAll('.v15-overlay').forEach(m => m.remove());
+      if (this.game.state === 'playing') this.showEspionagePanel();
+      this.refreshUI && this.refreshUI();
+    };
+  }
+
+  // ============================================================
+  // 五、官职 / 科举 UI 增强
+  // ============================================================
+
+  // 官职品级可视化（从九品 ~ 正一品 品级条）
+  _v15RankBar() {
+    const levels = [
+      { id: '正一品', cls: 'v15-rk-1' }, { id: '从一品', cls: 'v15-rk-2' },
+      { id: '正二品', cls: 'v15-rk-3' }, { id: '从二品', cls: 'v15-rk-4' },
+      { id: '正三品', cls: 'v15-rk-5' }, { id: '从三品', cls: 'v15-rk-6' },
+      { id: '正四品', cls: 'v15-rk-7' }, { id: '正五品', cls: 'v15-rk-8' },
+      { id: '正六品', cls: 'v15-rk-9' }, { id: '正七品', cls: 'v15-rk-10' },
+      { id: '正八品', cls: 'v15-rk-11' }, { id: '正九品', cls: 'v15-rk-12' }
+    ].reverse();
+    return `<div class="v15-rankbar">
+      <div class="v15-rankbar-title">官制品级（从九品 → 正一品）</div>
+      <div class="v15-rankbar-track">${levels.map(l => `<span class="v15-rankcell ${l.cls}" title="${l.id}">${l.id.replace('正','').replace('从','从')}</span>`).join('')}</div>
+    </div>`;
+  }
+
+  // 官职任免面板 V15（现职/俸禄/兵权 + 品级条）
+  showOfficePanelV15() {
+    const g = this.game;
+    const me = g.playerFaction;
+    let gens = [], held = {};
+    try { gens = g.getFactionGenerals(me).filter(x => !x.inArmy && !x.onHostage && !x.onMission); } catch (e) {}
+    try { held = (g.getOffices && typeof g.getOffices === 'function') ? g.getOffices(me) : {}; } catch (e) {}
+    const offList = (typeof OFFICES !== 'undefined' ? OFFICES : []);
+
+    // 现任官职一览（俸禄=按 rank 估算，兵权=按 type 标识）
+    const heldRows = offList.map(off => {
+      const holderId = held[off.id];
+      const holder = holderId ? (g.getGeneral ? g.getGeneral(holderId) : null) : null;
+      const salary = (6 - off.rank) * 200; // 品级越高俸禄越厚
+      const power = off.type === 'military' ? '掌兵权' : off.type === 'central' ? '参朝政' : '牧民一方';
+      const cand = gens.filter(x => x.id !== holderId).map(x => {
+        const req = off.req || {};
+        const ok = (x.command || 0) >= (req.command || 0) && (x.politics || 0) >= (req.politics || 0) &&
+                   (x.force || 0) >= (req.force || 0) && (x.intel || 0) >= (req.intel || 0);
+        return ok ? `<option value="${x.id}">${this._escHtml(x.name)}</option>` : '';
+      }).join('');
+      return `<div class="v15-off-row v15-rk-${off.rank}">
+        <div class="v15-off-head"><b>${this._escHtml(off.name)}</b>
+          <span class="v15-off-tag">正${['','一','二','三','四'][off.rank] || off.rank}品</span>
+          <span class="v15-off-tag2">${power}</span></div>
+        <div class="v15-off-desc">${this._escHtml(off.desc || '')} · 俸禄 ${salary} 金/回合</div>
+        <div class="v15-off-cur">现任：<b class="v15-off-holder">${holder ? this._escHtml(holder.name) : '空缺'}</b></div>
+        <div class="v15-off-act">
+          <select class="select-small" id="off-sel-${off.id}">${cand || '<option value="">无够格者</option>'}</select>
+          <button class="btn-small" onclick="__ui_.appointOffice('${off.id}')">拜任</button>
+          ${holder ? `<button class="btn-small" onclick="__ui_.dismissOffice('${off.id}')">解任</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    const body = this._v15RankBar() + `<div class="v15-off-list">${heldRows}</div>`;
+    this._v15ModalShell('🏛 官职任免 · 九品中正', body);
+  }
+
+  // 科举结果面板 V15（新科进士：姓名/属性/品质，前三甲特殊标识）
+  showExamResultModalV15(result) {
+    if (!result) return;
+    if (this.audio) {
+      try { this.unlockSceneBGM('exam'); } catch (e) {}
+      if (this.audio.playExamHuangbang) try { this.audio.playExamHuangbang(); } catch (e) {}
+    }
+    const honorCard = (entry, rank, medal, cls) => {
+      if (!entry) return '';
+      return `<div class="v15-exam-honor ${cls}">
+        <div class="v15-exam-medal">${medal}</div>
+        <div class="v15-exam-name">${this._escHtml(entry.name)}</div>
+        <div class="v15-exam-rank">${rank}</div>
+        <div class="v15-exam-score">成绩 ${entry.score}</div>
+      </div>`;
+    };
+    const jinshiRows = (result.jinshi || []).map((j, i) => {
+      const quality = j.score > 700 ? '<span class="v15-qual s">甲</span>' : j.score > 500 ? '<span class="v15-qual a">乙</span>' : '<span class="v15-qual b">丙</span>';
+      return `<div class="v15-exam-row"><span>${i + 4}</span><b>${this._escHtml(j.name)}</b>${quality}<span>成绩 ${j.score}</span></div>`;
+    }).join('');
+
+    const body = `
+      <div class="v15-exam-subject">【${this._escHtml(result.subject || '进士科')}】金榜题名</div>
+      <div class="v15-exam-top3">
+        ${honorCard(result.bangyan, '榜眼', '🥈', 'v15-exam-2')}
+        ${honorCard(result.zhuangyuan, '状元', '🥇', 'v15-exam-1')}
+        ${honorCard(result.tanhua, '探花', '🥉', 'v15-exam-3')}
+      </div>
+      <div class="v15-exam-list">
+        <div class="v15-exam-list-title">新科进士（${(result.jinshi || []).length} 人）</div>
+        ${jinshiRows || '<p class="v15-empty">本科无普通进士。</p>'}
+      </div>
+      <p class="v15-hint">${this._escHtml(result.message || '')}</p>`;
+    const modal = this._v15ModalShell('📜 金榜题名', body, 'v15-exam-modal');
+    // 金榜展开动画
+    if (modal) modal.classList.add('v15-exam-reveal');
+  }
+
+  // ============================================================
+  // 六、贸易 / 宗教 UI
+  // ============================================================
+
+  // 贸易路线图（城市间连线 + 动态光点沿路线移动）
+  _v15TradeRouteMap() {
+    const g = this.game;
+    const me = g.playerFaction;
+    let cities = [];
+    try { cities = g.getFactionCities(me); } catch (e) {}
+    // 取长距商路端点作为固定连线节点；其余按在途商队连线
+    const info = (g.getTradeInfo && typeof g.getTradeInfo === 'function') ? g.getTradeInfo() : { longRoutes: [], caravans: [], agreementMult: 0 };
+    // 用相对坐标把城市排进环形图（避免依赖地图像素）
+    const n = Math.max(4, cities.length);
+    const pos = {};
+    cities.forEach((c, i) => {
+      const ang = (i / n) * Math.PI * 2 - Math.PI / 2;
+      pos[c.id] = { x: 50 + Math.cos(ang) * 38, y: 50 + Math.sin(ang) * 38, name: c.name };
+    });
+    // 在途商队连线
+    const lines = (info.caravans || []).map((cav, i) => {
+      const a = pos[cav.from], b = pos[cav.to];
+      if (!a || !b) return '';
+      return `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="v15-trade-line"/>
+        <circle r="2.2" fill="#FFD54F"><animate attributeName="cx" from="${a.x}" to="${b.x}" dur="2.${i}s" repeatCount="indefinite"/>
+        <animate attributeName="cy" from="${a.y}" to="${b.y}" dur="2.${i}s" repeatCount="indefinite"/></circle>`;
+    }).join('');
+    const nodes = Object.values(pos).map(p =>
+      `<g><circle cx="${p.x}" cy="${p.y}" r="3" fill="#E8D5A3"/><text x="${p.x}" y="${p.y - 4}" class="v15-trade-city">${this._escHtml(p.name)}</text></g>`).join('');
+
+    return `<div class="v15-trade-map-wrap">
+      <div class="v15-trade-map-title">商路图（光点沿商队路线流转）</div>
+      <svg class="v15-trade-map" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${lines}${nodes}</svg>
+    </div>`;
+  }
+
+  // 贸易收入面板 V15
+  showTradePanelV15() {
+    const g = this.game;
+    const me = g.playerFaction;
+    let cities = [];
+    try { cities = g.getFactionCities(me); } catch (e) {}
+    const info = (g.getTradeInfo && typeof g.getTradeInfo === 'function') ? g.getTradeInfo() : { longRoutes: [], caravans: [], agreementMult: 0 };
+    // 按城市贸易收入明细（商业值估算）
+    const cityRows = cities.slice(0, 12).map(c => {
+      const comm = c.comm || 0;
+      const est = Math.round(comm * 2);
+      return `<div class="v15-trow"><span>${this._escHtml(c.name)}</span><span>商业 ${comm}</span><b style="color:#FFD54F">+${est}/回合</b></div>`;
+    }).join('');
+    const routeRows = (info.longRoutes || []).map(r =>
+      `<div class="v15-trow"><span>🐫 ${this._escHtml(r.name)}</span><span>${this._escHtml(r.desc)}</span><b style="color:#6FCF6F">+${r.income}/回合</b></div>`).join('')
+      || '<p class="v15-empty">未激活长距商路（据长安/洛阳/姑臧开丝路，据广州开海丝路）。</p>';
+    const caravanRows = (info.caravans || []).map(c =>
+      `<div class="v15-trow"><span>🐫 ${this._escHtml(c.goodsName)}</span><span>${this._escHtml(c.from)}→${this._escHtml(c.to)}</span><b>剩${c.turnsLeft}回合·利${c.estProfit}</b></div>`).join('')
+      || '<p class="v15-empty">暂无在途商队。</p>';
+
+    const body = this._v15TradeRouteMap() + `
+      <div class="v15-trade-income">
+        <h3 class="v15-sub">长距商路收入</h3>${routeRows}
+        <h3 class="v15-sub">在途商队</h3>${caravanRows}
+        <h3 class="v15-sub">城市商税明细（前 12）</h3>
+        <div class="v15-trow v15-trow-head"><span>城市</span><span>商业</span><b>预估岁入</b></div>${cityRows}
+        <p class="v15-hint">通商互市加成：+${Math.round((info.agreementMult || 0) * 100)}%</p>
+      </div>`;
+    this._v15ModalShell('🐫 贸易商路 · 货通南北', body);
+  }
+
+  // 宗教传播面板（各城信仰分布 + 宗教建筑）
+  showReligionPanel() {
+    const g = this.game;
+    const me = g.playerFaction;
+    let cities = [];
+    try { cities = g.getFactionCities(me); } catch (e) {}
+    // 统计佛/道等级
+    let bud = 0, dao = 0, grotto = 0, totalCulture = 0;
+    const cityRows = cities.map(c => {
+      const bLv = (c.buildings && c.buildings.buddhist_temple) || (c.religion && c.religion.buddhist) || 0;
+      const dLv = (c.buildings && c.buildings.daoist_temple) || (c.religion && c.religion.daoist) || 0;
+      const gLv = (c.buildings && c.buildings.grotto) || 0;
+      bud += bLv; dao += dLv; grotto += gLv;
+      totalCulture += (c.religion && c.religion.culture) || 0;
+      // 饼图比例
+      const sum = bLv + dLv;
+      const bPct = sum ? Math.round(bLv / sum * 100) : 0;
+      const dPct = 100 - bPct;
+      return `<div class="v15-rel-row">
+        <span class="v15-rel-city">${this._escHtml(c.name)}</span>
+        <span class="v15-rel-pie" style="background:conic-gradient(#c9a86a 0 ${bPct}%, #5a7a9a ${bPct}% 100%)" title="佛${bLv}·道${dLv}"></span>
+        <span>佛${bLv} 道${dLv}${gLv ? ` 窟${gLv}` : ''}</span>
+        <button class="btn-small" onclick="__ui_._v15BuildReligion('${c.id}','buddhist_temple')">建佛寺</button>
+        <button class="btn-small" onclick="__ui_._v15BuildReligion('${c.id}','daoist_temple')">建道观</button>
+      </div>`;
+    }).join('');
+    const totalSum = bud + dao || 1;
+    const budPct = Math.round(bud / totalSum * 100);
+
+    const body = `
+      <div class="v15-rel-overview">
+        <div class="v15-rel-grandpie" style="background:conic-gradient(#c9a86a 0 ${budPct}%, #5a7a9a ${budPct}% 100%)">
+          <div class="v15-rel-grandcore">佛${budPct}%<br>道${100 - budPct}%</div>
+        </div>
+        <div class="v15-rel-nums">
+          <div class="v15-stat"><span>佛寺</span><b>${bud}</b></div>
+          <div class="v15-stat"><span>道观</span><b>${dao}</b></div>
+          <div class="v15-stat"><span>石窟</span><b>${grotto}</b></div>
+          <div class="v15-stat"><span>总文化值</span><b>${Math.round(totalCulture)}</b></div>
+        </div>
+      </div>
+      <div class="v15-rel-list">${cityRows || '<p class="v15-empty">无据有城市。</p>'}</div>
+      <p class="v15-hint">佛寺旺民心文化，道观利科技招募；石窟（仅平城/洛阳/建康）文化最盛。</p>`;
+    this._v15ModalShell('☸ 宗教文化 · 梵音道韵', body);
+  }
+
+  // 建造宗教建筑（对接 game 建造接口，优雅降级）
+  _v15BuildReligion(cityId, buildingId) {
+    const g = this.game;
+    let result = { ok: false, msg: '建造接口未就绪' };
+    try {
+      if (g.cityBuild && typeof g.cityBuild === 'function') result = g.cityBuild(cityId, buildingId);
+      else if (g.cityDevelop && typeof g.cityDevelop === 'function') result = g.cityDevelop(cityId, buildingId);
+      else result = { ok: false, msg: '当前版本暂未开放该建筑建造' };
+    } catch (e) { result = { ok: false, msg: String(e.message || e) }; }
+    this.toast(result.msg);
+    if (result.ok && this.audio && this.audio.playCoin) try { this.audio.playCoin(); } catch (e) {}
+    document.querySelectorAll('.v15-overlay').forEach(m => m.remove());
+    if (this.game.state === 'playing') this.showReligionPanel();
+    this.refreshUI && this.refreshUI();
+  }
+
+  // ============================================================
+  // 七、通用品质：成就红点提示
+  // ============================================================
+  _v15UpdateAchBadge() {
+    const g = this.game;
+    const hasPending = g && Array.isArray(g.pendingAchievements) && g.pendingAchievements.length > 0;
+    ['#btn-ach'].forEach(sel => {
+      const btn = document.querySelector(sel);
+      if (!btn) return;
+      let dot = btn.querySelector('.v15-ach-dot');
+      if (hasPending) {
+        if (!dot) {
+          dot = document.createElement('span');
+          dot.className = 'v15-ach-dot';
+          btn.appendChild(dot);
+        }
+      } else if (dot) dot.remove();
+    });
   }
 }

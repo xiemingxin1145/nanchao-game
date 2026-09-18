@@ -19,6 +19,12 @@ import { FACTIONS, HAREM_RANKS, HAREM_NAME_POOL, HAREM_BIRTH_BASE,
 let childSeq = 1000;
 let consortSeq = 1;
 
+// 性能优化（harem.js）：HAREM_RANKS 按 id 建索引，避免 getHaremBag/settleBirth 等
+// 每回合对每位妃嫔都做一次 HAREM_RANKS.find（O(位分数)），整体降为 O(1)/次。
+const _RANK_BY_ID = {};
+for (const _r of HAREM_RANKS) _RANK_BY_ID[_r.id] = _r;
+function _rankById(id) { return _RANK_BY_ID[id] || null; }
+
 export class HaremSystem {
   constructor() {
     this.factions = {};   // { [fid]: { consorts:[], children:[], heirId:null } }
@@ -41,7 +47,7 @@ export class HaremSystem {
   }
 
   _makeConsort(rankId, name) {
-    const rank = HAREM_RANKS.find(r => r.id === rankId) || HAREM_RANKS[HAREM_RANKS.length - 1];
+    const rank = _rankById(rankId) || HAREM_RANKS[HAREM_RANKS.length - 1];
     return {
       id: 'cs_' + (++consortSeq),
       name: name || this._pickName(),
@@ -64,7 +70,7 @@ export class HaremSystem {
   takeInConsort(fid, rankId) {
     const rec = this.factions[fid];
     if (!rec) return { ok: false, msg: '无后宫记录' };
-    const rank = HAREM_RANKS.find(r => r.id === rankId);
+    const rank = _rankById(rankId);
     if (!rank) return { ok: false, msg: '未知位分' };
     if (this.rankCount(fid, rankId) >= rank.max) {
       return { ok: false, msg: `${rank.name}名额已满（${this.rankCount(fid, rankId)}/${rank.max}）` };
@@ -80,7 +86,7 @@ export class HaremSystem {
     const bag = { legit: 0, morale: 0 };
     if (!rec) return bag;
     for (const c of rec.consorts) {
-      const rank = HAREM_RANKS.find(r => r.id === c.rank);
+      const rank = _rankById(c.rank);
       if (!rank) continue;
       bag.legit += rank.legit || 0;
       bag.morale += rank.morale || 0;
@@ -100,7 +106,7 @@ export class HaremSystem {
     const charmBonus = Math.max(0, (charm - 60) / 10) * HAREM_CHARM_BONUS;
 
     for (const c of rec.consorts) {
-      const rank = HAREM_RANKS.find(r => r.id === c.rank);
+      const rank = _rankById(c.rank);
       const p = HAREM_BIRTH_BASE + (rank ? rank.birthChance : 0) + charmBonus;
       if (Math.random() >= Math.min(0.6, p)) continue;
       // 诞生子嗣
@@ -198,6 +204,9 @@ export class HaremSystem {
     if (ch.age < HAREM_MARRY_PRINCESS_MIN_AGE) return { ok: false, msg: `皇女方龄${ch.age}，未及笄` };
     if (ch.marriedTo) return { ok: false, msg: '皇女已嫁' };
     if (fid === targetFid) return { ok: false, msg: '不可与本国联姻' };
+    // BUG修复（harem.js #2）：targetFid 为无效/已灭势力时 FACTIONS[targetFid] 为 undefined，
+    //   直接取 .name 会抛 TypeError。此处做空值兜底。
+    if (!FACTIONS[targetFid]) return { ok: false, msg: '联姻目标势力不存在' };
     ch.marriedTo = targetFid;
     return { ok: true, msg: `皇女【${ch.name}】下嫁${FACTIONS[targetFid].name}，两国秦晋之好。`, child: ch };
   }

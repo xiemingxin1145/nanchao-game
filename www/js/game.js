@@ -2091,6 +2091,21 @@ export class Game {
     // 缓存本次回合的势力城市数（供末尾迷雾刷新复用，避免重复遍历）
     this._fidCityCountCache = fidCities;
 
+    // 性能优化（game.js #2）：回合级贸易城市信息缓存——
+    //   优化前：贸易收入对每个势力都重新 filter tradeRoutes，且每条商路对两座城
+    //   各 cities.get() 一次、再各调用一次 city.buildingBag()（内部遍历建筑数组）。
+    //   F 势力 × R 商路 → O(F*R) 次 get + 2*O(F*R) 次 buildingBag()。
+    //   优化后：方法入口一次性扫描全部城市，建立 cityId → {owner, comm, tradeMult}
+    //   轻量缓存，贸易收入计算改为 O(R) 查表。settleTurn 期间不改建筑，安全。
+    const _cityTradeInfo = new Map();
+    for (const c of this.cities.values()) {
+      _cityTradeInfo.set(c.id, {
+        owner: c.owner,
+        comm: c.comm || 0,
+        tradeMult: (c.buildingBag() && c.buildingBag().tradeMult) || 0
+      });
+    }
+
     // 玩家科技研究推进
     if (this.researching) {
       this.researching.turnsLeft--;
@@ -2119,18 +2134,17 @@ export class Game {
         totalFood += food;
       }
       // V2.0：贸易路线收入（仅属于本势力的商路计入）
-      const tradeIncome = this.tradeRoutes
-        .filter(r => {
-          const c1 = this.cities.get(r.city1);
-          const c2 = this.cities.get(r.city2);
-          return c1 && c2 && c1.owner === fid && c2.owner === fid;
-        })
-        .reduce((s, r) => {
-          const c1 = this.cities.get(r.city1);
-          const c2 = this.cities.get(r.city2);
-          const tm = 1 + ((c1.buildingBag().tradeMult || 0) + (c2.buildingBag().tradeMult || 0));
-          return s + (c1.comm + c2.comm) * 0.05 * tm;
-        }, 0);
+      // 性能优化（game.js #2）：使用入口预建的 _cityTradeInfo 缓存，避免每势力
+      //   重复 cities.get + buildingBag()。
+      let tradeIncome = 0;
+      for (const r of this.tradeRoutes) {
+        const ci1 = _cityTradeInfo.get(r.city1);
+        const ci2 = _cityTradeInfo.get(r.city2);
+        if (!ci1 || !ci2) continue;
+        if (ci1.owner !== fid || ci2.owner !== fid) continue;
+        const tm = 1 + (ci1.tradeMult + ci2.tradeMult);
+        tradeIncome += (ci1.comm + ci2.comm) * 0.05 * tm;
+      }
       totalIncome += Math.round(tradeIncome);
 
       res.money += totalIncome;
@@ -2180,10 +2194,10 @@ export class Game {
     settlePasses(this);            // 关隘建造完工
     settleBarbarians(this);        // 蛮族进贡 / 劫掠
     // 性能优化#1：复用本次回合入口建立的势力城市索引，避免再次全表 filter
-    for (const fid of this.factionRes.keys()) {
-      const myCities = (fidCities.get(fid) || []);
-      if (myCities.length > 0) settleFog(this, fid);
-    }
+    // BUG修复（game.js #1）：settleFog 原本对「每个有城势力」都调用一次。战争迷雾是玩家侧
+    //   单例状态（game.fogOfWar），AI 不做迷雾限制；重复调用只会让谍报临时视野被按势力数
+    //   重复倒计时（见 fog.js 防御性修复）。此处改为仅对玩家势力结算一次。
+    settleFog(this, this.playerFaction);
     this.diplomacy.refreshMarriageBag(this); // 联姻经济袋刷新
 
     // ---- V6.0：宗教文化系统回合结算 ----

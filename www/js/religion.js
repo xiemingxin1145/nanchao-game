@@ -1,5 +1,5 @@
 // ============================================================
-// religion.js — V6.0 宗教文化系统
+// religion.js — V6.0 宗教文化系统（V15.0 系统深化版）
 //
 // 历史背景（搜索整理）：
 //   南北朝是佛教中国化的关键时期：
@@ -11,12 +11,18 @@
 //   - 北魏太武帝/周武帝两次灭佛（三武一宗法难之二），
 //     周武灭佛（574年）毁经像、僧尼还俗，得三百万户编户。
 //   - 道教在北朝亦有发展，寇谦之改革天师道。
+//   - 儒教作为官学，自汉武以来为正统，南北朝时与佛道并行。
 //
 // 系统设计：
-//   2种宗教（佛教/道教）→ 文化值 → 民心/科技/收入影响
-//   宗教建筑：佛寺(佛教)/道观(道教)/石窟(佛教特殊)
+//   3种宗教（佛教/道教/儒教）→ 文化值 → 民心/科技/收入影响
+//   宗教建筑：佛寺(佛教)/道观(道教)/孔庙(儒教)/石窟(佛教特殊)
 //   宗教事件：高僧来访/道士炼丹/灭佛运动/开凿石窟
 //   文化胜利：文化值达1000且维持10回合
+//
+// V15.0 新增：
+//   - 宗教传播：佛教/道教/儒教在相邻城市间自然传播
+//   - 宗教建筑：可主动建造寺庙/道观/孔庙
+//   - 新增 API：getReligionSpread / promoteReligion / buildReligiousSite
 // ============================================================
 
 // ---------- 宗教定义 ----------
@@ -28,6 +34,10 @@ export const RELIGIONS = {
   daoist: {
     id: 'daoist', name: '道教',
     description: '黄老之学，斋醮炼丹。北朝寇谦之清整道教，辅国教化。'
+  },
+  confucian: {
+    id: 'confucian', name: '儒教',
+    description: '周公孔子之教，纲常名教，治国安邦。南朝官学，北朝亦崇。'
   }
 };
 
@@ -44,6 +54,7 @@ export const CULTURE_BASE = 2;               // 每城基础文化产出/回合
 // ---------- 宗教建筑效果 ----------
 // 佛寺（佛教）：每级民心+2，文化+5，事件负面影响-3%
 // 道观（道教）：每级科技+3，文化+3，招募成功率+2%
+// 孔庙（儒教）：每级政治+2，文化+2，民心+1
 // 石窟（佛教特殊）：每级文化+10，全局声望+1，仅平城/洛阳/建康可建
 export const RELIGION_BUILDINGS = {
   buddhist_temple: {
@@ -57,6 +68,12 @@ export const RELIGION_BUILDINGS = {
     maxLevel: 5,
     description: '每级科技+3，文化+3/回合，招募成功率+2%。',
     perLevel: { techPerTurn: 3, culturePerTurn: 3, recruitBonus: 0.02 }
+  },
+  confucian_temple: {
+    id: 'confucian_temple', name: '孔庙', religion: 'confucian',
+    maxLevel: 5,
+    description: '每级文化+2，政治+2/回合，民心+1。',
+    perLevel: { culturePerTurn: 2, politicsPerTurn: 2, moralePerTurn: 1 }
   },
   grotto: {
     id: 'grotto', name: '石窟', religion: 'buddhist',
@@ -73,11 +90,12 @@ export const RELIGION_BUILDINGS = {
 import { GROTTO_CITIES } from './navy.js';
 
 // ---------- 城市宗教状态初始化 ----------
-// 每城 religion = { buddhist: 0, daoist: 0, culture: 0 }
+// 每城 religion = { buddhist: 0, daoist: 0, confucian: 0, culture: 0 }
 export function initCityReligion(cityId) {
   return {
     buddhist: 0,    // 佛寺等级（同步到 buildings.buddhist_temple）
     daoist: 0,      // 道观等级
+    confucian: 0,   // V15.0：孔庙等级
     culture: 0      // 累积文化值
   };
 }
@@ -200,6 +218,90 @@ export class ReligionSystem {
         city.morale = Math.min(100, city.morale + Math.round(mods.moraleMod / 5));
       }
     }
+    // V15.0：宗教在相邻城市间自然传播
+    this._religionSpread(game);
+  }
+
+  // V15.0：宗教自然传播——高等级宗教建筑向相邻城市缓慢渗透
+  _religionSpread(game) {
+    try {
+      const cities = [...game.cities.values()];
+      for (const city of cities) {
+        if (!city.religion) continue;
+        // 简化：取同势力相邻城（用 owner 相同的城市近似）
+        const neighbors = cities.filter(c => c.owner === city.owner && c.id !== city.id);
+        if (neighbors.length === 0) continue;
+        // 佛教传播：每5回合10%概率
+        if ((city.buildings?.buddhist_temple || 0) >= 2 && Math.random() < 0.10) {
+          const nb = neighbors[Math.floor(Math.random() * neighbors.length)];
+          nb.religion = nb.religion || initCityReligion(nb.id);
+          nb.religion.buddhist = Math.min(5, (nb.religion.buddhist || 0) + 1);
+        }
+        // 道教传播
+        if ((city.buildings?.daoist_temple || 0) >= 2 && Math.random() < 0.08) {
+          const nb = neighbors[Math.floor(Math.random() * neighbors.length)];
+          nb.religion = nb.religion || initCityReligion(nb.id);
+          nb.religion.daoist = Math.min(5, (nb.religion.daoist || 0) + 1);
+        }
+      }
+    } catch (e) { /* 传播异常不中断 */ }
+  }
+
+  // V15.0：查询某城宗教传播状况
+  getReligionSpread(city) {
+    if (!city || !city.religion) return { buddhist: 0, daoist: 0, confucian: 0, dominant: 'none' };
+    const b = city.religion.buddhist || 0;
+    const d = city.religion.daoist || 0;
+    const c = city.religion.confucian || 0;
+    let dominant = 'none';
+    if (b >= d && b >= c && b > 0) dominant = 'buddhist';
+    else if (d >= c && d > 0) dominant = 'daoist';
+    else if (c > 0) dominant = 'confucian';
+    return { buddhist: b, daoist: d, confucian: c, dominant };
+  }
+
+  // V15.0：主动推广某宗教（消耗金钱，提升该城宗教等级）
+  promoteReligion(city, religionType, game) {
+    if (!city) return { ok: false, msg: '城市不存在' };
+    if (!RELIGIONS[religionType]) return { ok: false, msg: '未知宗教' };
+    if (!city.religion) city.religion = initCityReligion(city.id);
+    const cost = 300;
+    if (game) {
+      const res = game.factionRes?.get(city.owner);
+      if (!res || res.money < cost) return { ok: false, msg: `金钱不足（需${cost}金）` };
+      res.money -= cost;
+    }
+    city.religion[religionType] = Math.min(5, (city.religion[religionType] || 0) + 1);
+    const relName = RELIGIONS[religionType].name;
+    if (game) game.pushLog(`🛐 在 ${city.name} 推广${relName}成功，影响力+1。`);
+    return { ok: true, msg: `${city.name}${relName}影响力提升`, religionType };
+  }
+
+  // V15.0：建造宗教建筑（寺庙/道观/孔庙）
+  buildReligiousSite(city, religionType, game) {
+    if (!city) return { ok: false, msg: '城市不存在' };
+    const buildingMap = {
+      buddhist: 'buddhist_temple',
+      daoist: 'daoist_temple',
+      confucian: 'confucian_temple'
+    };
+    const bldId = buildingMap[religionType];
+    if (!bldId) return { ok: false, msg: '未知宗教建筑类型' };
+    const bld = RELIGION_BUILDINGS[bldId];
+    if (!bld) return { ok: false, msg: '建筑定义不存在' };
+    city.buildings = city.buildings || {};
+    const curLv = city.buildings[bldId] || 0;
+    if (curLv >= bld.maxLevel) return { ok: false, msg: `${bld.name}已达最高等级` };
+    // 建造费用
+    const cost = 500 + curLv * 300;
+    if (game) {
+      const res = game.factionRes?.get(city.owner);
+      if (!res || res.money < cost) return { ok: false, msg: `金钱不足（需${cost}金）` };
+      res.money -= cost;
+    }
+    city.buildings[bldId] = curLv + 1;
+    if (game) game.pushLog(`🏗️ 在 ${city.name} 建造${bld.name}（Lv.${curLv + 1}）。`);
+    return { ok: true, msg: `${city.name} 建成${bld.name} Lv.${curLv + 1}`, building: bldId, level: curLv + 1 };
   }
 
   serialize() {

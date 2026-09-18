@@ -1,12 +1,14 @@
 // ============================================================
-// achievements.js — 成就系统（V9.5 深化版）
+// achievements.js — 成就系统（V15.0 系统深化版）
 // ------------------------------------------------------------
 // V9.5：从 12 个扩充到 30 个，新增分类/点数/奖励/段位。
+// V15.0：从 30 个扩充到 50 个，新增 v15_ 前缀成就 20 个，
+//   新增「传奇」段位（≥1000分），新增进度查询 API。
 //   - category: military/politics/economy/person/special
 //   - points:   10~50（累计成就点，决定段位）
 //   - reward:    { money?, food?, bgm?, title? } 解锁即发放
 //   - 段位: 青铜(<100) / 白银(100~249) / 黄金(250~449) /
-//           白金(450~699) / 钻石(>=700)
+//           白金(450~699) / 钻石(700~999) / 传奇(>=1000)
 // 在 game.endTurn() 末尾调用 checkAchievements(game)，
 // 满足条件且未解锁的成就推入 game.pendingAchievements 供 UI 弹窗。
 //
@@ -17,6 +19,7 @@
 // ============================================================
 
 import { TECHS } from './tech.js';
+import { FACTIONS } from './data.js';
 
 // 每条科技线 id → 全部科技 id
 const LINE_TECHS = { military: [], economy: [], political: [], formation: [] };
@@ -237,6 +240,272 @@ export const ACHIEVEMENTS = [
     id: 'speedrun', name: '速通达人', icon: '⚡', category: 'special', points: 50,
     description: '在50回合以内统一全国。', reward: { title: '天下疾风暴' },
     condition: (g) => g.turn <= 50 && g.getFactionCities(g.playerFaction).length >= 16
+  },
+
+  // ==================== V15.0 新增（20 个 v15_ 前缀） ====================
+  // ---- 军事类：大兵团歼灭 / 远征 / 以少胜多（5）----
+  {
+    id: 'v15_army_annihilation', name: '大兵团歼灭', icon: '💥', category: 'military', points: 40,
+    description: '单场战斗歼灭敌军30000人以上。', reward: { food: 4000, title: '歼敌名将' },
+    condition: (g) => (g.stats.maxEnemyDestroyed || g.gameStats?.maxEnemyDestroyed || 0) >= 30000,
+    progress: (g) => ({ current: Math.min(30000, g.stats?.maxEnemyDestroyed || g.gameStats?.maxEnemyDestroyed || 0), total: 30000 })
+  },
+  {
+    id: 'v15_expedition', name: '远征万里', icon: '🐫', category: 'military', points: 40,
+    description: '一支军队连续行军超过10格并获胜。', reward: { food: 3000 },
+    condition: (g) => (g.stats.longExpeditionWins || g.gameStats?.longExpeditionWins || 0) >= 1,
+    progress: (g) => ({ current: g.stats?.longExpeditionWins || g.gameStats?.longExpeditionWins || 0, total: 1 })
+  },
+  {
+    id: 'v15_underdog_10', name: '屡出奇兵', icon: '🦊', category: 'military', points: 40,
+    description: '累计以少胜多10次。', reward: { title: '奇兵之雄' },
+    condition: (g) => (g.stats.underdogWins || 0) >= 10,
+    progress: (g) => ({ current: Math.min(10, g.stats?.underdogWins || 0), total: 10 })
+  },
+  {
+    id: 'v15_siege_master_20', name: '攻坚之王', icon: '🏹', category: 'military', points: 40,
+    description: '累计攻陷20座城池。', reward: { money: 4000 },
+    condition: (g) => (g.stats.citiesConquered || 0) >= 20,
+    progress: (g) => ({ current: Math.min(20, g.stats?.citiesConquered || 0), total: 20 })
+  },
+  {
+    id: 'v15_ambush_master', name: '伏击无双', icon: '🌑', category: 'military', points: 30,
+    description: '以伏击战术获胜5次。', reward: { food: 2000 },
+    condition: (g) => (g.stats.ambushWins || g.gameStats?.ambushWins || 0) >= 5,
+    progress: (g) => ({ current: Math.min(5, g.stats?.ambushWins || g.gameStats?.ambushWins || 0), total: 5 })
+  },
+
+  // ---- 政治类：改革 / 变法 / 集权（4）----
+  {
+    id: 'v15_reform', name: '锐意改革', icon: '📜', category: 'politics', points: 40,
+    description: '推行3次以上制度改革。', reward: { money: 3000, title: '变法名臣' },
+    condition: (g) => (g.stats.reformsPassed || g.gameStats?.reformsPassed || 0) >= 3,
+    progress: (g) => ({ current: Math.min(3, g.stats?.reformsPassed || g.gameStats?.reformsPassed || 0), total: 3 })
+  },
+  {
+    id: 'v15_centralize', name: '集权中央', icon: '🏛️', category: 'politics', points: 40,
+    description: '将所有边境太守换为己方亲信。', reward: { bgm: 'culture' },
+    condition: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        if (cities.length === 0) return false;
+        const loyal = cities.filter(c => {
+          if (!c.mayor) return false;
+          const mg = g.generals.get(c.mayor);
+          return mg && mg.loyalty >= 70;
+        }).length;
+        return loyal / cities.length >= 0.8;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const loyal = cities.filter(c => c.mayor && g.generals.get(c.mayor)?.loyalty >= 70).length;
+        return { current: loyal, total: cities.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+  {
+    id: 'v15_law_code', name: '律令定邦', icon: '⚖️', category: 'politics', points: 30,
+    description: '研究完成全部政治科技线。', reward: { money: 2500 },
+    condition: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        return (LINE_TECHS.political || []).length > 0 && LINE_TECHS.political.every(id => done.has(id));
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        const ids = LINE_TECHS.political || [];
+        return { current: ids.filter(id => done.has(id)).length, total: ids.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+  {
+    id: 'v15_bureaucracy', name: '吏治清明', icon: '📋', category: 'politics', points: 30,
+    description: '势力内所有城池民心平均≥70。', reward: { money: 2000 },
+    condition: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        if (cities.length === 0) return false;
+        const avg = cities.reduce((s, c) => s + (c.morale || 0), 0) / cities.length;
+        return avg >= 70;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const avg = cities.length ? cities.reduce((s, c) => s + (c.morale || 0), 0) / cities.length : 0;
+        return { current: Math.round(avg), total: 70 };
+      } catch (e) { return { current: 0, total: 70 }; }
+    }
+  },
+
+  // ---- 经济类：贸易繁荣 / 粮仓满溢（4）----
+  {
+    id: 'v15_trade_prosper', name: '贸易繁荣', icon: '🐫', category: 'economy', points: 40,
+    description: '建立20条商路并签订3个贸易协定。', reward: { money: 5000, title: '货殖鼻祖' },
+    condition: (g) => (g.tradeRoutes || []).length >= 20 && (g.gameStats?.tradeAgreements || 0) >= 3,
+    progress: (g) => {
+      const routes = (g.tradeRoutes || []).length;
+      const agrees = g.gameStats?.tradeAgreements || 0;
+      return { current: Math.min(20, routes) + Math.min(3, agrees), total: 23 };
+    }
+  },
+  {
+    id: 'v15_granary_full', name: '粮仓满溢', icon: '🌾', category: 'economy', points: 40,
+    description: '粮草储备达到100000。', reward: { money: 3000 },
+    condition: (g) => { const r = _res(g); return r && r.food >= 100000; },
+    progress: (g) => { const r = _res(g); return { current: Math.min(100000, r?.food || 0), total: 100000 }; }
+  },
+  {
+    id: 'v15_market_bustling', name: '市井繁华', icon: '🏪', category: 'economy', points: 30,
+    description: '所有己方城市商业等级平均≥70。', reward: { money: 2500 },
+    condition: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        if (cities.length === 0) return false;
+        const avg = cities.reduce((s, c) => s + (c.comm || 0), 0) / cities.length;
+        return avg >= 70;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const avg = cities.length ? cities.reduce((s, c) => s + (c.comm || 0), 0) / cities.length : 0;
+        return { current: Math.round(avg), total: 70 };
+      } catch (e) { return { current: 0, total: 70 }; }
+    }
+  },
+  {
+    id: 'v15_long_route', name: '丝路畅通', icon: '🌏', category: 'economy', points: 40,
+    description: '同时控制陆上与海上丝绸之路。', reward: { bgm: 'culture', money: 4000 },
+    condition: (g) => {
+      try {
+        const owned = new Set(g.getFactionCities(g.playerFaction).map(c => c.id));
+        const land = ['changan', 'luoyang', 'guzang'].every(c => owned.has(c));
+        const sea = owned.has('guangzhou');
+        return land && sea;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const owned = new Set(g.getFactionCities(g.playerFaction).map(c => c.id));
+        const land = ['changan', 'luoyang', 'guzang'].every(c => owned.has(c)) ? 1 : 0;
+        const sea = owned.has('guangzhou') ? 1 : 0;
+        return { current: land + sea, total: 2 };
+      } catch (e) { return { current: 0, total: 2 }; }
+    }
+  },
+
+  // ---- 人物类：收服名将 / 培养满级将（4）----
+  {
+    id: 'v15_recruit_famous', name: '收服名将', icon: '🎯', category: 'person', points: 40,
+    description: '招募一名四维总和≥360的传奇武将。', reward: { title: '伯乐宗师' },
+    condition: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        return gens.some(gen => (gen.command + gen.force + gen.intel + gen.politics) >= 360);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        const best = gens.reduce((m, gen) => Math.max(m, gen.command + gen.force + gen.intel + gen.politics), 0);
+        return { current: Math.min(360, best), total: 360 };
+      } catch (e) { return { current: 0, total: 360 }; }
+    }
+  },
+  {
+    id: 'v15_max_level_general', name: '培养满级将', icon: '⭐', category: 'person', points: 40,
+    description: '培养一名等级达到15级的武将。', reward: { title: '帝师之选' },
+    condition: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        return gens.some(gen => (gen.level || 1) >= 15);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        const best = gens.reduce((m, gen) => Math.max(m, gen.level || 1), 1);
+        return { current: Math.min(15, best), total: 15 };
+      } catch (e) { return { current: 1, total: 15 }; }
+    }
+  },
+  {
+    id: 'v15_loyalty_army', name: '忠心耿耿', icon: '🛡️', category: 'person', points: 30,
+    description: '势力内所有武将忠诚均≥80。', reward: { money: 2000 },
+    condition: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        return gens.length > 0 && gens.every(gen => (gen.loyalty || 0) >= 80);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        const loyal = gens.filter(gen => (gen.loyalty || 0) >= 80).length;
+        return { current: loyal, total: gens.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+  {
+    id: 'v15_generals_elite', name: '名将如云', icon: '🎖️', category: 'person', points: 40,
+    description: '同时拥有3名统帅≥95的名将。', reward: { title: '名将之主' },
+    condition: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        return gens.filter(gen => (gen.command || 0) >= 95).length >= 3;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const gens = g.getFactionGenerals(g.playerFaction) || [];
+        const count = gens.filter(gen => (gen.command || 0) >= 95).length;
+        return { current: Math.min(3, count), total: 3 };
+      } catch (e) { return { current: 0, total: 3 }; }
+    }
+  },
+
+  // ---- 特殊类：隐藏成就 / 彩蛋（3）----
+  {
+    id: 'v15_hidden_1', name: '天命玄鸟', icon: '🦅', category: 'special', points: 50,
+    description: '（隐藏）在第100回合仍保有都城。', reward: { bgm: 'dynasty', title: '天命玄鸟' },
+    condition: (g) => {
+      try {
+        if (g.turn < 100) return false;
+        const capId = FACTIONS[g.playerFaction]?.capital;
+        const cap = g.cities.get(capId);
+        return cap && cap.owner === g.playerFaction;
+      } catch (e) { return false; }
+    },
+    progress: (g) => ({ current: Math.min(100, g.turn || 0), total: 100 })
+  },
+  {
+    id: 'v15_egg_1', name: '鸡鸣狗盗', icon: '🐔', category: 'special', points: 20,
+    description: '（彩蛋）策反对方一名武力<30的文官。', reward: { food: 1000 },
+    condition: (g) => (g.gameStats?.lowForceDefects || 0) >= 1,
+    progress: (g) => ({ current: Math.min(1, g.gameStats?.lowForceDefects || 0), total: 1 })
+  },
+  {
+    id: 'v15_egg_2', name: '佛缘深厚', icon: '🛐', category: 'special', points: 30,
+    description: '（彩蛋）境内佛寺总数达到10座。', reward: { bgm: 'culture' },
+    condition: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const temples = cities.reduce((s, c) => s + (c.buildings?.buddhist_temple || 0), 0);
+        return temples >= 10;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const temples = cities.reduce((s, c) => s + (c.buildings?.buddhist_temple || 0), 0);
+        return { current: Math.min(10, temples), total: 10 };
+      } catch (e) { return { current: 0, total: 10 }; }
+    }
   }
 ];
 
@@ -251,6 +520,7 @@ export const ACH_CATEGORIES = {
 
 // 段位阈值（累计成就点）
 export const ACH_TIERS = [
+  { id: 'legendary', name: '传奇', min: 1000, color: '#FF6D00' },
   { id: 'diamond',  name: '钻石', min: 700, color: '#4FC3F7' },
   { id: 'platinum', name: '白金', min: 450, color: '#E0E0E0' },
   { id: 'gold',     name: '黄金', min: 250, color: '#FFD54F' },
@@ -272,6 +542,33 @@ export function getAchievementPoints(game) {
 export function getAchievementTier(points) {
   for (const t of ACH_TIERS) if (points >= t.min) return t;
   return ACH_TIERS[ACH_TIERS.length - 1];
+}
+
+// V15.0 新增：查询单个成就当前进度
+// 返回 { current, total, percent, unlocked }
+// 优先使用成就自带的 progress(game) 函数；若无则按 0/1 布尔处理
+export function getAchievementProgress(achievementId, game) {
+  const ach = ACHIEVEMENTS.find(a => a.id === achievementId);
+  if (!ach) return { current: 0, total: 1, percent: 0, unlocked: false };
+  const unlocked = !!(game.achievements && game.achievements[achievementId]);
+  // 已有 progress 函数则调用
+  if (typeof ach.progress === 'function') {
+    try {
+      const { current, total } = ach.progress(game);
+      return {
+        current, total: total || 1,
+        percent: Math.round((current / Math.max(1, total)) * 100),
+        unlocked
+      };
+    } catch (e) { /* 进度计算异常，回退布尔 */ }
+  }
+  // 无 progress 函数：已解锁=完成，未解锁=0
+  return {
+    current: unlocked ? 1 : 0,
+    total: 1,
+    percent: unlocked ? 100 : 0,
+    unlocked
+  };
 }
 
 // 检查全部成就，返回本次新解锁的成就数组

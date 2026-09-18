@@ -99,11 +99,20 @@ export function settleFog(game, factionId) {
   if (factionId === game.playerFaction) {
     if (!game.fogOfWar) game.fogOfWar = { explored: [], intelVision: {} };
     if (!Array.isArray(game.fogOfWar.explored)) game.fogOfWar.explored = [];
+    // 性能优化（fog.js）：原实现每加一座城都用 Array.includes 线性判重（O(n)），
+    // 72 城规模下每回合 O(n^2)。改为本地 Set 判重，O(1)/次，收尾一次性写回数组。
+    const known = new Set(game.fogOfWar.explored);
+    let added = false;
     for (const cid of visible) {
-      if (!game.fogOfWar.explored.includes(cid)) game.fogOfWar.explored.push(cid);
+      if (!known.has(cid)) { known.add(cid); added = true; }
     }
+    if (added) game.fogOfWar.explored = [...known];
   }
-  // 谍报视野倒计时
+  // BUG修复（fog.js #1）：谍报临时视野倒计时此前对「每个势力」调用 settleFog 都执行一次
+  //   （game.settleTurn 会按全部势力调用本函数），导致 INTEL_VISION_TURNS=3 的刺探视野
+  //   在多势力局被按势力数快速扣光（实际一回合就失效）。
+  // 修复：谍报视野是玩家侧单例状态（game.fogOfWar.intelVision），只在结算玩家势力时递减一次。
+  if (factionId !== game.playerFaction) return;
   const fog = game.fogOfWar || {};
   if (fog.intelVision) {
     for (const cid of Object.keys(fog.intelVision)) {

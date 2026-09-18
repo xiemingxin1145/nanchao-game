@@ -80,6 +80,19 @@ export class CharacterAnimator {
     this._cinematic = { time: 0, duration: 0.5 };             // 暴击慢动作计时
     this._critText = { time: 0, duration: 0.4 };              // 「暴击!」弹字计时
     this._poseState = {};       // 结算姿势状态 {side:{pose,life,maxLife}}
+
+    // ============================================================
+    // V15.0 — 动画与地图增强：成就解锁 / 段位升级 / 结局结算 覆盖层状态
+    // 设计：play* 方法只写入状态机 + 触发一次性粒子爆发；
+    //      时间线由 update(dt) 用 delta time 推进；绘制由各 draw* 方法按
+    //      当前进度渲染（rAF 驱动，与主循环一致）。
+    // ============================================================
+    this._achFX = null;        // 成就解锁 {name,x,y,t,dur}
+    this._tierFX = null;       // 段位升级 {oldTier,newTier,x,y,t,dur}
+    this._endingFX = null;     // 结局结算 {rank,type,t,dur,W,H,chars}
+    this._achTrophyCache = null;   // 奖杯静态帧离屏缓存
+    this._endingPalaceCache = {};  // 各等级宫殿剪影离屏缓存 {rank:canvas}
+    this._achParticleCap = 120;    // 成就/结局覆盖层粒子上限保护
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -417,6 +430,45 @@ export class CharacterAnimator {
         this.particles.splice(i, 1);
         this._releaseParticle(p);
       }
+    }
+
+    // ---- V15.0：成就/段位/结局覆盖层时间线推进（用真实时间，不受慢动作影响）----
+    if (this._achFX) {
+      this._achFX.t += deltaTime;
+      if (this._achFX.t >= this._achFX.dur) this._achFX = null;
+    }
+    if (this._tierFX) {
+      this._tierFX.t += deltaTime;
+      if (this._tierFX.t >= this._tierFX.dur) this._tierFX = null;
+    }
+    if (this._endingFX) {
+      this._endingFX.t += deltaTime;
+      if (this._endingFX.t >= this._endingFX.dur) this._endingFX = null;
+    }
+  }
+
+  // V15.0：覆盖层一次性粒子（带上限保护，复用 _pushParticle 队列）
+  _burstFXParticles(x, y, count, opts) {
+    for (let i = 0; i < count; i++) {
+      if (this.particles.length >= this._achParticleCap && !this.particles.some(p => p._isAmbient)) break;
+      const ang = Math.random() * Math.PI * 2;
+      const spd = (opts.minSpeed || 40) + Math.random() * (opts.spread || 120);
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: opts.type || 'spark',
+        x: x + (Math.random() - 0.5) * (opts.rangeX || 10),
+        y: y + (Math.random() - 0.5) * (opts.rangeY || 10),
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - (opts.upBias || 0),
+        gravity: opts.gravity != null ? opts.gravity : 60,
+        drag: 0.4,
+        life: (opts.lifeMin || 0.6) + Math.random() * ((opts.lifeMax || 1.2) - (opts.lifeMin || 0.6)),
+        size: (opts.sizeMin || 2) + Math.random() * ((opts.sizeMax || 4) - (opts.sizeMin || 2)),
+        color: Array.isArray(opts.colors)
+          ? opts.colors[Math.floor(Math.random() * opts.colors.length)]
+          : (opts.color || '#FFD700')
+      });
+      this._pushParticle(s);
     }
   }
 
@@ -2694,6 +2746,533 @@ export class CharacterAnimator {
       }
       ctx.restore();
     }
+  }
+
+  // ============================================================
+  // V15.0 — 成就解锁 / 段位升级 / 结局结算 动画系统
+  // ------------------------------------------------------------
+  // 统一规则：
+  //  * play* 写入状态机（t=0 起步），并触发一次性粒子爆发；
+  //  * update(dt) 推进 t（真实时间），到时自动清空；
+  //  * draw* 按当前 t/dur 渲染多阶段动画（rAF 驱动）；
+  //  * 静态帧（奖杯/宫殿剪影）离屏 Canvas 缓存，避免每帧重算路径；
+  //  * 粒子走 _pushParticle 上限保护。
+  // ============================================================
+
+  _v15Lerp(a, b, t) { return a + (b - a) * Math.max(0, Math.min(1, t)); }
+  _v15EaseOutCubic(t) { return 1 - Math.pow(1 - Math.max(0, Math.min(1, t)), 3); }
+  _v15EaseInOut(t) {
+    t = Math.max(0, Math.min(1, t));
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+  // 段位归一化：兼容 {name,color} 对象或字符串
+  _v15TierInfo(tier) {
+    if (!tier) return { name: '无', color: '#999' };
+    if (typeof tier === 'object') return { name: tier.name || '段位', color: tier.color || '#FFD700' };
+    const palette = { '青铜': '#B8845A', '白银': '#B0BEC5', '黄金': '#FFD54F',
+      '白金': '#E0E0E0', '钻石': '#4FC3F7', '传奇': '#FF6A9A' };
+    return { name: String(tier), color: palette[tier] || '#FFD700' };
+  }
+
+  // ---------- 奖杯静态帧离屏缓存 ----------
+  _ensureTrophyCache() {
+    if (this._achTrophyCache) return this._achTrophyCache;
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 96;
+    const g = c.getContext('2d');
+    g.translate(48, 50);
+    // 杯身
+    const grad = g.createLinearGradient(0, -30, 0, 20);
+    grad.addColorStop(0, '#FFF3B0');
+    grad.addColorStop(0.5, '#FFD54F');
+    grad.addColorStop(1, '#C8860D');
+    g.fillStyle = grad;
+    g.beginPath();
+    g.moveTo(-22, -26);
+    g.lineTo(22, -26);
+    g.quadraticCurveTo(20, 6, 0, 10);
+    g.quadraticCurveTo(-20, 6, -22, -26);
+    g.closePath(); g.fill();
+    // 双耳
+    g.strokeStyle = '#C8860D'; g.lineWidth = 4; g.lineCap = 'round';
+    g.beginPath(); g.arc(-26, -16, 8, Math.PI * 0.5, Math.PI * 1.5); g.stroke();
+    g.beginPath(); g.arc(26, -16, 8, -Math.PI * 0.5, Math.PI * 0.5); g.stroke();
+    // 杯柄
+    g.fillStyle = '#C8860D';
+    g.fillRect(-4, 10, 8, 12);
+    // 底座
+    g.fillStyle = '#8a5a00';
+    g.fillRect(-14, 22, 28, 6);
+    g.fillStyle = '#C8860D';
+    g.fillRect(-10, 18, 20, 4);
+    // 高光
+    g.fillStyle = 'rgba(255,255,255,0.55)';
+    g.beginPath(); g.ellipse(-8, -14, 5, 10, -0.2, 0, Math.PI * 2); g.fill();
+    this._achTrophyCache = c;
+    return c;
+  }
+
+  // ============================================================
+  // 一、成就解锁动画
+  // 阶段：金色光柱升起(0~0.6) → 奖杯旋转出现(0.5~1.4) → 金粒爆发(0.9~1.9)
+  //       → 成就文字浮现(1.1~2.6)
+  // ============================================================
+  playAchievementUnlock(ctx, achievementName, x, y, dur = 2.6) {
+    this._achFX = { name: String(achievementName || '成就'), x, y, t: 0, dur };
+    // 金色粒子爆发（奖杯周围四散 + 上冲）
+    this._burstFXParticles(x, y - 20, 26, {
+      colors: ['#FFD700', '#FFF3B0', '#FFE9A8', '#ffffff'],
+      minSpeed: 30, spread: 160, upBias: 60, gravity: 80,
+      lifeMin: 0.6, lifeMax: 1.4, sizeMin: 1.5, sizeMax: 3.5
+    });
+    // 光柱底部金尘
+    this._burstFXParticles(x, y + 40, 12, {
+      colors: ['#FFD700', '#FFE9A8'],
+      minSpeed: 10, spread: 40, upBias: 90, gravity: -10,
+      lifeMin: 0.8, lifeMax: 1.6, sizeMin: 1, sizeMax: 2.5
+    });
+    if (ctx) this.drawAchievementFX(ctx);
+  }
+
+  // 绘制成就解锁覆盖层（每帧调用）
+  drawAchievementFX(ctx) {
+    const fx = this._achFX;
+    if (!fx || !ctx) return;
+    const { x, y, t, dur } = fx;
+    const H = (ctx.canvas && ctx.canvas.height) || 800;
+    ctx.save();
+
+    // 阶段1：金色光柱从屏幕底部升起
+    const riseP = this._v15EaseOutCubic(t / 0.6);
+    if (riseP > 0 && t < 1.2) {
+      const topY = this._v15Lerp(H + 40, y - 30, riseP);
+      const beamGrad = ctx.createLinearGradient(x, topY, x, H);
+      beamGrad.addColorStop(0, 'rgba(255,233,168,0)');
+      beamGrad.addColorStop(0.5, 'rgba(255,215,0,0.55)');
+      beamGrad.addColorStop(1, 'rgba(255,240,190,0.85)');
+      ctx.fillStyle = beamGrad;
+      const bw = this._v15Lerp(6, 18, riseP);
+      ctx.fillRect(x - bw / 2, topY, bw, H - topY);
+      // 光柱外光晕
+      ctx.fillStyle = `rgba(255,215,0,${0.18 * riseP})`;
+      ctx.fillRect(x - bw, topY, bw * 2, H - topY);
+    }
+
+    // 阶段2：奖杯旋转出现（easeOutBack 弹入 + 自转）
+    const trophyP = this._v15EaseOutBack((t - 0.5) / 0.9);
+    if (trophyP > 0) {
+      const scale = Math.max(0, Math.min(1.2, trophyP));
+      const rot = this._v15Lerp(-Math.PI / 2, 0, this._v15EaseOutCubic((t - 0.5) / 0.8))
+                + Math.sin(this.time * 3) * 0.08; // 出现后轻微摆动
+      ctx.save();
+      ctx.translate(x, y - 10);
+      ctx.rotate(rot);
+      ctx.scale(scale, scale);
+      ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 24;
+      const img = this._ensureTrophyCache();
+      ctx.drawImage(img, -48, -48);
+      ctx.restore();
+      // 奖杯外圈光环（阶段3后半扩散）
+      const ringP = Math.max(0, (t - 1.0) / 0.8);
+      if (ringP > 0 && ringP < 1) {
+        ctx.strokeStyle = `rgba(255,215,0,${0.7 * (1 - ringP)})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.arc(x, y - 10, 30 + ringP * 50, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+
+    // 阶段4：成就文字浮现
+    const textP = this._v15EaseOutCubic((t - 1.1) / 0.7);
+    if (textP > 0) {
+      ctx.globalAlpha = textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 8;
+      // 「成就解锁」小标题
+      ctx.font = 'bold 16px "STSong", serif';
+      ctx.fillStyle = '#FFE9A8';
+      ctx.fillText('★ 成就解锁 ★', x, y + 34);
+      // 成就名（金底描边）
+      ctx.font = 'bold 26px "STSong", serif';
+      ctx.lineWidth = 5; ctx.strokeStyle = '#5a3a00';
+      ctx.strokeText(fx.name, x, y + 64);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText(fx.name, x, y + 64);
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // 二、段位升级动画
+  // 阶段：旧徽章碎裂(0~0.6) → 新徽章中心放大(0.4~1.3) → 彩色光环扩散(0.8~2.2)
+  // ============================================================
+  playTierUp(ctx, oldTier, newTier, x, y, dur = 2.2) {
+    const oldInfo = this._v15TierInfo(oldTier);
+    const newInfo = this._v15TierInfo(newTier);
+    this._tierFX = { oldInfo, newInfo, x, y, t: 0, dur };
+    // 旧徽章碎片四散（旧段位色小三角）
+    this._burstFXParticles(x, y, 22, {
+      colors: [oldInfo.color, this._v15LerpColor(oldInfo.color, '#ffffff', 0.4)],
+      minSpeed: 50, spread: 200, upBias: 20, gravity: 160,
+      lifeMin: 0.5, lifeMax: 1.0, sizeMin: 2, sizeMax: 4, type: 'shard'
+    });
+    // 新段位色上升光粒
+    this._burstFXParticles(x, y, 16, {
+      colors: [newInfo.color, '#ffffff'],
+      minSpeed: 20, spread: 80, upBias: 100, gravity: -20,
+      lifeMin: 0.8, lifeMax: 1.6, sizeMin: 1.5, sizeMax: 3
+    });
+    if (ctx) this.drawTierUpFX(ctx);
+  }
+
+  _v15LerpColor(hex, to, t) {
+    const pa = [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+    const pb = [parseInt(to.slice(1, 3), 16), parseInt(to.slice(3, 5), 16), parseInt(to.slice(5, 7), 16)];
+    const r = Math.round(pa[0] + (pb[0] - pa[0]) * t);
+    const g = Math.round(pa[1] + (pb[1] - pa[1]) * t);
+    const b = Math.round(pa[2] + (pb[2] - pa[2]) * t);
+    return `rgb(${r},${g},${b})`;
+  }
+
+  // 绘制一个段位徽章（圆牌 + 名称）
+  _v15DrawBadge(ctx, x, y, r, info, time) {
+    ctx.save();
+    // 光晕
+    const glow = ctx.createRadialGradient(x, y, r * 0.3, x, y, r * 1.8);
+    glow.addColorStop(0, this._withAlpha(info.color, 0.5));
+    glow.addColorStop(1, this._withAlpha(info.color, 0));
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(x, y, r * 1.8, 0, Math.PI * 2); ctx.fill();
+    // 圆牌
+    const grad = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+    grad.addColorStop(0, this._withAlpha('#ffffff', 0.9));
+    grad.addColorStop(0.4, info.color);
+    grad.addColorStop(1, this._darken(info.color, 0.6));
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    // 金边
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 2.5;
+    ctx.stroke();
+    // 内圈
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.78, 0, Math.PI * 2); ctx.stroke();
+    // 名称
+    ctx.fillStyle = '#3a2a00';
+    ctx.font = `bold ${Math.round(r * 0.55)}px "STSong", serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(info.name, x, y);
+    ctx.restore();
+  }
+
+  // 绘制段位升级覆盖层
+  drawTierUpFX(ctx) {
+    const fx = this._tierFX;
+    if (!fx || !ctx) return;
+    const { x, y, t, dur, oldInfo, newInfo } = fx;
+    ctx.save();
+
+    // 阶段1：旧徽章先抖动→碎裂缩小消失（0~0.6）
+    if (t < 0.6) {
+      const shake = Math.sin(this.time * 40) * 3 * (1 - t / 0.6);
+      const shrink = 1 - this._v15EaseInOut(t / 0.6) * 0.9;
+      this._v15DrawBadge(ctx, x + shake, y + shake * 0.6, 34 * Math.max(0.1, shrink), oldInfo, this.time);
+      // 裂纹线
+      ctx.strokeStyle = `rgba(0,0,0,${0.5 * (t / 0.6)})`;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(x - 20, y - 18); ctx.lineTo(x + 5, y); ctx.lineTo(x - 8, y + 20);
+      ctx.moveTo(x + 18, y - 14); ctx.lineTo(x, y + 6);
+      ctx.stroke();
+    }
+
+    // 阶段2：新徽章从中心放大弹入（0.4~1.3）
+    const newP = this._v15EaseOutBack((t - 0.4) / 0.9);
+    if (newP > 0 && t < dur) {
+      this._v15DrawBadge(ctx, x, y, 36 * Math.max(0, Math.min(1.2, newP)), newInfo, this.time);
+    }
+
+    // 阶段3：彩色光环多圈扩散（0.8~2.2）
+    for (let k = 0; k < 3; k++) {
+      const ringP = (t - 0.8 - k * 0.25) / 1.1;
+      if (ringP > 0 && ringP < 1) {
+        const rr = 30 + ringP * 110;
+        ctx.strokeStyle = this._withAlpha(newInfo.color, 0.6 * (1 - ringP));
+        ctx.lineWidth = 3 - ringP * 2;
+        ctx.beginPath(); ctx.arc(x, y, rr, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+
+    // 段位变化文字
+    const labelP = this._v15EaseOutCubic((t - 1.0) / 0.6);
+    if (labelP > 0) {
+      ctx.globalAlpha = labelP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 18px "STSong", serif';
+      ctx.fillStyle = '#FFE9A8';
+      ctx.fillText(`段位提升：${oldInfo.name} → ${newInfo.name}`, x, y + 62);
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // 三、结局结算动画
+  // rank: 'S' | 'A' | 'B' | 'C' | 'D'
+  // type: 结局名称/类型字符串（用于叙事前缀，可空）
+  // duration: 总时长（秒）
+  // ============================================================
+  _v15Narrative(rank, type) {
+    const head = type ? `【${type}】` : '';
+    switch (rank) {
+      case 'S': return head + '龙驭归海，万邦来朝。九州一统，四海归一，青史留名。';
+      case 'A': return head + '据江左以自守，与民休息。虽未四海归一，亦为一方明主。';
+      case 'B': return head + '南北对峙，岁月静好。百姓暂得喘息，天下大势未定。';
+      case 'C': return head + '孤城落日，风雨飘摇。余生苟全于一隅，霸业终成空。';
+      default:  return head + '宫阙万间都做了土。兴亡谁人定，盛衰岂无凭，灰飞烟灭。';
+    }
+  }
+
+  // 宫殿剪影离屏缓存（按等级配色）
+  _ensurePalaceCache(rank, W, H) {
+    const key = rank;
+    if (this._endingPalaceCache[key]) return this._endingPalaceCache[key];
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    const palettes = {
+      S: { main: '#1a1206', glow: 'rgba(255,215,0,0.25)' },
+      A: { main: '#0e1216', glow: 'rgba(200,220,255,0.22)' },
+      B: { main: '#14100a', glow: 'rgba(220,180,120,0.18)' },
+      C: { main: '#160e08', glow: 'rgba(255,140,60,0.18)' },
+      D: { main: '#0a0a0c', glow: 'rgba(120,120,130,0.12)' }
+    };
+    const pal = palettes[rank] || palettes.B;
+    g.fillStyle = pal.main;
+    const baseY = H * 0.78;
+    // 主殿
+    g.fillRect(W * 0.38, baseY - H * 0.16, W * 0.24, H * 0.16);
+    // 屋顶（歇山顶）
+    g.beginPath();
+    g.moveTo(W * 0.34, baseY - H * 0.16);
+    g.lineTo(W * 0.5, baseY - H * 0.26);
+    g.lineTo(W * 0.66, baseY - H * 0.16);
+    g.closePath(); g.fill();
+    // 左右偏殿
+    g.fillRect(W * 0.26, baseY - H * 0.10, W * 0.10, H * 0.10);
+    g.beginPath();
+    g.moveTo(W * 0.24, baseY - H * 0.10);
+    g.lineTo(W * 0.31, baseY - H * 0.16);
+    g.lineTo(W * 0.38, baseY - H * 0.10);
+    g.closePath(); g.fill();
+    g.fillRect(W * 0.64, baseY - H * 0.10, W * 0.10, H * 0.10);
+    g.beginPath();
+    g.moveTo(W * 0.62, baseY - H * 0.10);
+    g.lineTo(W * 0.69, baseY - H * 0.16);
+    g.lineTo(W * 0.76, baseY - H * 0.10);
+    g.closePath(); g.fill();
+    // 城门（暗色缺口）
+    g.fillStyle = 'rgba(0,0,0,0.6)';
+    g.fillRect(W * 0.47, baseY - H * 0.08, W * 0.06, H * 0.08);
+    this._endingPalaceCache[key] = c;
+    return c;
+  }
+
+  playEndingAnimation(ctx, rank, type, duration = 6) {
+    rank = String(rank || 'B').toUpperCase();
+    const W = ctx && ctx.canvas ? ctx.canvas.width : 1280;
+    const H = ctx && ctx.canvas ? ctx.canvas.height : 720;
+    this._endingFX = { rank, type: String(type || ''), t: 0, dur: duration, W, H, chars: 0 };
+    // 开场粒子（按等级配色爆发）
+    const bursts = { S: ['#FFD700', '#FFF3B0', '#ff6a3a'],
+      A: ['#dfe8ff', '#ffffff', '#a0c0ff'],
+      B: ['#d0a860', '#e8d0a0', '#b89050'],
+      C: ['#c07030', '#e09050', '#805030'],
+      D: ['#606068', '#808088', '#303038'] };
+    const colors = bursts[rank] || bursts.B;
+    this._burstFXParticles(W / 2, H * 0.5, 30, {
+      colors, minSpeed: 40, spread: 260, upBias: 80, gravity: 40,
+      lifeMin: 1.0, lifeMax: 2.4, sizeMin: 1.5, sizeMax: 3.5
+    });
+    if (ctx) this.drawEndingAnimation(ctx);
+  }
+
+  // S级：龙纹盘旋（金色蛇形曲线随时间游动）
+  _v15DrawDragon(ctx, cx, cy, len, amp, time, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 5;
+    ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 16;
+    ctx.beginPath();
+    for (let i = 0; i <= 40; i++) {
+      const u = i / 40;
+      const px = cx - len / 2 + u * len;
+      const py = cy + Math.sin(u * Math.PI * 3 - time * 2) * amp;
+      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+    // 龙首（前端亮点）
+    const u = 1;
+    const hx = cx + len / 2;
+    const hy = cy + Math.sin(Math.PI * 3 - time * 2) * amp;
+    ctx.fillStyle = '#FFF3B0';
+    ctx.beginPath(); ctx.arc(hx, hy, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // 万民朝拜粒子（S级下半部人群小点，起伏如朝拜）
+  _v15DrawCrowd(ctx, W, H, time, alpha) {
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(40,30,15,0.85)';
+    const rows = 6, cols = 28;
+    for (let r = 0; r < rows; r++) {
+      const y = H * 0.82 + r * H * 0.035;
+      const sway = Math.sin(time * 2 + r) * 2;
+      for (let c = 0; c < cols; c++) {
+        const x = W * 0.08 + c * (W * 0.84 / cols) + (r % 2) * (W * 0.84 / cols) / 2;
+        ctx.beginPath(); ctx.arc(x + sway, y, 2.2, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  // 绘制结局结算覆盖层（每帧调用）
+  drawEndingAnimation(ctx) {
+    const fx = this._endingFX;
+    if (!fx || !ctx) return;
+    const { rank, t, dur, W, H } = fx;
+    const p = t / dur; // 0→1
+    ctx.save();
+
+    // 各等级基础底色
+    const baseTint = {
+      S: 'rgba(60,40,0,1)', A: 'rgba(20,30,45,1)', B: 'rgba(35,28,18,1)',
+      C: 'rgba(40,22,10,1)', D: 'rgba(8,8,10,1)'
+    }[rank] || 'rgba(20,20,20,1)';
+
+    // 阶段0：全屏光芒渐入
+    const glowP = this._v15EaseOutCubic(p / 0.22);
+    const glowColors = {
+      S: [255, 215, 90], A: [210, 225, 255], B: [210, 170, 100],
+      C: [180, 100, 50], D: [90, 90, 100]
+    }[rank];
+    const glowGrad = ctx.createRadialGradient(W / 2, H * 0.5, 10, W / 2, H * 0.5, Math.max(W, H) * 0.7);
+    glowGrad.addColorStop(0, `rgba(${glowColors[0]},${glowColors[1]},${glowColors[2]},${0.85 * glowP})`);
+    glowGrad.addColorStop(1, baseTint);
+    ctx.fillStyle = glowGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 阶段1：宫殿剪影浮现（0.18~0.5）
+    const palaceP = this._v15EaseOutCubic((p - 0.18) / 0.3);
+    if (palaceP > 0) {
+      ctx.globalAlpha = Math.min(1, palaceP);
+      const pal = this._ensurePalaceCache(rank, W, H);
+      ctx.drawImage(pal, 0, 0);
+      ctx.globalAlpha = 1;
+    }
+
+    // 阶段2：等级专属主体动画
+    if (rank === 'S') {
+      // 龙纹盘旋（0.45~0.85）
+      const dragonP = Math.max(0, Math.min(1, (p - 0.45) / 0.2));
+      if (dragonP > 0) {
+        this._v15DrawDragon(ctx, W / 2, H * 0.42, W * 0.7, H * 0.05, this.time, dragonP * 0.95);
+      }
+      // 万民朝拜粒子（0.65~1）
+      const crowdP = Math.max(0, Math.min(1, (p - 0.65) / 0.25));
+      if (crowdP > 0) this._v15DrawCrowd(ctx, W, H, this.time, crowdP);
+    } else if (rank === 'A') {
+      // 和平景象：缓慢飘落花瓣 + 祥云
+      const peacefulP = Math.max(0, Math.min(1, (p - 0.4) / 0.3));
+      ctx.globalAlpha = peacefulP * 0.6;
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      for (let i = 0; i < 12; i++) {
+        const cx = ((i * 173 + this.time * 12) % (W + 100)) - 50;
+        const cy = H * 0.25 + (i % 5) * H * 0.06;
+        ctx.beginPath(); ctx.ellipse(cx, cy, 28, 8, 0, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    } else if (rank === 'C') {
+      // 残阳：地平线低角度橙红光
+      const sunP = Math.max(0, Math.min(1, (p - 0.35) / 0.3));
+      const sunGrad = ctx.createLinearGradient(0, H * 0.5, 0, H * 0.85);
+      sunGrad.addColorStop(0, `rgba(255,120,40,0)`);
+      sunGrad.addColorStop(1, `rgba(255,90,30,${0.7 * sunP})`);
+      ctx.fillStyle = sunGrad;
+      ctx.fillRect(0, H * 0.5, W, H * 0.35);
+    } else if (rank === 'D') {
+      // 余烬：上升火星 + 逐渐黑屏
+      const emberP = Math.max(0, Math.min(1, (p - 0.3) / 0.3));
+      ctx.fillStyle = `rgba(120,60,40,${0.35 * emberP})`;
+      for (let i = 0; i < 18; i++) {
+        const ex = (i * 251) % W;
+        const ey = H - ((this.time * 30 + i * 40) % H);
+        ctx.globalAlpha = 0.5 * emberP;
+        ctx.fillRect(ex, ey, 2, 2);
+      }
+      ctx.globalAlpha = 1;
+      // 收尾黑屏（0.85~1）
+      const fadeP = Math.max(0, Math.min(1, (p - 0.85) / 0.15));
+      ctx.fillStyle = `rgba(0,0,0,${fadeP})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+
+    // 等级徽章大字（中央）
+    const badgeP = this._v15EaseOutBack((p - 0.1) / 0.25);
+    if (badgeP > 0) {
+      ctx.save();
+      ctx.translate(W / 2, H * 0.32);
+      ctx.scale(Math.max(0, badgeP), Math.max(0, badgeP));
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#000'; ctx.shadowBlur = 16;
+      ctx.font = 'bold 72px "STSong", serif';
+      const badgeColor = { S: '#FFD700', A: '#dfe8ff', B: '#d0a860', C: '#e09050', D: '#909098' }[rank];
+      ctx.fillStyle = badgeColor;
+      ctx.fillText(`${rank} 级`, 0, 0);
+      ctx.restore();
+    }
+
+    // 结局名称
+    if (fx.type) {
+      ctx.globalAlpha = this._v15EaseOutCubic((p - 0.25) / 0.2);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 26px "STSong", serif';
+      ctx.fillStyle = '#FFF3D0';
+      ctx.fillText(fx.type, W / 2, H * 0.45);
+      ctx.globalAlpha = 1;
+    }
+
+    // 结局叙事文字（打字机逐字显示，0.3~0.9）
+    const narrative = this._v15Narrative(rank, '');
+    const typeP = (p - 0.3) / 0.5;
+    if (typeP > 0) {
+      const totalChars = narrative.length;
+      const shown = Math.floor(this._v15Lerp(0, totalChars, this._v15EaseOutCubic(typeP)));
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '18px "STSong", serif';
+      ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+      ctx.fillStyle = 'rgba(255,245,220,0.95)';
+      // 简单居中换行（每 18 字一行）
+      const lineLen = Math.max(14, Math.floor(W / 26));
+      const sub = narrative.slice(0, shown);
+      const lines = [];
+      for (let i = 0; i < sub.length; i += lineLen) lines.push(sub.slice(i, i + lineLen));
+      lines.forEach((line, idx) => {
+        ctx.fillText(line, W / 2, H * 0.68 + idx * 28);
+      });
+    }
+    ctx.restore();
+  }
+
+  // 便捷：绘制所有激活中的覆盖层（每帧一次调用）
+  drawOverlayFX(ctx, w, h) {
+    this.drawAchievementFX(ctx);
+    this.drawTierUpFX(ctx);
+    this.drawEndingAnimation(ctx);
+  }
+
+  // 查询当前是否有覆盖层动画在播放
+  hasOverlayFX() {
+    return !!(this._achFX || this._tierFX || this._endingFX);
   }
 }
 

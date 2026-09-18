@@ -96,6 +96,29 @@ export class IsometricMap {
     this._cityIconCache = new Map();   // key: `${color}|${sizeLevel}` -> canvas
     this._armyIconCache = new Map();  // key: `${factionColor}` -> canvas
 
+    // ============================================================
+    // V15.0：天气系统 + 地图特效增强
+    // ------------------------------------------------------------
+    // 天气：晴/多云/雨/雪/雾/沙暴；天气粒子独立对象池；
+    //      切换时 0.5s 平滑渐变；随季节/地区自动演化。
+    // ============================================================
+    this.weather = '晴';               // 当前天气
+    this._weatherPrev = '晴';          // 过渡前天气（用于平滑切换）
+    this._weatherBlend = 1;            // 过渡进度 0→1（1=完成），切换时归零
+    this._weatherParticles = [];       // 天气粒子（雨/雪/雾/沙尘）
+    this._weatherPool = [];            // 天气粒子对象池
+    this._WEATHER_PARTICLE_CAP = 140; // 天气粒子上限保护
+    this._weatherEmitTimer = 0;       // 天气粒子发射节流
+    this._weatherAutoTimer = 0;       // 天气自动演化计时
+    this._weatherRngSeed = Math.random() * 1000;
+
+    // V15.0：贸易路线 / 宗教传播动态特效
+    this._religionRipples = [];        // 宗教波纹 {x,y,t,maxLife,color,seed}
+    this._religionTimer = 0;
+    this._pollenTimer = 0;            // 春季花粉
+    this._cicadaTimer = 0;            // 夏季蝉鸣闪光
+    this._fxFrameSkip = 0;            // 非关键动画降帧计数
+
     this._bindEvents();
     this._initView();
   }
@@ -476,6 +499,13 @@ export class IsometricMap {
     // V13.0：地形动态粒子发射 + 独立粒子系统更新
     this._emitTerrainParticles(dt);
     this._updateMapParticles(dt);
+
+    // V15.0：天气系统更新（平滑过渡 + 天气粒子 + 季节/地区自动演化）
+    this.updateWeather(dt);
+    // V15.0：季节特效增强（春花粉 / 夏蝉鸣闪光）
+    this._emitSeasonFX(dt);
+    // V15.0：宗教传播波纹更新
+    this._updateReligionRipples(dt);
   }
 
   // V8.1：城市炊烟（仅白天）
@@ -677,6 +707,27 @@ export class IsometricMap {
           ctx.stroke();
           break;
         }
+        case 'pollen': {
+          // V15.0：春花粉（金色微点，闪烁飘落）
+          const tw = 0.5 + 0.5 * Math.sin(this._animTime * 6 + (p.seed || 0));
+          ctx.globalAlpha = alpha * 0.7 * tw;
+          ctx.fillStyle = p.color || '#fff2a0';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        }
+        case 'cicada_flash': {
+          // V15.0：夏蝉鸣闪光（林间一瞬高光）
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = p.color || '#ffe066';
+          ctx.shadowColor = '#ffe066'; ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          break;
+        }
       }
     }
     ctx.restore();
@@ -831,6 +882,412 @@ export class IsometricMap {
     }
   }
 
+  // ============================================================
+  // V15.0：天气系统（晴/多云/雨/雪/雾/沙暴）
+  // ------------------------------------------------------------
+  // 公共 API：setWeather(type) / getWeather() / updateWeather(dt)
+  //          / getWeatherModifiers()
+  // 天气影响（供外部 army/supply/fog 读取，本文件只负责表现与数据）：
+  //   雨：河水暴涨(水军加成)、陆军移动减慢
+  //   雪：北方城市、移动减慢、补给消耗增加
+  //   雾：视野缩小、伏击概率增加
+  //   沙暴：沙漠地区、视野极小、士气下降
+  //   晴：正常
+  // ============================================================
+  static WEATHER_TYPES = ['晴', '多云', '雨', '雪', '雾', '沙暴'];
+
+  // 设置天气（0.5s 平滑渐变到新天气）
+  setWeather(type) {
+    if (!IsometricMap.WEATHER_TYPES.includes(type)) type = '晴';
+    if (type === this.weather) return;
+    this._weatherPrev = this.weather;
+    this.weather = type;
+    this._weatherBlend = 0;            // 开始过渡
+    // 切换时清掉一批旧天气粒子，避免雨→雪瞬间混杂
+    this._weatherParticles.length = 0;
+  }
+
+  // 查询当前天气
+  getWeather() { return this.weather; }
+
+  // 天气对玩法的修正数据（外部读取，纯表现层之外的数值契约）
+  getWeatherModifiers() {
+    switch (this.weather) {
+      case '雨':   return { navyBonus: 0.25, armyMoveMult: 0.7, supplyCost: 1.0, visionRange: 1.0, ambushChance: 0.1, morale: 0 };
+      case '雪':   return { navyBonus: 0,    armyMoveMult: 0.6, supplyCost: 1.4, visionRange: 0.9, ambushChance: 0.05, morale: -0.05 };
+      case '雾':   return { navyBonus: 0,    armyMoveMult: 0.9, supplyCost: 1.0, visionRange: 0.5, ambushChance: 0.3,  morale: -0.05 };
+      case '沙暴': return { navyBonus: 0,    armyMoveMult: 0.65, supplyCost: 1.2, visionRange: 0.25, ambushChance: 0.15, morale: -0.15 };
+      case '多云': return { navyBonus: 0,    armyMoveMult: 1.0, supplyCost: 1.0, visionRange: 0.95, ambushChance: 0,    morale: 0 };
+      default:     return { navyBonus: 0,    armyMoveMult: 1.0, supplyCost: 1.0, visionRange: 1.0, ambushChance: 0,    morale: 0 };
+    }
+  }
+
+  // 天气粒子对象池取/还
+  _weatherGet() {
+    const p = this._weatherPool.pop();
+    if (p) { p.x = 0; p.y = 0; p.vx = 0; p.vy = 0; p.life = 0; p.maxLife = 1; p.size = 2; p.kind = ''; return p; }
+    return { x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1, size: 2, kind: '' };
+  }
+  _weatherRelease(p) {
+    if (this._weatherPool.length < 400) this._weatherPool.push(p);
+  }
+
+  // 每帧更新天气：推进过渡、自动演化、发射天气粒子
+  updateWeather(dt) {
+    // 0.5s 平滑过渡
+    if (this._weatherBlend < 1) {
+      this._weatherBlend = Math.min(1, this._weatherBlend + dt / 0.5);
+    }
+    // 自动演化（随季节与地区）
+    this._weatherAutoTimer -= dt;
+    if (this._weatherAutoTimer <= 0) {
+      this._weatherAutoTimer = 6 + Math.random() * 6;
+      const decided = this._weatherAutoDecide();
+      if (decided && decided !== this.weather) this.setWeather(decided);
+    }
+    // 发射天气粒子
+    this._emitWeatherParticles(dt);
+    // 更新天气粒子
+    const W = this.canvas.width || 1024, H = this.canvas.height || 600;
+    for (let i = this._weatherParticles.length - 1; i >= 0; i--) {
+      const p = this._weatherParticles[i];
+      p.life += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.life >= p.maxLife || p.y > H + 20 || p.x < -40 || p.x > W + 40) {
+        this._weatherParticles.splice(i, 1);
+        this._weatherRelease(p);
+      }
+    }
+  }
+
+  // 根据季节与视口所在地区决定天气
+  _weatherAutoDecide() {
+    if (!this.game) return this.weather;
+    const si = this._seasonIdx(); // 0春 1夏 2秋 3冬
+    // 统计视口内城市的平均 isoY（大=南方，小=北方）与是否有沙漠
+    let sumY = 0, cnt = 0, hasDesert = false;
+    for (const city of this.game.cities.values()) {
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 200)) continue;
+      sumY += city.isoY; cnt++;
+      if (city.terrain === 'desert') hasDesert = true;
+    }
+    if (cnt === 0) return this.weather;
+    const avgY = sumY / cnt;
+    const isNorth = avgY < 7;     // 偏北
+    const isSouth = avgY > 10;    // 偏南
+    // 沙漠随机沙暴
+    if (hasDesert && Math.random() < 0.35) return '沙暴';
+    if (si === 3) {               // 冬：北方雪，南方多云/雪
+      if (isNorth) return '雪';
+      return Math.random() < 0.5 ? '多云' : '晴';
+    }
+    if (si === 1) {               // 夏：南方雨，北方晴/多云
+      if (isSouth) return Math.random() < 0.6 ? '雨' : '晴';
+      return Math.random() < 0.4 ? '多云' : '晴';
+    }
+    // 春秋：随机雾/多云/晴
+    const r = Math.random();
+    if (r < 0.15) return '雾';
+    if (r < 0.45) return '多云';
+    return '晴';
+  }
+
+  // 按天气类型发射粒子
+  _emitWeatherParticles(dt) {
+    const W = this.canvas.width || 1024, H = this.canvas.height || 600;
+    this._weatherEmitTimer -= dt;
+    // 降帧：非关键天气粒子隔帧发射（性能优化）
+    this._fxFrameSkip = (this._fxFrameSkip + 1) % 2;
+    if (this._fxFrameSkip !== 0 && (this.weather === '雾' || this.weather === '多云')) return;
+
+    const intervalMap = { '雨': 0.02, '雪': 0.06, '雾': 0.12, '沙暴': 0.04, '多云': 0.2, '晴': 999 };
+    const iv = intervalMap[this.weather] || 999;
+    if (this._weatherEmitTimer > 0) return;
+    this._weatherEmitTimer = iv;
+    if (this._weatherParticles.length >= this._WEATHER_PARTICLE_CAP) return;
+
+    const p = this._weatherGet();
+    switch (this.weather) {
+      case '雨':
+        Object.assign(p, { kind: 'rain', x: Math.random() * W, y: -10,
+          vx: -60, vy: 520 + Math.random() * 120, maxLife: 1.2, size: 8 + Math.random() * 6 });
+        break;
+      case '雪':
+        Object.assign(p, { kind: 'snow', x: Math.random() * W, y: -10,
+          vx: (Math.random() - 0.5) * 30, vy: 60 + Math.random() * 40, maxLife: 6, size: 1.5 + Math.random() * 2.5 });
+        break;
+      case '雾':
+        Object.assign(p, { kind: 'mist', x: Math.random() * W, y: H * 0.3 + Math.random() * H * 0.6,
+          vx: 8 + Math.random() * 12, vy: (Math.random() - 0.5) * 6, maxLife: 6 + Math.random() * 3,
+          size: 60 + Math.random() * 80 });
+        break;
+      case '沙暴':
+        Object.assign(p, { kind: 'sand', x: -20, y: Math.random() * H,
+          vx: 260 + Math.random() * 160, vy: (Math.random() - 0.5) * 30, maxLife: 2.5, size: 1.5 + Math.random() * 2 });
+        break;
+      default:
+        this._weatherRelease(p);
+        return;
+    }
+    this._weatherParticles.push(p);
+  }
+
+  // 绘制天气粒子（最上层，按 blend 透明度过渡）
+  _drawWeatherParticles(ctx) {
+    const blend = this._weatherBlend;
+    if (this._weatherParticles.length === 0 || blend <= 0) return;
+    ctx.save();
+    for (const p of this._weatherParticles) {
+      const prog = p.life / p.maxLife;
+      switch (p.kind) {
+        case 'rain':
+          ctx.globalAlpha = 0.35 * blend * (1 - prog * 0.3);
+          ctx.strokeStyle = '#9fc0e8';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x - p.vx * 0.018, p.y - p.vy * 0.018);
+          ctx.stroke();
+          break;
+        case 'snow':
+          ctx.globalAlpha = 0.85 * blend;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        case 'mist':
+          ctx.globalAlpha = 0.10 * blend * Math.sin(prog * Math.PI);
+          ctx.fillStyle = '#dfe6ee';
+          ctx.beginPath();
+          ctx.ellipse(p.x, p.y, p.size, p.size * 0.45, 0, 0, Math.PI * 2);
+          ctx.fill();
+          break;
+        case 'sand':
+          ctx.globalAlpha = 0.4 * blend;
+          ctx.strokeStyle = '#c2a060';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x - p.vx * 0.02, p.y);
+          ctx.stroke();
+          break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 天气色调叠加（雨暗、雪白、雾白、沙黄、多云灰）
+  _drawWeatherTint(ctx) {
+    const blend = this._weatherBlend;
+    if (blend <= 0) return;
+    let color = null;
+    switch (this.weather) {
+      case '雨':   color = `rgba(30,45,70,${0.22 * blend})`; break;
+      case '雪':   color = `rgba(220,230,245,${0.18 * blend})`; break;
+      case '雾':   color = `rgba(210,220,230,${0.30 * blend})`; break;
+      case '沙暴': color = `rgba(180,140,70,${0.35 * blend})`; break;
+      case '多云': color = `rgba(120,125,135,${0.12 * blend})`; break;
+      default: color = null;
+    }
+    if (!color) return;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.restore();
+  }
+
+  // 天气指示器：小地图旁绘制当前天气图标 + 文字
+  _drawWeatherIndicator(ctx, mmX, mmY, mmW, mmH) {
+    const icons = { '晴': '☀', '多云': '☁', '雨': '☂', '雪': '❄', '雾': '≋', '沙暴': '≡' };
+    const label = this.weather;
+    const ix = mmX, iy = mmY - 26;
+    ctx.save();
+    ctx.fillStyle = 'rgba(20,30,20,0.85)';
+    ctx.fillRect(ix, iy, 86, 22);
+    ctx.strokeStyle = '#C4A55A';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(ix, iy, 86, 22);
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    ctx.font = '14px "STSong", serif';
+    ctx.fillStyle = '#FFE9A8';
+    ctx.fillText(icons[label] || '?', ix + 6, iy + 11);
+    ctx.font = '13px "STSong", serif';
+    ctx.fillStyle = '#e8d5a3';
+    ctx.fillText(label, ix + 28, iy + 11);
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V15.0：地图特效增强 — 贸易路线 / 宗教传播 / 战争迷雾 / 城防 / 季节
+  // ============================================================
+
+  // 贸易路线：城市间金色光点沿连线移动（表示商队）
+  _drawTradeRoutes(ctx) {
+    if (!this.game) return;
+    const t = this._animTime;
+    ctx.save();
+    // 仅对同屏连线画移动光点，控制数量
+    let drawn = 0;
+    for (const city of this.game.cities.values()) {
+      if (drawn >= 10) break;
+      const links = CITY_LINKS[city.id] || [];
+      for (const targetId of links) {
+        if (city.id >= targetId) continue;
+        const target = this.game.cities.get(targetId);
+        if (!target) continue;
+        const p1 = this.isoToScreen(city.isoX, city.isoY);
+        const p2 = this.isoToScreen(target.isoX, target.isoY);
+        if (!this._onScreen((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, 180)) continue;
+        // 沿路线移动的商队光点（0→1 循环，带相位差）
+        const phase = ((t * 0.15 + city.isoX * 0.13) % 1 + 1) % 1;
+        const cx = p1.x + (p2.x - p1.x) * phase;
+        const cy = p1.y + (p2.y - p1.y) * phase;
+        ctx.fillStyle = 'rgba(255,215,0,0.9)';
+        ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 6;
+        ctx.beginPath(); ctx.arc(cx, cy, 2.2, 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        drawn++;
+        if (drawn >= 10) break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 宗教传播波纹：周期性从城市扩散彩色圆环
+  _updateReligionRipples(dt) {
+    this._religionTimer -= dt;
+    if (this._religionTimer <= 0 && this.game) {
+      this._religionTimer = 3.5 + Math.random() * 2.5;
+      // 随机选一个可见城市发出宗教波纹（佛金/道青/儒红三色）
+      const visible = [];
+      for (const city of this.game.cities.values()) {
+        const pos = this.isoToScreen(city.isoX, city.isoY);
+        if (this._onScreen(pos.x, pos.y, 150)) visible.push(city);
+      }
+      if (visible.length) {
+        const c = visible[Math.floor(Math.random() * visible.length)];
+        const pos = this.isoToScreen(c.isoX, c.isoY);
+        const colors = ['#FFD700', '#6fe0a0', '#ff8a6a'];
+        this._religionRipples.push({
+          x: pos.x, y: pos.y, life: 0, maxLife: 2.2,
+          color: colors[Math.floor(Math.random() * colors.length)]
+        });
+      }
+    }
+    for (let i = this._religionRipples.length - 1; i >= 0; i--) {
+      const r = this._religionRipples[i];
+      r.life += dt;
+      if (r.life >= r.maxLife) this._religionRipples.splice(i, 1);
+    }
+  }
+  _drawReligionRipples(ctx) {
+    if (this._religionRipples.length === 0) return;
+    ctx.save();
+    for (const r of this._religionRipples) {
+      const prog = r.life / r.maxLife;
+      ctx.strokeStyle = r.color;
+      ctx.globalAlpha = 0.6 * (1 - prog);
+      ctx.lineWidth = 2;
+      const rr = 8 + prog * 60;
+      ctx.beginPath(); ctx.ellipse(r.x, r.y, rr, rr * 0.45, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 战争迷雾增强：对已探索但无视野的城市画柔和渐变雾团
+  _drawWarFog(ctx) {
+    if (!this.game) return;
+    ctx.save();
+    for (const city of this.game.cities.values()) {
+      const explored = (typeof this.game.isCityExplored === 'function')
+        ? this.game.isCityExplored(city.id) : true;
+      const visible = (typeof this.game.isCityCurrentlyVisible === 'function')
+        ? this.game.isCityCurrentlyVisible(city.id) : true;
+      if (!explored || visible) continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 120)) continue;
+      // 径向渐变雾团（边缘柔和）
+      const g = ctx.createRadialGradient(pos.x, pos.y, 2, pos.x, pos.y, 46);
+      g.addColorStop(0, 'rgba(10,12,16,0.85)');
+      g.addColorStop(0.6, 'rgba(10,12,16,0.55)');
+      g.addColorStop(1, 'rgba(10,12,16,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(pos.x, pos.y, 46, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 城防等级可视化：城墙高度随 defense(0~100) 变化（绘制在城市菱形上方）
+  _drawCityWall(ctx, r, defense) {
+    const d = Math.max(0, Math.min(100, defense || 0));
+    const h = (d / 100) * 10 * this.scale; // 0~10px
+    if (h < 2) return;
+    ctx.save();
+    // 城墙（菱形两侧的矮墙，等距投影）
+    ctx.fillStyle = '#8a8a92';
+    ctx.strokeStyle = '#5a5a62';
+    ctx.lineWidth = 1;
+    // 正面墙
+    ctx.beginPath();
+    ctx.moveTo(-r, 0); ctx.lineTo(0, -h); ctx.lineTo(0, -h - r * 0.9); ctx.lineTo(-r, -r * 0.9);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // 右侧墙
+    ctx.beginPath();
+    ctx.moveTo(r, 0); ctx.lineTo(0, -h); ctx.lineTo(0, -h - r * 0.9); ctx.lineTo(r, -r * 0.9);
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    // 城垛（锯齿）
+    ctx.fillStyle = '#9a9aa2';
+    const crenels = Math.max(2, Math.floor(r / 6));
+    for (let i = 0; i <= crenels; i++) {
+      const cx = -r + (2 * r / crenels) * i;
+      ctx.fillRect(cx - 1.5, -r * 0.9 - h - 3, 3, 3);
+    }
+    ctx.restore();
+  }
+
+  // 季节特效增强：春花粉 / 夏蝉鸣闪光（秋落叶、冬雪花已有）
+  _emitSeasonFX(dt) {
+    const si = this._seasonIdx();
+    const W = this.canvas.width || 1024;
+    if (si === 0) {
+      // 春：金色花粉粒子飘落（缓慢闪烁）
+      this._pollenTimer -= dt;
+      if (this._pollenTimer <= 0 && this._mapParticles.length < this._MAP_PARTICLE_CAP) {
+        this._pollenTimer = 0.08;
+        this._spawnMapParticle('pollen', Math.random() * W, -5, {
+          vx: (Math.random() - 0.5) * 15, vy: 18 + Math.random() * 12,
+          gravity: 0, life: 0, maxLife: 4, size: 1.2, color: '#fff2a0',
+          seed: Math.random() * 10
+        });
+      }
+    } else if (si === 1) {
+      // 夏：蝉鸣视觉——随机闪光粒子（林间一闪）
+      this._cicadaTimer -= dt;
+      if (this._cicadaTimer <= 0 && this.game && this._mapParticles.length < this._MAP_PARTICLE_CAP) {
+        this._cicadaTimer = 0.5 + Math.random() * 0.5;
+        const forests = [];
+        for (const city of this.game.cities.values()) {
+          if (city.terrain === 'forest') {
+            const pos = this.isoToScreen(city.isoX, city.isoY);
+            if (this._onScreen(pos.x, pos.y, 100)) forests.push(pos);
+          }
+        }
+        if (forests.length) {
+          const pos = forests[Math.floor(Math.random() * forests.length)];
+          this._spawnMapParticle('cicada_flash',
+            pos.x + (Math.random() - 0.5) * 30, pos.y - 10 - Math.random() * 20, {
+              vx: 0, vy: 0, gravity: 0, life: 0, maxLife: 0.35, size: 2.5,
+              color: '#ffe066', seed: Math.random() * 10
+            });
+        }
+      }
+    }
+  }
+
   render() {
     if (!this.game) return;
     const ctx = this.ctx;
@@ -873,12 +1330,31 @@ export class IsometricMap {
     // V13.0：地图独立粒子（烽火/沙尘/落叶/港口波纹/行军尘土，视口内）
     this._drawMapParticles(ctx);
 
+    // V15.0：贸易路线（金色商队光点沿连线移动）
+    this._drawTradeRoutes(ctx);
+
+    // V15.0：宗教传播波纹
+    this._drawReligionRipples(ctx);
+
+    // V15.0：战争迷雾增强（已探索无视野城市柔和渐变雾团）
+    this._drawWarFog(ctx);
+
+    // V15.0：天气色调叠加（雨暗/雪白/雾白/沙黄/多云灰）
+    this._drawWeatherTint(ctx);
+
     // V8.1：飘动云层（最上层，半透明不遮挡）
     this._drawClouds(ctx);
 
+    // V15.0：天气粒子（雨滴/雪花/雾气/沙尘，最上层覆盖）
+    this._drawWeatherParticles(ctx);
+
     // V14.0：小地图（右下角，缩略全图 + 视口框 + 城市/军队点）
     const mmW = 140, mmH = 90;
-    this.drawMinimap(ctx, W - mmW - 12, H - mmH - 12, mmW, mmH);
+    const mmX = W - mmW - 12, mmY = H - mmH - 12;
+    this.drawMinimap(ctx, mmX, mmY, mmW, mmH);
+
+    // V15.0：天气指示器（小地图上方）
+    this._drawWeatherIndicator(ctx, mmX, mmY, mmW, mmH);
   }
 
   // 构建离屏静态层
@@ -1245,6 +1721,17 @@ export class IsometricMap {
         ctx.fillStyle = `rgba(255,${120 + Math.floor(flame * 80)},40,0.9)`;
         ctx.beginPath();
         ctx.arc(0, -r - 6 * this.scale, (1.5 + flame) * this.scale, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // V15.0：城防等级可视化（城墙高度随 defense 变化）
+      this._drawCityWall(ctx, r, city.defense);
+
+      // V15.0：冬季白雪覆盖（城市底座一层薄雪）
+      if (this._seasonIdx() === 3) {
+        ctx.fillStyle = 'rgba(245,250,255,0.45)';
+        ctx.beginPath();
+        ctx.ellipse(0, -r * 0.2, r * 0.85, r * 0.4, 0, 0, Math.PI * 2);
         ctx.fill();
       }
 

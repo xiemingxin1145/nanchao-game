@@ -20,6 +20,11 @@ import { SOLAR_TERMS, CELESTIAL_ANOMALIES, ANOMALY_BASE_CHANCE, SEASONS } from '
 
 let anomalySeq = 1;
 
+// 性能优化（calendar.js）：异象总权重在模块加载时一次性计算，避免 rollAnomaly 每次调用
+//   都对 CELESTIAL_ANOMALIES 做一次 reduce（每回合一次，长局累积）。
+let _ANOMALY_TOTAL_W = 0;
+for (const _a of CELESTIAL_ANOMALIES) _ANOMALY_TOTAL_W += _a.weight;
+
 export class CalendarSystem {
   constructor() {
     this.termIdx = 0;            // 0..23
@@ -113,8 +118,8 @@ export class CalendarSystem {
     if (!game.playerFaction || !game.factionRes.has(game.playerFaction)) return null;
     if (Math.random() >= ANOMALY_BASE_CHANCE) return null;
 
-    // 加权随机
-    const totalW = CELESTIAL_ANOMALIES.reduce((s, a) => s + a.weight, 0);
+    // 加权随机（性能优化：总权重用模块级缓存，避免每回合 reduce）
+    const totalW = _ANOMALY_TOTAL_W || CELESTIAL_ANOMALIES.reduce((s, a) => s + a.weight, 0);
     let r = Math.random() * totalW, picked = CELESTIAL_ANOMALIES[0];
     for (const a of CELESTIAL_ANOMALIES) { r -= a.weight; if (r <= 0) { picked = a; break; } }
 

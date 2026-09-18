@@ -54,6 +54,11 @@ export class AIPlayer {
     const _cachedCities = game.getFactionCities(this.factionId);
     const _cachedGenerals = game.getFactionGenerals(this.factionId);
     const _cachedArmies = game.getFactionArmies(this.factionId);
+    // 性能优化（ai.js #2）：暴露到 this，供 buildBuildings/forgeAndEquip/advanceUnits 等
+    //   helper 复用，避免每个 helper 再次全表扫描（72城/144将下每回合省下数十次 filter）。
+    this._turnCities = _cachedCities;
+    this._turnGenerals = _cachedGenerals;
+    this._turnArmies = _cachedArmies;
 
     // 性能优化#3：回合级势力城市数缓存——
     //   优化前：allyAgainstDominant / weakDiplomacy 等方法对每个 FACTION 都调用
@@ -291,7 +296,10 @@ export class AIPlayer {
       const defPow = target.garrison * (1 + target.defense / 100);
       // V4.0: AI进攻阈值 1.5→1.3（原值1.5，新值1.3，调整原因: 让AI更积极进攻但不过于鲁莽）
       // V4.0: 防御检查 — 若己方城市少于3座则优先防守，不主动攻城
-      const myCityCount = game.getFactionCities(this.factionId).length;
+      // 性能优化（ai.js #2）：改用本回合入口缓存的势力城市数 _turnCityCounts，
+      //   替代此处再次全表 getFactionCities 扫描。
+      const myCityCount = (this._turnCityCounts && this._turnCityCounts[this.factionId]) ||
+        game.getFactionCities(this.factionId).length;
       if (myCityCount >= 3 && atkPow > defPow * 1.3) {
         game.attackCity(army, target);
         return;
@@ -326,7 +334,8 @@ export class AIPlayer {
   // 建造建筑：优先 农田→市集→兵营→城墙→校场→工坊
   buildBuildings(game, res) {
     const priority = ['farm', 'market', 'barracks', 'walls', 'drill', 'workshop', 'temple'];
-    for (const city of game.getFactionCities(this.factionId)) {
+    // 性能优化（ai.js #2）：复用本回合缓存城市表，替代每次 getFactionCities 全表扫描
+    for (const city of (this._turnCities || game.getFactionCities(this.factionId))) {
       if (res.money < 200 || city.buildingThisTurn) continue;
       for (const bid of priority) {
         const b = BUILDINGS[bid];
@@ -345,7 +354,8 @@ export class AIPlayer {
   // 工坊打造装备，再给本势力空槽位武将穿最好的
   forgeAndEquip(game, res) {
     const inv = game.getInventory(this.factionId);
-    for (const city of game.getFactionCities(this.factionId)) {
+    // 性能优化（ai.js #2）：复用本回合缓存城市/武将表
+    for (const city of (this._turnCities || game.getFactionCities(this.factionId))) {
       const wsLv = city.buildings['workshop'] || 0;
       if (wsLv >= 3 && res.money > 400 && Math.random() < 0.5) {
         const rarity = maxRarityByWorkshop(wsLv);
@@ -361,7 +371,7 @@ export class AIPlayer {
     // 把库存装备穿给本势力武将：按品质排序，依次填槽
     const RANK = { common: 0, fine: 1, rare: 2, epic: 3, legendary: 4 };
     inv.sort((a, b) => (RANK[getItem(b)?.rarity] || 0) - (RANK[getItem(a)?.rarity] || 0));
-    const generals = game.getFactionGenerals(this.factionId);
+    const generals = this._turnGenerals || game.getFactionGenerals(this.factionId);
     for (let i = inv.length - 1; i >= 0; i--) {
       const item = getItem(inv[i]);
       if (!item) continue;
@@ -375,7 +385,8 @@ export class AIPlayer {
 
   // 兵种进阶：有校场且有钱粮则整训
   advanceUnits(game, res) {
-    for (const army of game.getFactionArmies(this.factionId)) {
+    // 性能优化（ai.js #2）：复用本回合缓存军队表
+    for (const army of (this._turnArmies || game.getFactionArmies(this.factionId))) {
       const city = game.cities.get(army.cityId);
       if (!city || city.owner !== this.factionId) continue;
       const drillLv = city.buildings['drill'] || 0;
@@ -399,7 +410,9 @@ export class AIPlayer {
   establishTrade(game, res) {
     if (game.tradeRoutes.length >= 5) return;
     if (res.money < 500) return;
-    const cities = game.getFactionCities(this.factionId).filter(c => (c.buildings['market'] || 0) >= 1);
+    // 性能优化（ai.js #2）：复用本回合缓存城市表
+    const cities = (this._turnCities || game.getFactionCities(this.factionId))
+      .filter(c => (c.buildings['market'] || 0) >= 1);
     for (let i = 0; i < cities.length; i++) {
       for (let j = i + 1; j < cities.length; j++) {
         if (game.tradeRoutes.length >= 5) return;
@@ -477,10 +490,14 @@ export class AIPlayer {
     if (res.money < 1200) return;
     for (const city of game.getFactionCities(this.factionId)) {
       // 未建成且 locationCity 属我
-      const builtPasses = Object.values(game.passes).filter(p => p.built && p.locationCity === city.id);
-      const pending = Object.values(game.passes).some(p => p.pending > 0);
-      if (pending) continue;
-      // 找到该城可建的关隘
+      // BUG修复（ai.js #5）：原实现 `Object.values(game.passes).some(p => p.pending > 0)`
+      //   检查的是「任意势力」是否有关隘在修，导致一个 AI 修建关隘时其它所有 AI 都被
+      //   连带禁止建关隘。运行时 pass 对象也没有 locationCity 字段（在静态表）。
+      //   修复：只判断「本势力」是否有在修的关隘（按 pending 计数），并改用静态表取 locationCity。
+      const myPending = Object.values(game.passes)
+        .some(p => p.pending > 0 && p.owner === this.factionId);
+      if (myPending) return;
+      // 找到该城可建的关隘（用静态表 locationCity 匹配）
       const target = Object.keys(game.passes).find(pid => {
         const rt = game.passes[pid];
         if (rt.built || rt.pending) return false;
@@ -505,7 +522,9 @@ export class AIPlayer {
         const r = recruitBarbarian(game, this.factionId, tribe.id);
         if (r.ok) game.pushLog(`【${this.name}】${r.msg}`);
       } else if (tribe.relation < -20 && res.money > 800) {
-        const army = game.getFactionArmies(this.factionId)
+        // 性能优化（ai.js #2）：复用本回合缓存军队表，避免每部落一次全表扫描
+        const myArmies = this._turnArmies || game.getFactionArmies(this.factionId);
+        const army = myArmies
           .filter(a => a.cityId === tribe.anchorCity && a.troops > 2000)
           .sort((a, b) => b.troops - a.troops)[0];
         if (army) {
