@@ -184,3 +184,58 @@ export function suggestFormation(mainUnit, researchedTechs) {
 export function availableFormations(researchedTechs) {
   return Object.keys(FORMATIONS).filter(id => isFormationUnlocked(id, researchedTechs));
 }
+
+// ============================================================
+// V14.0「霸业宏图」：阵型效果增强 API
+//  - 阵型等级 1~5，等级越高效果越强（每级 +10%）
+//  - 计算阵型克制加成 + 地形适配 + 兵种协同
+// ============================================================
+
+/**
+ * 获取某军队当前阵型等级（默认1，由 army.formationLevel 或 legion.formationLevel）
+ */
+export function getFormationLevel(army) {
+  return Math.max(1, Math.min(FORMATION_MAX_LEVEL, army.formationLevel || 1));
+}
+
+/**
+ * 综合计算阵型效果加成
+ * @param {string|object} formation - 阵型 id 或阵型对象
+ * @param {string} terrain - 地形 id
+ * @param {string} enemyFormation - 敌方阵型 id
+ * @param {number} level - 阵型等级 1~5
+ * @returns {object} 效果袋（含克制/地形/兵种协同修正）
+ */
+export function getFormationBonus(formation, terrain, enemyFormation, level = 1) {
+  const fid = typeof formation === 'string' ? formation : (formation.id || DEFAULT_FORMATION);
+  const lvl = Math.max(1, Math.min(FORMATION_MAX_LEVEL, level || 1));
+  // 基础效果袋（按等级缩放）+ 克制加成
+  const bag = getFormationBag(fid, enemyFormation, lvl);
+  // 地形适配：平原→骑兵阵加分，山地→步兵阵加分
+  if (terrain === 'plain' && bag.cavalryMult) bag.cavalryMult += 0.05;
+  if (terrain === 'mountain' && bag.infantryMult) bag.infantryMult += 0.05;
+  if (terrain === 'river' && bag.archerMult) bag.archerMult += 0.05;
+  // 兵种协同：全兵种类阵型在混合兵种下额外 +3%
+  if (bag.allUnitMult) bag.allUnitMult += 0.03;
+  return bag;
+}
+
+/**
+ * 升级某军队的阵型（消耗阵型经验）
+ * @param {object} army - 军队对象（含 formation, formationExp）
+ * @param {Array} researchedTechs - 已研究科技
+ * @returns {ok, msg, level}
+ */
+export function upgradeFormation(army, researchedTechs = []) {
+  if (!army.formationExp) army.formationExp = 0;
+  const curLv = getFormationLevel(army);
+  const maxLv = maxFormationLevel(army.formation || DEFAULT_FORMATION, researchedTechs);
+  if (curLv >= maxLv) return { ok: false, msg: `阵型已达当前等级上限（${maxLv}级）` };
+  const needExp = formationUpgradeExp(curLv);
+  if (army.formationExp < needExp) {
+    return { ok: false, msg: `阵型经验不足（需${needExp}，当前${Math.floor(army.formationExp)}）` };
+  }
+  army.formationExp -= needExp;
+  army.formationLevel = curLv + 1;
+  return { ok: true, msg: `阵型升至 ${army.formationLevel} 级`, level: army.formationLevel };
+}

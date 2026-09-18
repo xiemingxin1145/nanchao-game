@@ -80,3 +80,70 @@ export function aiAdjustTax(game, factionId) {
 export function serializeTax() {
   return { TAX_LEVELS };
 }
+
+// ============================================================
+// V14.0「霸业宏图」：税收系统优化 API
+// 三类税收：农业税（按粮食产出）/ 商业税（按金钱产出）/ 人口税（按人口）
+// ============================================================
+
+/**
+ * 按指定税率计算某城税收总额
+ * @param {object} city - City 实例
+ * @param {number} taxRate - 税率 0~100（百分比）
+ * @returns {number} 税收金额（金钱）
+ */
+export function calculateTax(city, taxRate) {
+  const rate = Math.max(0, Math.min(100, taxRate != null ? taxRate : (city.taxRate || 30))) / 100;
+  // 农业税：粮食产出 × 税率 × 0.5（折算金钱）
+  const food = (typeof city.calcFood === 'function') ? city.calcFood() : 0;
+  const agriTax = food * rate * 0.5;
+  // 商业税：城市商业规模 × 税率
+  const commTax = (city.comm || 0) * rate * (city.pop || 0) / 1000;
+  // 人口税：人口 × 税率 × 0.02
+  const popTax = (city.pop || 0) * rate * 0.02;
+  return Math.round(agriTax + commTax + popTax);
+}
+
+/**
+ * 获取某城税收明细（三类税收分项）
+ * @returns {agricultureTax, commerceTax, populationTax, total}
+ */
+export function getTaxBreakdown(city) {
+  const rate = Math.max(0, Math.min(100, city.taxRate || 30)) / 100;
+  const food = (typeof city.calcFood === 'function') ? city.calcFood() : 0;
+  const agricultureTax = Math.round(food * rate * 0.5);
+  const commerceTax = Math.round((city.comm || 0) * rate * (city.pop || 0) / 1000);
+  const populationTax = Math.round((city.pop || 0) * rate * 0.02);
+  return {
+    agricultureTax,
+    commerceTax,
+    populationTax,
+    total: agricultureTax + commerceTax + populationTax
+  };
+}
+
+/**
+ * 对某势力应用税收政策
+ * policy: { taxLevel: 1~5, description: string }
+ * 遍历该势力所有城市调整赋税等级
+ * @returns {ok, msg, affected}
+ */
+export function applyTaxPolicy(game, faction, policy) {
+  const cities = game.getFactionCities ? game.getFactionCities(faction.id || faction) : [];
+  if (!cities.length) return { ok: false, msg: '无城市可应用政策' };
+  const level = Math.max(1, Math.min(5, policy.taxLevel || 2));
+  let affected = 0;
+  for (const c of cities) {
+    if (typeof c.setTaxLevel === 'function') {
+      c.setTaxLevel(level);
+      affected++;
+    }
+  }
+  const lv = TAX_LEVELS[level - 1] || TAX_LEVELS[1];
+  return {
+    ok: true,
+    msg: `已对 ${affected} 城应用「${lv.name}」政策：${lv.desc}`,
+    affected,
+    taxLevel: level
+  };
+}

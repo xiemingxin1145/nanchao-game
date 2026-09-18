@@ -2,7 +2,11 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>南北朝</title>
+  <!-- V14.0：响应式视口 + 描述 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="南北朝 · 霸业宏图版 — 一款以南北朝乱世为背景的国风策略回合制游戏">
+  <meta name="theme-color" content="#1A1A1A">
+  <title>南北朝 · 霸业宏图</title>
   <link rel="stylesheet" href="css/style.css">
   <script>
     // 全局错误捕获：任何 JS 错误都显示在屏幕上，避免黑屏
@@ -39,17 +43,57 @@
     <div class="loading-scroll">
       <div class="loading-roller left"></div>
       <div class="loading-body">
-        <h1 class="loading-title">南北朝</h1>
-        <p class="loading-sub">——  loading  ——</p>
-        <div class="loading-bar"><div class="loading-bar-fill"></div></div>
-        <!-- V13.0：加载进度文字（卷轴展开 + 轮播提示） -->
-        <p class="loading-progress">正在加载乱世群雄<span class="loading-dots"><span>.</span><span>.</span><span>.</span></span></p>
+        <h1 class="loading-title v14-loading-title">南北朝</h1>
+        <p class="loading-sub">—— loading · 霸业宏图 ——</p>
+        <div class="loading-bar"><div class="loading-bar-fill" id="v14-loading-fill"></div></div>
+        <!-- V14.0：加载进度百分比 -->
+        <p class="loading-progress" id="v14-loading-pct">0%</p>
+        <!-- V14.0：乱世名言轮播 -->
+        <p class="loading-quote" id="v14-loading-quote">天下大势，分久必合。</p>
       </div>
       <div class="loading-roller right"></div>
     </div>
   </div>
 
   <div id="app"></div>
+
+  <!-- V14.0：加载进度模拟 + 乱世名言轮播（模块加载期间） -->
+  <script>
+    (function () {
+      var quotes = [
+        '天下大势，分久必合，合久必分。',
+        '王濬楼船下益州，金陵王气黯然收。',
+        '疾风知劲草，板荡识诚臣。',
+        '丈夫为志，穷当益坚，老当益壮。',
+        '将相宁无种，王侯岂有种乎？',
+        '宁饮建业水，不食武昌鱼。',
+        '射人先射马，擒贼先擒王。',
+        '白骨露于野，千里无鸡鸣。',
+        '时来天地皆同力，运去英雄不自由。',
+        '出师一表真名世，千载谁堪伯仲间。'
+      ];
+      var qi = Math.floor(Math.random() * quotes.length);
+      var quoteEl = document.getElementById('v14-loading-quote');
+      var pctEl = document.getElementById('v14-loading-pct');
+      var fillEl = document.getElementById('v14-loading-fill');
+      var pct = 0;
+      // 名言每 2.2 秒轮播
+      setInterval(function () {
+        qi = (qi + 1) % quotes.length;
+        if (quoteEl) { quoteEl.style.opacity = '0';
+          setTimeout(function(){ if(quoteEl){ quoteEl.textContent = quotes[qi]; quoteEl.style.opacity = '1'; } }, 300);
+        }
+      }, 2200);
+      // 进度条模拟（真实加载完成后由 ui.js 隐藏）
+      var timer = setInterval(function () {
+        pct += Math.random() * 9;
+        if (pct > 95) pct = 95;
+        if (pctEl) pctEl.textContent = Math.round(pct) + '%';
+        if (fillEl) fillEl.style.width = pct + '%';
+      }, 160);
+      window.__v14LoadingTimer = timer;
+    })();
+  </script>
 
   <!-- 兜底：3 秒后无论如何隐藏 loading（即使 JS 异常也不卡 loading） -->
   <script>

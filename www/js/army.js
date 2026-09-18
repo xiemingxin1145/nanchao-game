@@ -512,3 +512,166 @@ export function getAttackableCities(army, cities) {
   }
   return result;
 }
+
+// ============================================================
+// V14.0「霸业宏图」：武将单挑系统
+//  - 战斗开始前，双方武力最高武将有概率触发单挑
+//  - 三轮比试，每轮攻击/防御判定，伤害 = 武力差 + 随机值
+//  - 胜方士气+15，败方士气-15，败将概率受伤/被俘
+// ============================================================
+
+// 单挑触发概率（基础30%，双方武力均高时更高）
+const DUEL_BASE_CHANCE = 0.30;
+
+/**
+ * 判断是否可触发武将单挑
+ * @param {object} attackerGeneral - 攻方武将（需含 effForce/force/level）
+ * @param {object} defenderGeneral - 守方武将
+ * @returns {bool}
+ */
+export function canTriggerDuel(attackerGeneral, defenderGeneral) {
+  if (!attackerGeneral || !defenderGeneral) return false;
+  const aForce = attackerGeneral.effForce || attackerGeneral.force || 0;
+  const dForce = defenderGeneral.effForce || defenderGeneral.force || 0;
+  // 双方武力均 ≥40 才可能单挑；武力越高概率越大
+  if (aForce < 40 || dForce < 40) return false;
+  const avg = (aForce + dForce) / 2;
+  const chance = Math.min(0.8, DUEL_BASE_CHANCE + (avg - 50) / 200);
+  return Math.random() < chance;
+}
+
+/**
+ * 执行一场武将单挑
+ * @param {object} generalA - 攻方武将
+ * @param {object} generalB - 守方武将
+ * @returns {object} { winner, loser, rounds, log, aInjured, bInjured, captured }
+ */
+export function executeDuel(generalA, generalB) {
+  const aForce = (generalA.effForce || generalA.force || 50);
+  const bForce = (generalB.effForce || generalB.force || 50);
+  // 等级/装备修正：每级武力判定 +1
+  const aLevel = generalA.level || 1;
+  const bLevel = generalB.level || 1;
+  const aAtk = aForce + aLevel;
+  const bAtk = bForce + bLevel;
+
+  let aHp = 100, bHp = 100;
+  const rounds = [];
+  for (let i = 1; i <= 3; i++) {
+    // 每轮：双方攻击
+    const aDmg = Math.max(5, Math.round((aAtk - bAtk) + (Math.random() * 30 - 10)));
+    const bDmg = Math.max(5, Math.round((bAtk - aAtk) + (Math.random() * 30 - 10)));
+    bHp -= aDmg;
+    aHp -= bDmg;
+    rounds.push({ round: i, aDmg, bDmg, aHp: Math.max(0, aHp), bHp: Math.max(0, bHp) });
+    if (aHp <= 0 || bHp <= 0) break;
+  }
+
+  let winner, loser;
+  if (aHp >= bHp) { winner = generalA; loser = generalB; }
+  else { winner = generalB; loser = generalA; }
+
+  // 败将受伤概率 40%
+  const injured = Math.random() < 0.40;
+  // 败将被俘概率 20%
+  const captured = Math.random() < 0.20;
+
+  return {
+    winner, loser, rounds,
+    winnerName: winner.name,
+    loserName: loser.name,
+    aInjured: (generalA === loser) && injured,
+    bInjured: (generalB === loser) && injured,
+    captured: captured && (loser === generalB || generalB === loser),
+    log: [
+      `—— 武将单挑：${generalA.name} VS ${generalB.name} ——`,
+      ...rounds.map(r => `第${r.round}轮：${generalA.name} 造成${r.aDmg}伤，${generalB.name} 造成${r.bDmg}伤`),
+      `结果：${winner.name} 获胜！`
+    ]
+  };
+}
+
+/**
+ * 将单挑结果应用到战斗
+ * @param {object} battle - 战斗对象（含 attacker/defender 士气袋）
+ * @param {object} duelResult - executeDuel 返回值
+ * @returns {object} 应用后的 battle
+ */
+export function applyDuelResult(battle, duelResult) {
+  if (!battle || !duelResult) return battle;
+  // 胜方士气+15，败方士气-15
+  if (battle.attacker && battle.attacker.general && duelResult.winner === battle.attacker.general) {
+    battle.attackerMoraleBonus = (battle.attackerMoraleBonus || 0) + 15;
+    battle.defenderMoraleBonus = (battle.defenderMoraleBonus || 0) - 15;
+  } else {
+    battle.defenderMoraleBonus = (battle.defenderMoraleBonus || 0) + 15;
+    battle.attackerMoraleBonus = (battle.attackerMoraleBonus || 0) - 15;
+  }
+  // 败将受伤标记
+  if (duelResult.aInjured && battle.attacker.general) battle.attacker.general.wounded = Math.max(battle.attacker.general.wounded || 0, 3);
+  if (duelResult.bInjured && battle.defender.general) battle.defender.general.wounded = Math.max(battle.defender.general.wounded || 0, 3);
+  // 战报
+  battle.duelResult = duelResult;
+  battle.log = battle.log || [];
+  battle.log.push(...duelResult.log);
+  return battle;
+}
+
+// ============================================================
+// V14.0「霸业宏图」：兵种进阶系统增强 API
+// ============================================================
+
+/**
+ * 获取某基础兵种的进阶路径
+ * @param {string} unitType - 基础兵种 id（infantry/cavalry/archer）
+ * @returns {Array<{tier,name,mult,drillLevel,costMoney,costFood,description}>}
+ */
+export function getAdvancementPath(unitType) {
+  return (ADVANCEMENT_TREE[unitType] || []).map(n => ({ ...n }));
+}
+
+/**
+ * 检查某兵种是否可进阶到目标阶
+ * @param {object} unit - 军队对象（含 unitTier）或 {unitType, unitTier}
+ * @param {number} targetTier - 目标阶数 1 或 2
+ * @param {number} drillLevel - 校场等级
+ * @returns {ok, msg}
+ */
+export function canAdvance(unit, targetTier, drillLevel = 0) {
+  const unitType = unit.mainUnit || (unit.getMainUnit ? unit.getMainUnit() : unit.unitType);
+  const tree = ADVANCEMENT_TREE[unitType] || [];
+  const node = tree.find(n => n.tier === targetTier);
+  if (!node) return { ok: false, msg: '该兵种无此进阶阶' };
+  const curTier = (unit.unitTier && unit.unitTier[unitType]) || 0;
+  if (curTier >= targetTier) return { ok: false, msg: '已达成该阶' };
+  if (curTier !== targetTier - 1) return { ok: false, msg: '需先完成前一阶进阶' };
+  if (drillLevel < node.drillLevel) {
+    return { ok: false, msg: `需校场达到 ${node.drillLevel} 级（当前 ${drillLevel} 级）` };
+  }
+  return { ok: true, node };
+}
+
+/**
+ * 执行兵种进阶（落账到 unit.unitTier）
+ * @param {object} unit - 军队对象
+ * @param {number} targetTier - 目标阶
+ * @param {number} drillLevel - 校场等级
+ * @returns {ok, msg}
+ */
+export function advanceUnit(unit, targetTier, drillLevel = 0) {
+  const chk = canAdvance(unit, targetTier, drillLevel);
+  if (!chk.ok) return chk;
+  const unitType = unit.mainUnit || (unit.getMainUnit ? unit.getMainUnit() : unit.unitType);
+  if (!unit.unitTier) unit.unitTier = { infantry: 0, cavalry: 0, archer: 0 };
+  unit.unitTier[unitType] = targetTier;
+  return { ok: true, msg: `${UNIT_TYPES[unitType].name} 进阶为【${chk.node.name}】` };
+}
+
+/**
+ * 判断某兵种是否为精锐（tier≥1）
+ */
+export function isElite(unit) {
+  const unitType = unit.mainUnit || (unit.getMainUnit ? unit.getMainUnit() : unit.unitType);
+  const tier = (unit.unitTier && unit.unitTier[unitType]) || 0;
+  return tier >= 1;
+}

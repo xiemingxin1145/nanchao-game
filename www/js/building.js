@@ -80,6 +80,36 @@ export const BUILDINGS = {
     id: 'jiangzuojian', name: '将作监', maxLevel: 5, riverOnly: false,
     description: '掌管宫室营建官署。3级解锁徭役征发。每级建造速度+8%。',
     perLevel: { buildSpeedMult: 0.08 }
+  },
+
+  // ============================================================
+  // V14.0「霸业宏图」新增建筑（v14_ 前缀）
+  // 补充：水渠/仓库/学府/驿站/矿场，与城市四维发展关联
+  // ============================================================
+  v14_water_channel: {
+    id: 'v14_water_channel', name: '水渠', maxLevel: 5, riverOnly: false,
+    description: '关联水利发展。每级水利+6，粮食产出+6%，灾害减免-3%。',
+    perLevel: { waterFlat: 6, foodMult: 0.06, disasterMult: -0.03 }
+  },
+  v14_granary: {
+    id: 'v14_granary', name: '仓库', maxLevel: 5, riverOnly: false,
+    description: '囤积粮秣。每级粮草储备上限+20%，军队粮草消耗-3%。',
+    perLevel: { foodStorageMult: 0.20, supplyMult: -0.03 }
+  },
+  v14_academy: {
+    id: 'v14_academy', name: '学府', maxLevel: 5, riverOnly: false,
+    description: '兴学育才。每级科技+3/回合，在野武将招募成功率+3%。',
+    perLevel: { techPerTurn: 3, recruitBonus: 0.03 }
+  },
+  v14_post_station: {
+    id: 'v14_post_station', name: '驿站', maxLevel: 5, riverOnly: false,
+    description: '驿传通达。每级军队移动力+5%，补给线效率+5%。',
+    perLevel: { moveMult: 0.05, supplyEffMult: 0.05 }
+  },
+  v14_mine: {
+    id: 'v14_mine', name: '矿场', maxLevel: 5, riverOnly: false,
+    description: '山泽冶金。每级金钱产出+6%，商业发展速度+4%。',
+    perLevel: { incomeMult: 0.06, commDevMult: 0.04 }
   }
 };
 
@@ -125,4 +155,73 @@ export function buildBuildingOnCity(city, buildingId, factionRes) {
   city.buildings[buildingId] = cur + 1;
   city.buildingThisTurn = true;
   return { ok: true, msg: `${city.name} ${b.name} 升至 ${cur + 1} 级（耗 ${cost} 金）`, cost, level: cur + 1 };
+}
+
+// ============================================================
+// V14.0「霸业宏图」：建筑系统增强 API
+// ============================================================
+
+/**
+ * 获取某城市已建建筑列表
+ * @returns {Array<{id,name,level,maxLevel,description}>}
+ */
+export function getBuildings(city) {
+  const out = [];
+  for (const [bid, lv] of Object.entries(city.buildings || {})) {
+    const b = BUILDINGS[bid];
+    if (!b || !lv) continue;
+    out.push({
+      id: bid, name: b.name, level: lv, maxLevel: b.maxLevel,
+      description: b.description
+    });
+  }
+  return out;
+}
+
+/**
+ * 校验某城市是否可建造/升级指定建筑
+ * @returns {ok, msg, cost}
+ */
+export function canBuild(city, buildingType) {
+  const b = BUILDINGS[buildingType];
+  if (!b) return { ok: false, msg: '建筑不存在' };
+  if (b.riverOnly && city.terrain !== 'river') {
+    return { ok: false, msg: `${b.name} 仅可建于河流城市` };
+  }
+  const cur = city.buildings[buildingType] || 0;
+  if (cur >= b.maxLevel) return { ok: false, msg: `${b.name} 已达最高等级 ${b.maxLevel}` };
+  if (city.buildingThisTurn) return { ok: false, msg: '本回合该城已在兴工' };
+  return { ok: true, cost: buildingCost(cur) };
+}
+
+/**
+ * 在某城市建造/升级建筑（与 buildBuildingOnCity 等价，V14 对外命名）
+ * @param {object} city - City 实例
+ * @param {string} buildingType - 建筑 id
+ * @param {object} factionRes - { money }
+ */
+export function buildStructure(city, buildingType, factionRes) {
+  return buildBuildingOnCity(city, buildingType, factionRes);
+}
+
+/**
+ * 升级指定建筑（当前等级→+1）
+ */
+export function upgradeBuilding(city, buildingType, factionRes) {
+  return buildBuildingOnCity(city, buildingType, factionRes);
+}
+
+/**
+ * 获取某建筑在指定等级下的效果袋
+ * @param {object|string} building - 建筑对象或建筑 id
+ * @param {number} level - 建筑等级（默认1）
+ */
+export function getBuildingEffect(building, level = 1) {
+  const b = typeof building === 'string' ? BUILDINGS[building] : building;
+  if (!b) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(b.perLevel || {})) {
+    out[k] = v * level;
+  }
+  return out;
 }

@@ -50,6 +50,10 @@ export function defaultGameStats() {
 }
 
 // 每回合更新（在 game.endTurn() 末尾调用）
+// 性能优化：民心均值统计——原实现用 cities.reduce 一次累加 + 长度，
+// 单次循环内即可同时完成求和与计数，避免 reduce 闭包开销；
+// 并把 maxCities 更新合并进同一循环。城市数 72 时收益有限，
+// 但每回合稳定执行，累积收益可观。
 export function recordTurn(game) {
   const s = game.gameStats;
   if (!s) return;
@@ -57,9 +61,11 @@ export function recordTurn(game) {
   // 民心>90 维持回合
   const cities = game.getFactionCities(game.playerFaction);
   if (cities.length) {
-    const avg = cities.reduce((sum, c) => sum + (c.morale || 0), 0) / cities.length;
+    let sum = 0;
+    for (let i = 0; i < cities.length; i++) sum += (cities[i].morale || 0);
+    const avg = sum / cities.length;
     if (avg > 90) s.highMoraleTurns++;
-    s.maxCities = Math.max(s.maxCities, cities.length);
+    if (cities.length > s.maxCities) s.maxCities = cities.length;
   }
   s.idleGenerals = game.getIdleGenerals ? game.getIdleGenerals().length : 0;
 }

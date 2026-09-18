@@ -2260,6 +2260,441 @@ export class CharacterAnimator {
     r = Math.round(r * amt); g = Math.round(g * amt); b = Math.round(b * amt);
     return `rgb(${r},${g},${b})`;
   }
+
+  // ============================================================
+  // V14.0 霸业宏图 — 武将单挑动画系统
+  // ============================================================
+
+  // 单挑对峙：双武将左右站立，中间 VS 能量碰撞，势力色呼吸光晕
+  // progress: 0~1 对峙进度（用于 VS 文字脉冲与光晕缩放）
+  playDuelStandoff(ctx, xA, yA, xB, yB, generalA, generalB, progress = 0) {
+    if (!ctx) return;
+    const t = this.time;
+    const ca = (generalA && generalA.color) || '#c03030';
+    const cb = (generalB && generalB.color) || '#3060c0';
+    const mx = (xA + xB) / 2, my = (yA + yB) / 2;
+    ctx.save();
+
+    // ---- 双方威压气场（势力色径向渐变光晕，呼吸式缩放）----
+    const breathe = 0.85 + 0.15 * Math.sin(t * 3);
+    for (const [px, py, col] of [[xA, yA, ca], [xB, yB, cb]]) {
+      const g = ctx.createRadialGradient(px, py - 20, 4, px, py - 20, 40 * breathe);
+      g.addColorStop(0, this._withAlpha(col, 0.35));
+      g.addColorStop(1, this._withAlpha(col, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(px, py - 20, 40 * breathe, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ---- 中央 VS 能量碰撞：双色交织闪电 + 脉冲文字 ----
+    const pulse = 1 + 0.2 * Math.sin(t * 8);
+    // 双色电弧
+    ctx.strokeStyle = this._withAlpha(ca, 0.7);
+    ctx.lineWidth = 2;
+    ctx.shadowColor = ca; ctx.shadowBlur = 10;
+    ctx.beginPath();
+    let lx = xA + 10, ly = yA - 30;
+    ctx.moveTo(lx, ly);
+    for (let i = 0; i < 4; i++) {
+      lx += (mx - lx) / 4;
+      ly += (Math.random() - 0.5) * 8;
+      ctx.lineTo(lx, ly);
+    }
+    ctx.stroke();
+    ctx.strokeStyle = this._withAlpha(cb, 0.7);
+    ctx.shadowColor = cb;
+    ctx.beginPath();
+    lx = xB - 10; ly = yB - 30;
+    ctx.moveTo(lx, ly);
+    for (let i = 0; i < 4; i++) {
+      lx += (mx - lx) / 4;
+      ly += (Math.random() - 0.5) * 8;
+      ctx.lineTo(lx, ly);
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // VS 文字（金色描边，脉冲缩放）
+    ctx.translate(mx, my - 34);
+    ctx.scale(pulse, pulse);
+    ctx.font = 'bold 28px "STSong", serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4; ctx.strokeStyle = '#7a4a00';
+    ctx.strokeText('VS', 0, 0);
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText('VS', 0, 0);
+    ctx.restore();
+  }
+
+  // 单挑攻击：突进/重击/技能 三类
+  // attackType: 'charge'突进 | 'heavy'重击 | 'skill'技能
+  // general: { color, skillType? }
+  playDuelAttack(ctx, x, y, targetX, targetY, attackType, general) {
+    const col = (general && general.color) || '#c03030';
+    switch (attackType) {
+      case 'charge': {
+        // 突进：位移 + 速度线 + 残影 + 金色弧光
+        const dx = targetX - x, dy = targetY - y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const dirX = dx / dist, dirY = dy / dist;
+        // 速度线（5条）
+        for (let i = 0; i < 5; i++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'speedline',
+            x: x + (Math.random() - 0.5) * 16, y: y - 10 - Math.random() * 24,
+            vx: -dirX * (220 + Math.random() * 120), vy: -dirY * 40 + (Math.random()-0.5)*20,
+            gravity: 0, drag: 0, life: 0.18, maxLife: 0.25,
+            size: 18, color: 'rgba(255,255,255,0.7)' });
+          this._pushParticle(s);
+        }
+        // 金色挥砍弧光（从攻击者指向目标）
+        const ang = Math.atan2(dy, dx);
+        this.playSlash(targetX, targetY, ang - Math.PI / 3);
+        // 终点尘土
+        this.spawnParticle(targetX, targetY, 'battle_dust');
+        break;
+      }
+      case 'heavy': {
+        // 重击：武器高举发光（蓄力视觉）+ 下劈震地尘土
+        if (ctx) {
+          ctx.save();
+          // 蓄力发光
+          const g = ctx.createRadialGradient(x, y - 30, 4, x, y - 30, 30);
+          g.addColorStop(0, 'rgba(255,220,120,0.6)');
+          g.addColorStop(1, 'rgba(255,180,40,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(x, y - 30, 30, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+        // 下劈震地：尘土飞溅 + 冲击环
+        this.spawnParticle(targetX, targetY, 'impact');
+        this.spawnParticle(targetX, targetY, 'battle_dust');
+        // 震地屏幕抖动
+        this._shakeFX(4, 0.2);
+        break;
+      }
+      case 'skill': {
+        // 技能：根据 skillType 释放对应特效（复用 playSkillAnim）
+        const st = (general && general.skillType) || 'fire';
+        this.playSkillAnim(st, ctx, x, y, targetX, targetY);
+        break;
+      }
+    }
+  }
+
+  // 格挡防御：金属碰撞火花 + 击退小位移 + 防御光圈
+  playDuelBlock(ctx, x, y, general) {
+    const col = (general && general.color) || '#c03030';
+    // 金属火花迸溅
+    for (let i = 0; i < 10; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 100;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'spark_burst', x, y: y - 24,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 30,
+        gravity: 180, drag: 0.8, life: 0.3 + Math.random() * 0.2, maxLife: 0.5,
+        size: 1.5, color: Math.random() < 0.5 ? '#ffffff' : '#FFD700' });
+      this._pushParticle(s);
+    }
+    // 击退小位移（3~5px，ease-out-back 回位）
+    this.knockbacks.push({ x, y, distance: 3 + Math.random() * 2, life: 0.25, maxLife: 0.25 });
+    // 防御光圈（势力色半透明圆环）
+    if (ctx) {
+      ctx.save();
+      ctx.strokeStyle = this._withAlpha(col, 0.6);
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = col; ctx.shadowBlur = 8;
+      ctx.beginPath(); ctx.arc(x, y - 20, 22, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // 单挑受击反馈：闪白 + 击退(8~12px ease-out-back) + 大伤害飘字 + 屏幕抖动
+  playDuelHit(ctx, x, y, damage, isCrit = false) {
+    // 1) 闪白（α0.7 / 0.1s）
+    const flash = this._getParticle();
+    Object.assign(flash, { type: 'hitflash', x, y: y - 20, vx: 0, vy: 0,
+      gravity: 0, drag: 0, life: 0.1, maxLife: 0.1, size: 18, color: '#ffffff' });
+    this._pushParticle(flash);
+    // 2) 击退 8~12px
+    this.knockbacks.push({ x, y, distance: 8 + Math.random() * 4, life: 0.35, maxLife: 0.35 });
+    // 3) 伤害飘字（单挑更大更醒目）
+    this.damageNumbers.push({
+      x: x + (Math.random() - 0.5) * 10, y: y - 40,
+      text: String(Math.round(damage)), life: 0.9, maxLife: 0.9, isCrit: !!isCrit,
+      duel: true
+    });
+    // 4) 暴击屏幕抖动 + 金色碎片
+    if (isCrit) {
+      this._shakeFX(5, 0.2);
+      this.spawnParticle(x, y - 20, 'critical_hit');
+    } else {
+      this.spawnParticle(x, y - 20, 'impact');
+    }
+  }
+
+  // 单挑胜利：举武器朝天 + 金光爆发 + 金箔飞舞 + 「胜利」文字
+  playDuelVictory(ctx, x, y, general) {
+    const name = (general && general.name) || '武将';
+    // 金色光芒爆发
+    this.spawnParticle(x, y - 20, 'victory_glow');
+    // 金箔粒子飞舞
+    for (let i = 0; i < 18; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'victory_gold',
+        x: x + (Math.random() - 0.5) * 30, y: y - 20 + (Math.random() - 0.5) * 20,
+        vx: (Math.random() - 0.5) * 30, vy: -50 - Math.random() * 50,
+        gravity: -10, drag: 0.3, life: 1.0 + Math.random() * 0.6, maxLife: 1.6,
+        size: 2 + Math.random() * 3, color: '#FFD700', angle: Math.random() * Math.PI * 2 });
+      this._pushParticle(s);
+    }
+    // 「胜利」文字
+    if (ctx) {
+      ctx.save();
+      ctx.font = 'bold 32px "STSong", serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 5; ctx.strokeStyle = '#7a4a00';
+      ctx.strokeText('胜利!', x, y - 60);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText('胜利!', x, y - 60);
+      ctx.font = 'bold 16px "STSong", serif';
+      ctx.fillStyle = '#FFE9A8';
+      ctx.fillText(name, x, y - 80);
+      ctx.restore();
+    }
+  }
+
+  // 单挑失败：单膝跪地 + 武器拄地 + 灰色余烬 + 「败北」文字
+  playDuelDefeat(ctx, x, y, general) {
+    // 灰色余烬飘落
+    for (let i = 0; i < 10; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'defeat_ash',
+        x: x + (Math.random() - 0.5) * 20, y: y - 20,
+        vx: (Math.random() - 0.5) * 15, vy: -10 - Math.random() * 8,
+        gravity: 25, drag: 0.4, life: 0.9 + Math.random() * 0.5, maxLife: 1.4,
+        size: 2 + Math.random() * 2, color: '#888888' });
+      this._pushParticle(s);
+    }
+    if (ctx) {
+      ctx.save();
+      ctx.globalAlpha = 0.8;
+      ctx.font = 'bold 28px "STSong", serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4; ctx.strokeStyle = '#333';
+      ctx.strokeText('败北', x, y - 50);
+      ctx.fillStyle = '#999999';
+      ctx.fillText('败北', x, y - 50);
+      ctx.restore();
+    }
+  }
+
+  // 单挑被俘：绳索光圈缠绕 + 投降姿态
+  playDuelCapture(ctx, x, y, general) {
+    // 绳索光圈（棕色螺旋环）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      const ang = (i / 8) * Math.PI * 2;
+      Object.assign(s, { type: 'rune_glow',
+        x: x + Math.cos(ang) * 16, y: y - 20 + Math.sin(ang) * 16,
+        vx: Math.cos(ang) * 8, vy: Math.sin(ang) * 8,
+        gravity: 0, drag: 0.2, life: 1.0, maxLife: 1.0,
+        size: 2.5, color: '#8a6a3a', angle: ang, seed: this.time });
+      this._pushParticle(s);
+    }
+    if (ctx) {
+      ctx.save();
+      ctx.strokeStyle = 'rgba(138,106,58,0.8)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.arc(x, y - 20, 20, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = 'bold 18px "STSong", serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#c9a86a';
+      ctx.fillText('被俘', x, y - 50);
+      ctx.restore();
+    }
+  }
+
+  // ============================================================
+  // V14.0 — 兵种进阶仪式动画
+  // ============================================================
+
+  // 进阶仪式：兵种图标发光 + 金色扩散圆环 + 粒子爆发 + 属性飘字
+  playAdvancementRitual(ctx, x, y, unitType, fromTier, toTier) {
+    // 升级光环（从内向外扩散的金色圆环，3层）
+    for (let i = 0; i < 3; i++) {
+      const p = this._getParticle();
+      Object.assign(p, { type: 'levelup',
+        x: x + i * 6, y: y + i * 3,
+        vx: 0, vy: 0, gravity: 0, drag: 0,
+        life: 0.9 + i * 0.2, maxLife: 0.9 + i * 0.2,
+        size: 5, color: '#FFD700', angle: i * 0.4, seed: this.time });
+      this._pushParticle(p);
+    }
+    // 金色粒子爆发
+    this.spawnParticle(x, y - 10, 'levelup');
+    this.spawnParticle(x, y - 10, 'victory_glow');
+    // 进阶完成文字
+    if (ctx) {
+      ctx.save();
+      ctx.font = 'bold 22px "STSong", serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4; ctx.strokeStyle = '#7a4a00';
+      const label = `进阶! ${fromTier}→${toTier}`;
+      ctx.strokeText(label, x, y - 50);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText(label, x, y - 50);
+      // 属性提升飘字
+      ctx.font = 'bold 14px "STSong", serif';
+      ctx.fillStyle = '#66ff88';
+      ctx.fillText('+攻 +防', x, y - 32);
+      ctx.restore();
+    }
+  }
+
+  // 精锐兵种战斗差异攻击：按兵种与 tier 释放差异化特效
+  // unitType: 'heavy_inf'重甲步兵 | 'cavalry'重骑 | 'archer'强弩 | 'warship'五牙舰
+  playEliteUnitAttack(ctx, x, y, unitType, tier = 2, dir = 1) {
+    switch (unitType) {
+      case 'heavy_inf': {
+        // 盾墙发光 + 长矛突刺冲击波
+        if (ctx) {
+          ctx.save();
+          // 盾牌发光
+          const g = ctx.createRadialGradient(x, y - 16, 2, x, y - 16, 18);
+          g.addColorStop(0, 'rgba(200,220,255,0.5)');
+          g.addColorStop(1, 'rgba(200,220,255,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(x, y - 16, 18, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+        // 长矛突刺冲击波
+        this.spawnParticle(x + dir * 20, y - 18, 'impact');
+        this.spawnParticle(x, y, 'battle_dust');
+        break;
+      }
+      case 'cavalry': {
+        // 马蹄火焰 + 密集速度线 + 武器拖尾
+        for (let i = 0; i < 6; i++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'fire_trail',
+            x: x - dir * (10 + Math.random() * 10), y: y + Math.random() * 4,
+            vx: -dir * (60 + Math.random() * 40), vy: -20 - Math.random() * 20,
+            gravity: 0, drag: 0.5, life: 0.4, maxLife: 0.4,
+            size: 2.5 + Math.random() * 2, color: Math.random() < 0.5 ? '#ff6a2a' : '#ffcc33' });
+          this._pushParticle(s);
+        }
+        this.spawnParticle(x, y, 'cavalry_dust');
+        this.spawnParticle(x + dir * 24, y - 12, 'spark_burst');
+        break;
+      }
+      case 'archer': {
+        // 箭矢光尾 + 命中爆裂
+        this.spawnParticle(x + dir * 30, y - 10, 'arrow');
+        for (let i = 0; i < 6; i++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'arrow_trail',
+            x: x + dir * i * 6, y: y - 16,
+            vx: 0, vy: 0, gravity: 0, drag: 0,
+            life: 0.25, maxLife: 0.25, size: 2.5, color: '#fff6c8' });
+          this._pushParticle(s);
+        }
+        this.spawnParticle(x + dir * 40, y - 12, 'impact');
+        break;
+      }
+      case 'warship': {
+        // 撞击大水花 + 船身震动 + 火箭齐射
+        this.spawnParticle(x, y, 'water_ripple');
+        for (let i = 0; i < 8; i++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'element_water',
+            x: x + (Math.random() - 0.5) * 24, y: y,
+            vx: (Math.random() - 0.5) * 80, vy: -40 - Math.random() * 40,
+            gravity: 120, drag: 0.5, life: 0.5, maxLife: 0.5,
+            size: 3 + Math.random() * 2, color: '#8fc4e8' });
+          this._pushParticle(s);
+        }
+        // 火箭齐射
+        for (let i = 0; i < 4; i++) {
+          this.spawnParticle(x + (Math.random() - 0.5) * 30, y - 20 - Math.random() * 10, 'fire_trail');
+        }
+        this._shakeFX(2, 0.15);
+        break;
+      }
+    }
+  }
+
+  // ============================================================
+  // V14.0 — 升级 / 技能解锁动画
+  // ============================================================
+
+  // 武将升级：金色光柱 + 光环 + 「升级!」+ 属性飘字
+  playLevelUp(ctx, x, y, general, newLevel = 1) {
+    // 金色光柱（脚下到头顶）
+    if (ctx) {
+      ctx.save();
+      const g = ctx.createLinearGradient(x, y - 80, x, y);
+      g.addColorStop(0, 'rgba(255,233,168,0)');
+      g.addColorStop(1, 'rgba(255,215,0,0.7)');
+      ctx.fillStyle = g;
+      ctx.fillRect(x - 8, y - 80, 16, 80);
+      ctx.restore();
+    }
+    // 升级光环 + 金粒
+    this.spawnParticle(x, y - 10, 'levelup');
+    this.spawnParticle(x, y - 10, 'victory_glow');
+    // 文字
+    if (ctx) {
+      ctx.save();
+      ctx.font = 'bold 26px "STSong", serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineWidth = 4; ctx.strokeStyle = '#7a4a00';
+      ctx.strokeText(`升级! Lv.${newLevel}`, x, y - 60);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText(`升级! Lv.${newLevel}`, x, y - 60);
+      // 属性飘字
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#66ff88';
+      ctx.fillText('+统 +武 +智 +政', x, y - 40);
+      ctx.restore();
+    }
+  }
+
+  // 技能解锁：灰色变彩 + 旋转符文圆环 + 光点汇聚
+  playSkillUnlock(ctx, x, y, skillId = '') {
+    // 旋转符文圆环（紫色/金色光点环绕）
+    this.spawnParticle(x, y, 'rune_glow');
+    for (let i = 0; i < 10; i++) {
+      const ang = (i / 10) * Math.PI * 2;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'rune_glow',
+        x: x + Math.cos(ang) * 14, y: y + Math.sin(ang) * 14,
+        vx: -Math.cos(ang) * 10, vy: -Math.sin(ang) * 10,
+        gravity: 0, drag: 0.3, life: 0.9, maxLife: 0.9,
+        size: 2.5, color: Math.random() < 0.5 ? '#b080ff' : '#FFD700',
+        angle: ang, seed: this.time });
+      this._pushParticle(s);
+    }
+    if (ctx) {
+      ctx.save();
+      // 旋转符文环
+      ctx.strokeStyle = 'rgba(180,120,255,0.7)';
+      ctx.lineWidth = 2;
+      ctx.shadowColor = '#b080ff'; ctx.shadowBlur = 10;
+      ctx.beginPath(); ctx.arc(x, y, 24, this.time * 2, this.time * 2 + Math.PI * 1.5); ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.font = 'bold 18px "STSong", serif';
+      ctx.textAlign = 'center'; ctx.fillStyle = '#e0c0ff';
+      ctx.fillText('技能解锁!', x, y - 36);
+      if (skillId) {
+        ctx.font = 'bold 13px "STSong", serif';
+        ctx.fillStyle = '#FFE9A8';
+        ctx.fillText(skillId, x, y + 36);
+      }
+      ctx.restore();
+    }
+  }
 }
 
 // 全局单例，供 map.js / ui.js 共用

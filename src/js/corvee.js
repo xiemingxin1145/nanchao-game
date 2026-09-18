@@ -80,3 +80,81 @@ export function aiStartCorvee(game, factionId) {
     if (result.ok) game.pushLog(`【AI】${city.name} 征发${CORVEE_TYPES[type].name}`);
   }
 }
+
+// ============================================================
+// V14.0「霸业宏图」：徭役系统优化 API
+// 四类徭役：建造(build) / 水利(water) / 运输(transport) / 征兵(v14_recruit)
+// 徭役短期提升建设/征兵速度，但降低民心与农业产出
+// ============================================================
+
+// V14 新增「征兵徭役」（本地注册，不改动 data.js）
+const V14_CORVEE_EXTRA = {
+  v14_recruit: {
+    id: 'v14_recruit', name: '征兵徭役', icon: '⚔️',
+    description: '征发民夫整编新军（征兵速度+50%，但民心-2/回合，农业产出-10%）。',
+    effect: { recruitSpeedMult: 0.5, moraleDelta: -2, foodMult: -0.10 }
+  }
+};
+
+/** 返回全部可用徭役类型（含 V14 征兵徭役） */
+export function getCorveeTypes() {
+  return { ...CORVEE_TYPES, ...V14_CORVEE_EXTRA };
+}
+
+/**
+ * 启动徭役
+ * @param {object} city - City 实例
+ * @param {string} type - 徭役类型 id
+ * @param {number} laborers - 征发民夫数量（影响效果强度）
+ * @returns {ok, msg}
+ */
+export function startCorvee(city, type, laborers = 1000) {
+  const allTypes = getCorveeTypes();
+  const cv = allTypes[type];
+  if (!cv) return { ok: false, msg: '徭役类型不存在' };
+  // 将作监≥3级校验
+  const pre = canStartCorvee(city);
+  if (!pre.ok && type !== 'v14_recruit') return pre;
+  if (city.corvee) return { ok: false, msg: '该城正在征发徭役中' };
+  // 落账：民夫消耗人口
+  const labor = Math.max(0, Math.round(laborers || 1000));
+  city.pop = Math.max(1000, city.pop - labor);
+  city.corvee = { type, turnsLeft: CORVEE_DURATION, laborers: labor };
+  return { ok: true, msg: `${city.name} 征发${cv.name}（民夫${labor}人），持续${CORVEE_DURATION}回合` };
+}
+
+/**
+ * 获取某城当前徭役进度
+ * @returns {type, name, turnsLeft, duration, progress, laborers} 或 null
+ */
+export function getCorveeProgress(city) {
+  if (!city.corvee) return null;
+  const allTypes = getCorveeTypes();
+  const cv = allTypes[city.corvee.type];
+  const done = CORVEE_DURATION - (city.corvee.turnsLeft || 0);
+  return {
+    type: city.corvee.type,
+    name: cv ? cv.name : city.corvee.type,
+    turnsLeft: city.corvee.turnsLeft,
+    duration: CORVEE_DURATION,
+    progress: Math.round((done / CORVEE_DURATION) * 100),
+    laborers: city.corvee.laborers || 0
+  };
+}
+
+/**
+ * 完成徭役结算（提前结算奖励并清空状态）
+ * @returns {ok, msg, reward}
+ */
+export function completeCorvee(city) {
+  if (!city.corvee) return { ok: false, msg: '该城无徭役' };
+  const allTypes = getCorveeTypes();
+  const cv = allTypes[city.corvee.type];
+  const reward = { ...(cv ? cv.effect : {}) };
+  // 征兵徭役完成：临时提升训练度
+  if (city.corvee.type === 'v14_recruit') {
+    city.training = Math.min(100, (city.training || 0) + 10);
+  }
+  city.corvee = null;
+  return { ok: true, msg: `${city.name} 徭役完成`, reward };
+}

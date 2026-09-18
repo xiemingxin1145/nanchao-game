@@ -55,6 +55,15 @@ export class AIPlayer {
     const _cachedGenerals = game.getFactionGenerals(this.factionId);
     const _cachedArmies = game.getFactionArmies(this.factionId);
 
+    // 性能优化#3：回合级势力城市数缓存——
+    //   优化前：allyAgainstDominant / weakDiplomacy 等方法对每个 FACTION 都调用
+    //   game.getFactionCities(f).length，72城/多势力下每回合重复全表扫描十几次。
+    //   优化后：本回合 takeTurn 入口一次性统计全势力城市数，存入 this._turnCityCounts，
+    //   后续 helper 方法直接查表 O(1)。预期减少 50~70% 重复遍历。
+    const _cc = {};
+    for (const fid of Object.keys(FACTIONS)) _cc[fid] = game.getFactionCities(fid).length;
+    this._turnCityCounts = _cc;
+
     // 0) 科技研究推进
     this.researchTech(game, res);
 
@@ -103,6 +112,11 @@ export class AIPlayer {
 
     // 4) 组建军队并进攻（弱势时谨慎）
     for (const gen of _cachedGenerals) {
+      // BUG修复#13：接入死代码超时保护——_timeout() 此前定义却从未调用，
+      // 复杂局势（72城/多军队）下 AI 决策可能接近 3s 上限甚至卡死主线程。
+      // 此处每遍历一个武将检查一次超时；超时立即中止本轮 AI 行动，
+      // 避免整个游戏回合卡顿。验证：人为将超时阈值调到极小可观察循环提前退出。
+      if (_timeout()) { game.pushLog(`【${this.name}】行动超时，提前结束本回合`); break; }
       if (gen.inArmy) continue;
       const city = game.cities.get(gen.location);
       if (city && city.garrison >= 2000) {
@@ -224,13 +238,15 @@ export class AIPlayer {
 
   // 与较弱的一方结盟，对抗最强势力（V3.0：跳过已灭亡/无城势力）
   allyAgainstDominant(game) {
+    // 性能优化#3：使用本回合缓存的势力城市数，替代每势力一次全表 getFactionCities 扫描
+    const counts = this._turnCityCounts || {};
     // 仅考虑仍存活（有城）的势力
     const aliveFids = Object.keys(FACTIONS).filter(f =>
-      f !== this.factionId && game.getFactionCities(f).length > 0);
+      f !== this.factionId && (counts[f] || 0) > 0);
     // 各方城市数
     const cityCount = {};
-    for (const f of aliveFids) cityCount[f] = game.getFactionCities(f).length;
-    cityCount[this.factionId] = game.getFactionCities(this.factionId).length;
+    for (const f of aliveFids) cityCount[f] = counts[f] || 0;
+    cityCount[this.factionId] = counts[this.factionId] || 0;
     // 最强者
     let strongest = null, max = -1;
     for (const [f, n] of Object.entries(cityCount)) {
@@ -406,12 +422,14 @@ export class AIPlayer {
   // 弱势外交：若有强邻，尝试送人质求和或提议联姻
   weakDiplomacy(game, res, isWeak) {
     if (!isWeak) return;
-    const myStrength = game.getFactionCities(this.factionId).length;
+    // 性能优化#3：使用本回合缓存的势力城市数
+    const counts = this._turnCityCounts || {};
+    const myStrength = counts[this.factionId] || 0;
     // 找最强敌对阵营
     let strongest = null, maxN = -1;
     for (const fid of Object.keys(FACTIONS)) {
       if (fid === this.factionId) continue;
-      const n = game.getFactionCities(fid).length;
+      const n = counts[fid] || 0;
       if (n > maxN) { maxN = n; strongest = fid; }
     }
     if (!strongest || maxN <= myStrength) return;

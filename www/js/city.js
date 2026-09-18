@@ -41,6 +41,11 @@ export class City {
     this.taxCooldown = 0;              // 赋税调整冷却回合
     // ---- V8.0：徭役状态 { type, turnsLeft } 或 null ----
     this.corvee = data.corvee || null;
+    // ---- V14.0：城市四维发展 ----
+    // agriculture(农业→agri) / commerce(商业→comm) /
+    // waterConservancy(水利) / training(训练)，均 0~100
+    this.waterConservancy = data.waterConservancy || 0; // 水利 0~100
+    this.training = data.training || 0;                 // 训练 0~100
   }
 
   // 建筑聚合效果袋（农田/市集/城墙/码头…）
@@ -138,6 +143,81 @@ export class City {
   repairDefense(cost) {
     this.defense = Math.min(100, this.defense + 8);
     return { ok: true, msg: `防御修缮至${this.defense}` };
+  }
+
+  // ============================================================
+  // V14.0：城市四维发展系统 API
+  // agriculture 农业 → 粮食产出（复用 this.agri）
+  // commerce    商业 → 金钱产出（复用 this.comm）
+  // waterConservancy 水利 → 农业加成 + 灾害减免
+  // training    训练 → 征兵质量 + 守军战力
+  // ============================================================
+
+  // 获取某维度发展值（0~100）
+  getDevelopment(type) {
+    switch (type) {
+      case 'agriculture': return this.agri;
+      case 'commerce': return this.comm;
+      case 'waterConservancy': return this.waterConservancy;
+      case 'training': return this.training;
+      default: return 0;
+    }
+  }
+
+  // 发展某维度（amount 为增加量，自动钳制 0~100）
+  // 消耗金钱/徭役由 game 层扣减，这里只落账
+  developCity(type, amount) {
+    amount = Math.max(0, Math.round(amount || 5));
+    switch (type) {
+      case 'agriculture':
+        if (this.agri + this.comm > 180) return { ok: false, msg: '城市发展已近极限' };
+        this.agri = Math.min(100, this.agri + amount);
+        break;
+      case 'commerce':
+        if (this.agri + this.comm > 180) return { ok: false, msg: '城市发展已近极限' };
+        this.comm = Math.min(100, this.comm + amount);
+        break;
+      case 'waterConservancy':
+        this.waterConservancy = Math.min(100, this.waterConservancy + amount);
+        // 水利每提升直接小幅反哺农业
+        this.agri = Math.min(100, this.agri + Math.round(amount / 2));
+        break;
+      case 'training':
+        this.training = Math.min(100, this.training + amount);
+        break;
+      default:
+        return { ok: false, msg: '未知发展维度' };
+    }
+    this.prosperity = Math.min(100, this.prosperity + 1);
+    return { ok: true, msg: `${this.name} 发展至 ${this.getDevelopment(type)}` };
+  }
+
+  // 计算城市综合产出（金钱/粮食/守军战力加成）
+  // season 可选；返回各维度产出与加成系数
+  getCityOutput(season) {
+    const income = this.calcIncome(season);
+    const food = this.calcFood(season);
+    // 水利对农业加成：每 20 点水利 +10% 粮食
+    const waterFoodMult = 1 + Math.floor(this.waterConservancy / 20) * 0.10;
+    // 训练对守军战力加成：每 20 点训练 +10% 守军
+    const trainingGarrisonMult = 1 + Math.floor(this.training / 20) * 0.10;
+    // 水利灾害减免：每 20 点 -5% 灾害损失（上限 -25%）
+    const disasterReduce = Math.min(0.25, Math.floor(this.waterConservancy / 20) * 0.05);
+    return {
+      income,
+      food: Math.round(food * waterFoodMult),
+      dimensions: {
+        agriculture: this.agri,
+        commerce: this.comm,
+        waterConservancy: this.waterConservancy,
+        training: this.training
+      },
+      modifiers: {
+        waterFoodMult,
+        trainingGarrisonMult,
+        disasterReduce
+      }
+    };
   }
 
   // 调整税率
@@ -242,7 +322,8 @@ export class City {
       buildings: this.buildings, buildingThisTurn: this.buildingThisTurn,
       religion: this.religion,  // V6.0
       taxLevel: this.taxLevel, taxCooldown: this.taxCooldown,  // V8.0
-      corvee: this.corvee  // V8.0
+      corvee: this.corvee,  // V8.0
+      waterConservancy: this.waterConservancy, training: this.training  // V14.0
     };
   }
 
@@ -266,6 +347,9 @@ export class City {
     c.taxLevel = (typeof data.taxLevel === 'number') ? data.taxLevel : 2;
     c.taxCooldown = data.taxCooldown || 0;
     c.corvee = data.corvee || null;
+    // V14.0：旧存档补四维发展字段
+    c.waterConservancy = data.waterConservancy || 0;
+    c.training = data.training || 0;
     return c;
   }
 }

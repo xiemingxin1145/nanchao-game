@@ -3,7 +3,10 @@
 // V8.1：数字滚动 easeOutCubic + 红绿闪烁 / 通用 Tooltip / 面板过渡动画 /
 //       顶部通知横幅 / 武将卡片微交互 + 负伤暗角 / 事件抉择结果弹窗。
 // ============================================================
-import { FACTIONS, SEASONS, SEASON_ICON, UNIT_TYPES, IMG, CITY_LINKS, TERRAIN, SCENARIOS, DEFAULT_SCENARIO, GENERALS, TAX_LEVELS, CORVEE_TYPES, EXAM_SUBJECTS, SOLAR_TERMS, HAREM_RANKS } from './data.js';
+import { FACTIONS, SEASONS, SEASON_ICON, UNIT_TYPES, IMG, CITY_LINKS, TERRAIN, SCENARIOS, DEFAULT_SCENARIO, GENERALS, TAX_LEVELS, CORVEE_TYPES, EXAM_SUBJECTS, SOLAR_TERMS, HAREM_RANKS, ADVANCEMENT_TREE } from './data.js';
+// V14.0「霸业宏图」：武将养成 / 装备 / 技能树 所需数据
+import { getItem, RARITIES, EQUIP_SLOTS } from './equipment.js';
+import { getSkill } from './skills.js';
 import { Game } from './game.js';
 import { IsometricMap } from './map.js';
 import { saveGame, loadGame, hasSave, getSaveInfo, getCurrentNGPlusLevel } from './save.js';
@@ -131,13 +134,15 @@ export class UI {
           <canvas class="v13-menu-canvas"></canvas>
           <div class="menu-particles">${particles}</div>
           <div class="title-overlay v13-title-overlay">
-            <h1 class="game-title title-glow v13-game-title">南北朝</h1>
+            <h1 class="game-title title-glow v13-game-title v14-game-title">南北朝</h1>
             <p class="subtitle">—— 乱世英雄起四方 ——</p>
             ${ngLevel > 0 ? `<p class="ngplus-badge">当前周目：第 ${ngLevel} 周目</p>` : ''}
             <div class="menu-buttons v13-menu-buttons">
               <button class="btn-ancient v13-btn" id="btn-start">开始游戏</button>
               <button class="btn-ancient v13-btn" id="btn-load" ${hasSave() ? '' : 'disabled'}>读取存档</button>
               <button class="btn-ancient v13-btn" id="btn-mods">模组管理</button>
+              <button class="btn-ancient v13-btn" id="btn-ach">成就</button>
+              <button class="btn-ancient v13-btn" id="btn-codex">图鉴</button>
               <button class="btn-ancient v13-btn" id="btn-stats">统计</button>
               <button class="btn-ancient v13-btn" id="btn-tutorial">重看教程</button>
               <button class="btn-ancient v13-btn" id="btn-guide">游戏指南</button>
@@ -145,7 +150,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge">V13.0 · 宏图大展版</div>
+          <div class="version-badge v13-version-badge v14-version-badge">V14.0 · 霸业宏图版</div>
         </div>
       </div>
     `;
@@ -161,6 +166,11 @@ export class UI {
     document.getElementById('btn-replay-intro').onclick = () => this._replayIntro();
     document.getElementById('btn-stats').onclick = () => this.showStatsPanel();
     document.getElementById('btn-mods').onclick = () => this.showModPanel();
+    // V14.0：主菜单「成就」「图鉴」入口
+    const mmAch = document.getElementById('btn-ach');
+    if (mmAch) mmAch.onclick = () => { if (this.game) this.showAchievements(); else this.toast('开始游戏后可查看成就'); };
+    const mmCodex = document.getElementById('btn-codex');
+    if (mmCodex) mmCodex.onclick = () => this.showCodex();
     document.getElementById('btn-load').onclick = () => {
       const g = loadGame();
       if (g) {
@@ -1180,6 +1190,9 @@ export class UI {
           <button class="btn-small" onclick="__ui_.cityAction('${city.id}','tax_down')">税率-</button>
           <button class="btn-small" onclick="__ui_.showTaxPanel()">赋税</button>
           <button class="btn-small" onclick="__ui_.showCorveePanel()">徭役</button>
+          <!-- V14.0：内政总览 / 兵种进阶 入口 -->
+          <button class="btn-small" onclick="__ui_.showInternalAffairs('${city.id}')">🏛 内政</button>
+          <button class="btn-small" onclick="__ui_.showUnitAdvance('${city.id}')">🎖 进阶</button>
           ${availableGenerals.length > 0 ? `
             <select id="mayor-select" class="select-small">
               ${availableGenerals.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
@@ -1313,6 +1326,11 @@ export class UI {
         ${skills.length > 0 ? `<div class="skill-chips">${skills.map(s => `<span class="skill-chip">${typeof s === 'string' ? s : (s.name || '技能')}</span>`).join('')}</div>` : ''}
         ${this._renderGeneralTitles(gen)}
         ${intro ? `<p class="hint" style="margin-top:6px;font-size:11px;line-height:1.5">${intro}</p>` : ''}
+        <!-- V14.0：武将养成 / 单挑 入口 -->
+        <div class="v14-gen-entry">
+          <button class="btn-small v14-btn-flat" onclick="__ui_.showGeneralGrowth('${gen.id}')">🎖 养成</button>
+          <button class="btn-small v14-btn-flat" onclick="__ui_.showDuel('${gen.id}')">⚔ 单挑</button>
+        </div>
       </div>
     `;
     const cv = document.getElementById('gen-radar');
@@ -4083,6 +4101,624 @@ export class UI {
       if (this.game.state === 'playing') endBtn.classList.add('pulse');
       else endBtn.classList.remove('pulse');
     }
+  }
+
+  // ============================================================
+  // ============== V14.0「霸业宏图」UI 精修 ====================
+  //  新增界面：武将养成 / 内政管理 / 武将单挑 / 兵种进阶 / 图鉴
+  //  约定：所有新类名使用 v14- 前缀；API 不存在时优雅降级。
+  // ============================================================
+
+  // 五级忠诚度解析：返回 {id,name,color,icon,trend}
+  _v14LoyaltyInfo(gen) {
+    const raw = (gen && typeof gen.loyalty === 'number') ? gen.loyalty : 50;
+    // 优先使用模型层 API，否则本地分级
+    let lv = null;
+    try { if (gen && typeof gen.getLoyaltyLevel === 'function') lv = gen.getLoyaltyLevel(); } catch (e) {}
+    if (!lv) {
+      if (raw >= 80) lv = { id: 'devoted', name: '死忠' };
+      else if (raw >= 60) lv = { id: 'trusted', name: '信赖' };
+      else if (raw >= 40) lv = { id: 'normal', name: '普通' };
+      else if (raw >= 20) lv = { id: 'discontent', name: '不满' };
+      else lv = { id: 'critical', name: '危殆' };
+    }
+    const map = {
+      devoted:     { color: '#FFD700', icon: '♥' },
+      trusted:     { color: '#55cc55', icon: '❤' },
+      normal:      { color: '#E8D5A3', icon: '·' },
+      discontent:  { color: '#e8a33c', icon: '△' },
+      critical:    { color: '#e05555', icon: '✖' }
+    };
+    const m = map[lv.id] || map.normal;
+    // 趋势箭头：以 50 为基准，>60 上升，<40 下降
+    const trend = raw > 60 ? '▲' : (raw < 40 ? '▼' : '—');
+    return { id: lv.id, name: lv.name, color: m.color, icon: m.icon, trend, raw: Math.round(raw) };
+  }
+
+  // 单件装备槽位 HTML（品质色边框 + 属性加成）
+  _v14EquipSlotHtml(gen, slot) {
+    const slotMeta = { weapon: { icon: '⚔', label: '武器' }, armor: { icon: '🛡', label: '护甲' }, mount: { icon: '🐎', label: '坐骑' }, treasure: { icon: '📿', label: '宝物' } }[slot] || { icon: '❔', label: slot };
+    const itemId = gen.equipment && gen.equipment[slot];
+    const item = itemId ? getItem(itemId) : null;
+    const rar = item ? (RARITIES[item.rarity] || RARITIES.common) : null;
+    const borderColor = rar ? rar.color : '#5a4a2a';
+    // 属性加成摘要
+    let bonusText = '';
+    if (item && item.stats) {
+      const pieces = Object.entries(item.stats).map(([k, v]) => {
+        const keyMap = { force: '武', command: '统', intel: '智', politics: '政', defenseMult: '防%', attackMult: '攻%', cavalryMult: '骑%', troopMax: '兵', moveSpeed: '速', loyalty: '忠', morale: '心' };
+        const kn = keyMap[k] || k;
+        if (typeof v === 'number' && v < 1) return `${kn}+${Math.round(v * 100)}%`;
+        return `${kn}+${v}`;
+      });
+      bonusText = pieces.join(' ');
+    }
+    return `
+      <div class="v14-equip-slot" data-slot="${slot}" style="--v14-rar:${borderColor}"
+           onclick="__ui_._v14EquipPick('${gen.id}','${slot}')" title="点击更换${slotMeta.label}">
+        <div class="v14-equip-icon">${slotMeta.icon}</div>
+        <div class="v14-equip-name" style="color:${borderColor}">${item ? this._escHtml(item.name) : '— 空 —'}</div>
+        <div class="v14-equip-bonus">${item ? this._escHtml(bonusText) : '未装备'}</div>
+        ${rar ? `<div class="v14-equip-rar">${rar.name}</div>` : ''}
+      </div>`;
+  }
+
+  // 装备更换弹窗：列出库存中同槽位装备
+  _v14EquipPick(genId, slot) {
+    const gen = this.game.getGeneral(genId);
+    if (!gen) return;
+    const inv = (typeof this.game.getPlayerInventory === 'function') ? this.game.getPlayerInventory() : [];
+    const candidates = inv.map(getItem).filter(it => it && it.slot === slot);
+    const slotLabel = { weapon: '武器', armor: '护甲', mount: '坐骑', treasure: '宝物' }[slot] || slot;
+    const rows = candidates.length === 0
+      ? '<p class="v14-empty">库存中暂无可用' + slotLabel + '</p>'
+      : candidates.map(it => {
+          const rar = RARITIES[it.rarity] || RARITIES.common;
+          return `<div class="v14-equip-row" style="--v14-rar:${rar.color}"
+              onclick="__ui_._v14DoEquip('${genId}','${slot}','${it.id}')">
+              <b style="color:${rar.color}">${this._escHtml(it.name)}</b>
+              <span class="v14-equip-desc">${this._escHtml(it.description || '')}</span>
+            </div>`;
+        }).join('');
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay';
+    modal.innerHTML = `
+      <div class="modal v14-modal v14-scroll">
+        <div class="v14-modal-corner tl"></div><div class="v14-modal-corner tr"></div>
+        <div class="v14-modal-corner bl"></div><div class="v14-modal-corner br"></div>
+        <h2 class="modal-title v14-modal-title">选择${slotLabel}</h2>
+        <div class="v14-equip-list">${rows}</div>
+        <button class="btn-ancient v14-close" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+
+  // 执行穿戴（优雅降级：无 equipItem 则提示）
+  _v14DoEquip(genId, slot, itemId) {
+    let r = { ok: false, msg: '装备功能暂不可用' };
+    try { if (typeof this.game.equipItem === 'function') r = this.game.equipItem(genId, slot, itemId); }
+    catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.toast(r.msg);
+    if (r.ok) {
+      this.audio && this.audio.playCoin && this.audio.playCoin();
+      document.querySelectorAll('.v14-overlay').forEach(m => m.remove());
+      this.showGeneralGrowth(genId);
+      this.refreshUI();
+    }
+  }
+
+  // ============================================================
+  //  武将养成界面：等级/经验/技能树/装备/忠诚/属性成长
+  // ============================================================
+  showGeneralGrowth(genId) {
+    const gen = this.game.getGeneral(genId);
+    if (!gen) { this.toast('武将不存在'); return; }
+    // 等级 / 经验（优雅降级：无 getLevel 则本地取值）
+    let level = 1, exp = 0, expNeed = 120;
+    try {
+      if (typeof gen.getLevel === 'function') level = gen.getLevel();
+      if (typeof gen.getExp === 'function') exp = gen.getExp();
+      if (typeof gen.getExpToNext === 'function') expNeed = gen.getExpToNext();
+    } catch (e) {}
+    level = gen.level || level; exp = gen.exp || exp;
+    const expPct = Math.min(100, Math.round(exp / Math.max(1, expNeed) * 100));
+    // 势力色发光边框
+    const fac = gen.faction ? FACTIONS[gen.faction] : null;
+    const facColor = fac ? fac.color : '#C4A55A';
+    // 忠诚度
+    const loy = this._v14LoyaltyInfo(gen);
+    // 属性分项：基础 / 等级加成 / 装备加成
+    const eqBag = (typeof gen.getEquipmentStats === 'function') ? gen.getEquipmentStats() : {};
+    const lvlBonus = Math.max(0, level - 1) * 2; // 每级 +2（与模型一致）
+    const attrRow = (label, base, eqv) => {
+      const b = Math.round(base || 0), e = Math.round(eqv || 0);
+      const total = b + lvlBonus + e;
+      return `<div class="v14-attr-row">
+        <span class="v14-attr-label">${label}</span>
+        <span class="v14-attr-base">${b}</span>
+        <span class="v14-attr-plus">+${lvlBonus} 级</span>
+        <span class="v14-attr-eq">+${e} 装</span>
+        <span class="v14-attr-total">${total}</span>
+      </div>`;
+    };
+    // 技能树：3 个槽位（已解锁显示技能，未解锁按等级要求锁定）
+    const ownedSkills = Array.isArray(gen.skills) ? gen.skills : [];
+    const skillReqs = [0, 10, 25]; // 三槽解锁等级要求
+    let skillSlots = '';
+    for (let i = 0; i < 3; i++) {
+      const sid = ownedSkills[i];
+      const reqLv = skillReqs[i];
+      const unlocked = !!sid && level >= reqLv;
+      const lockedByLevel = !sid && level < reqLv;
+      let sdata = sid ? getSkill(sid) : null;
+      if (sid && !sdata) sdata = { name: sid, description: '武将特技' };
+      skillSlots += `
+        <div class="v14-skill-slot ${unlocked ? 'unlocked' : (lockedByLevel ? 'locked' : 'empty')}">
+          <div class="v14-skill-icon">${unlocked ? '✦' : '🔒'}</div>
+          <div class="v14-skill-name">${unlocked ? this._escHtml(sdata.name) : (lockedByLevel ? `Lv.${reqLv} 解锁` : '空槽')}</div>
+          <div class="v14-skill-desc">${unlocked ? this._escHtml(sdata.description || '') : (lockedByLevel ? `达到 ${reqLv} 级解锁技能` : '暂无技能')}</div>
+          ${unlocked && sdata.type ? `<div class="v14-skill-type">${sdata.type === 'active' ? '主动' : '被动'}${sdata.cooldown ? ' · 冷却' + sdata.cooldown : ''}</div>` : ''}
+        </div>`;
+    }
+    // 装备四槽
+    const equipHtml = ['weapon', 'armor', 'mount', 'treasure'].map(s => this._v14EquipSlotHtml(gen, s)).join('');
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay';
+    modal.innerHTML = `
+      <div class="modal v14-modal v14-scroll v14-gen-growth" style="--v14-fac:${facColor}">
+        <div class="v14-modal-corner tl"></div><div class="v14-modal-corner tr"></div>
+        <div class="v14-modal-corner bl"></div><div class="v14-modal-corner br"></div>
+        <!-- 左侧立绘（势力色发光边框） -->
+        <div class="v14-growth-left">
+          <div class="v14-portrait-glow" style="--v14-fac:${facColor}">
+            <img src="${IMG.portrait(gen.portrait)}" class="v14-portrait" onerror="this.style.display='none'">
+          </div>
+          <div class="v14-loyalty-badge" style="color:${loy.color}">
+            <span class="v14-loyalty-icon">${loy.icon}</span>${loy.name}
+            <span class="v14-loyalty-trend">${loy.trend}</span>
+          </div>
+          <div class="v14-loyalty-bar"><div class="v14-loyalty-fill" style="width:${loy.raw}%;background:${loy.color}"></div></div>
+          <div class="v14-loyalty-num">忠诚 ${loy.raw}</div>
+        </div>
+        <!-- 右侧信息区 -->
+        <div class="v14-growth-right">
+          <h2 class="modal-title v14-modal-title">${this._escHtml(gen.name)}
+            <small class="v14-level-chip">Lv.${level}</small></h2>
+          <div class="v14-exp-row">
+            <span class="v14-exp-label">经验</span>
+            <div class="v14-exp-track"><div class="v14-exp-fill" style="width:${expPct}%"></div></div>
+            <span class="v14-exp-num">${exp}/${expNeed}</span>
+          </div>
+          <div class="v14-section-title">属性成长</div>
+          <div class="v14-attr-table">
+            ${attrRow('统帅', gen.command, eqBag.command)}
+            ${attrRow('武力', gen.force, eqBag.force)}
+            ${attrRow('智力', gen.intel, eqBag.intel)}
+            ${attrRow('政治', gen.politics, eqBag.politics)}
+          </div>
+          <div class="v14-section-title">技能树</div>
+          <div class="v14-skill-tree">${skillSlots}</div>
+          <div class="v14-section-title">装备</div>
+          <div class="v14-equip-grid">${equipHtml}</div>
+          <button class="btn-ancient v14-close" onclick="this.closest('.modal-overlay').remove()">返回</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    this.audio && this.audio.playHover && this.audio.playHover();
+  }
+
+  // ============================================================
+  //  内政管理面板：发展 / 建筑 / 税收 / 徭役 四标签
+  // ============================================================
+  showInternalAffairs(cityId) {
+    const city = this.game.cities.get(cityId);
+    if (!city) { this.toast('城市不存在'); return; }
+    if (city.owner !== this.game.playerFaction) { this.toast('非我方城市'); return; }
+    this._v14AffairsCityId = cityId;
+    this._v14AffairsTab = this._v14AffairsTab || 'develop';
+    this._v14RenderAffairs();
+  }
+
+  _v14RenderAffairs() {
+    const city = this.game.cities.get(this._v14AffairsCityId);
+    if (!city) return;
+    const tab = this._v14AffairsTab;
+    const tabs = [
+      { id: 'develop', label: '发展', icon: '🌾' },
+      { id: 'build', label: '建筑', icon: '🏛' },
+      { id: 'tax', label: '税收', icon: '💰' },
+      { id: 'corvee', label: '徭役', icon: '👷' }
+    ];
+    let body = '';
+    if (tab === 'develop') body = this._v14AffairsDevelop(city);
+    else if (tab === 'build') body = this._v14AffairsBuild(city);
+    else if (tab === 'tax') body = this._v14AffairsTax(city);
+    else if (tab === 'corvee') body = this._v14AffairsCorvee(city);
+
+    const old = document.querySelector('.v14-overlay.v14-affairs');
+    if (old) old.remove();
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay v14-affairs';
+    modal.innerHTML = `
+      <div class="modal v14-modal v14-scroll">
+        <div class="v14-modal-corner tl"></div><div class="v14-modal-corner tr"></div>
+        <div class="v14-modal-corner bl"></div><div class="v14-modal-corner br"></div>
+        <h2 class="modal-title v14-modal-title">🏛 ${this._escHtml(city.name)} · 内政</h2>
+        <div class="v14-tabs">
+          ${tabs.map(t => `<button class="v14-tab ${tab === t.id ? 'active' : ''}" data-tab="${t.id}">${t.icon} ${t.label}</button>`).join('')}
+        </div>
+        <div class="v14-tab-body v14-tab-${tab}">${body}</div>
+        <button class="btn-ancient v14-close" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelectorAll('.v14-tab').forEach(btn => {
+      btn.onclick = () => {
+        this._v14AffairsTab = btn.dataset.tab;
+        this.audio && this.audio.playClick && this.audio.playClick();
+        this._v14RenderAffairs();
+      };
+    });
+  }
+
+  // 发展维度：农业/商业/水利/训练
+  _v14AffairsDevelop(city) {
+    const drillLv = city.buildings && city.buildings['drill'] || 0;
+    const dims = [
+      { label: '农业', icon: '🌾', val: city.agri, out: `粮 ${city.calcFood ? city.calcFood(this.game.getSeason()) : '—'}`, act: 'agri' },
+      { label: '商业', icon: '💰', val: city.comm, out: `金 ${city.calcIncome ? city.calcIncome(this.game.getSeason()) : '—'}`, act: 'comm' },
+      { label: '水利', icon: '💧', val: Math.min(100, (city.agri || 0) * 0.4 + (city.buildings && city.buildings['farm'] || 0) * 4), out: '灌溉加成', act: null },
+      { label: '训练', icon: '🎯', val: Math.min(100, drillLv * 10), out: `校场 ${drillLv} 级`, act: null }
+    ];
+    return dims.map(d => `
+      <div class="v14-dev-row">
+        <div class="v14-dev-head"><span>${d.icon} ${d.label}</span><b>${Math.round(d.val)}</b></div>
+        <div class="v14-dev-bar"><div class="v14-dev-fill" style="width:${Math.min(100, d.val)}%"></div></div>
+        <div class="v14-dev-out">当前产出：${d.out}</div>
+        ${d.act ? `<button class="btn-small v14-up-btn" onclick="__ui_._v14DevUp('${city.id}','${d.act}')">发展 +5</button>` : ''}
+      </div>`).join('');
+  }
+
+  _v14DevUp(cityId, act) {
+    const city = this.game.cities.get(cityId);
+    if (!city) return;
+    let result = null;
+    try {
+      if (act === 'agri' && typeof this.game.cityDevelopAgri === 'function') result = this.game.cityDevelopAgri(cityId);
+      else if (act === 'comm' && typeof this.game.cityDevelopComm === 'function') result = this.game.cityDevelopComm(cityId);
+    } catch (e) { result = { msg: String(e.message || e) }; }
+    this.audio && this.audio.playCoin && this.audio.playCoin();
+    this.toast(result && result.msg ? result.msg : '发展完成');
+    this._v14RenderAffairs();
+    this.refreshUI();
+  }
+
+  // 建筑网格
+  _v14AffairsBuild(city) {
+    let opts = [];
+    try { opts = (typeof this.game.getBuildingOptions === 'function') ? this.game.getBuildingOptions(city.id) : []; } catch (e) {}
+    if (!opts.length) {
+      // 优雅降级：直接遍历 city.buildings + 已知建筑
+      opts = Object.values((typeof BUILDINGS !== 'undefined') ? BUILDINGS : []).map(b => ({ ...b, level: (city.buildings || {})[b.id] || 0, canBuild: false }));
+    }
+    return `<div class="v14-build-grid">` + opts.map(b => {
+      const lv = b.level || 0;
+      const maxed = lv >= b.maxLevel;
+      return `<div class="v14-build-card ${maxed ? 'maxed' : ''}">
+        <div class="v14-build-name">${this._escHtml(b.name)}</div>
+        <div class="v14-build-lv">Lv.${lv}/${b.maxLevel}</div>
+        <div class="v14-build-mini"><div class="v14-build-mini-fill" style="width:${lv / b.maxLevel * 100}%"></div></div>
+        <div class="v14-build-desc">${this._escHtml(b.description || '')}</div>
+        ${maxed ? '<div class="v14-build-max">已满级</div>'
+          : `<button class="btn-small v14-up-btn" onclick="__ui_._v14BuildUp('${city.id}','${b.id}')">${lv === 0 ? '建造' : `升级(¥${150 + 120 * lv})`}</button>`}
+      </div>`;
+    }).join('') + `</div>`;
+  }
+
+  _v14BuildUp(cityId, bid) {
+    let r = { ok: false, msg: '建造功能暂不可用' };
+    try { if (typeof this.game.buildBuilding === 'function') r = this.game.buildBuilding(cityId, bid); }
+    catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.audio && this.audio.playCoin && this.audio.playCoin();
+    this.toast(r.msg);
+    if (r.ok) { this._v14RenderAffairs(); this.refreshUI(); }
+  }
+
+  // 税收：税率滑块 + 分项预览
+  _v14AffairsTax(city) {
+    const rate = city.taxRate || 0;
+    const estIncome = city.calcIncome ? city.calcIncome(this.game.getSeason()) : '—';
+    const moraleEff = rate > 40 ? '民心下降' : (rate < 20 ? '民心安定' : '民心平稳');
+    const taxLv = TAX_LEVELS[(city.taxLevel || 2) - 1] || TAX_LEVELS[1];
+    return `
+      <div class="v14-tax-block">
+        <div class="v14-tax-row"><span>税率</span><b class="v14-tax-big">${rate}%</b></div>
+        <input type="range" min="0" max="50" value="${rate}" class="v14-slider" id="v14-tax-slider"
+               oninput="__ui_._v14TaxPreview(this.value)">
+        <div class="v14-tax-preview" id="v14-tax-preview">预计收入：${estIncome} 金　|　民心：${moraleEff}</div>
+        <div class="v14-tax-types">
+          <div class="v14-tax-type">🌾 农业税 <b>${Math.round(rate * 0.4)}%</b></div>
+          <div class="v14-tax-type">💰 商业税 <b>${Math.round(rate * 0.4)}%</b></div>
+          <div class="v14-tax-type">👥 人口税 <b>${Math.round(rate * 0.2)}%</b></div>
+        </div>
+        <div class="v14-tax-level">当前赋税等级：<b>${taxLv ? taxLv.name : '正常'}</b></div>
+        <button class="btn-ancient v14-close" onclick="__ui_._v14TaxApply('${city.id}')">应用税率</button>
+      </div>`;
+  }
+
+  _v14TaxPreview(v) {
+    const el = document.getElementById('v14-tax-preview');
+    if (el) el.textContent = `税率 ${v}%　|　民心：${v > 40 ? '民心下降' : (v < 20 ? '民心安定' : '民心平稳')}（拖动后点应用）`;
+  }
+
+  _v14TaxApply(cityId) {
+    const slider = document.getElementById('v14-tax-slider');
+    const rate = slider ? Number(slider.value) : 0;
+    let r = { ok: false, msg: '税率调整暂不可用' };
+    try { if (typeof this.game.citySetTax === 'function') r = this.game.citySetTax(cityId, rate); }
+    catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.audio && this.audio.playCoin && this.audio.playCoin();
+    this.toast(r.msg);
+    this._v14RenderAffairs();
+    this.refreshUI();
+  }
+
+  // 徭役
+  _v14AffairsCorvee(city) {
+    const jzjLv = (city.buildings && city.buildings['jiangzuojian']) || 0;
+    const active = city.corvee;
+    const types = Object.values(CORVEE_TYPES).map(t => `
+      <div class="v14-corvee-type">
+        <b>${t.icon || '🔨'} ${t.name}</b><p>${this._escHtml(t.description || '')}</p>
+        <button class="btn-small" onclick="__ui_._v14CorveeDo('${city.id}','${t.id}')"
+          ${(active || jzjLv < 3) ? 'disabled' : ''}>征发</button>
+      </div>`).join('');
+    return `
+      <div class="v14-corvee-status">
+        ${active ? `<span class="v14-corvee-active">征发中：${CORVEE_TYPES[active.type] ? CORVEE_TYPES[active.type].name : ''}（剩 ${active.turnsLeft} 回合）</span>
+          <button class="btn-small" onclick="__ui_._v14CorveeCancel('${city.id}')">取消</button>`
+          : (jzjLv < 3 ? `<span class="v14-corvee-lock">需将作监 ≥ 3 级（当前 ${jzjLv}）</span>` : '<span>可征发徭役</span>')}
+      </div>
+      <div class="v14-corvee-grid">${types}</div>
+      <p class="v14-empty">征发徭役将消耗人口并降低民心，但可加速营建。</p>`;
+  }
+
+  _v14CorveeDo(cityId, type) {
+    let r = { ok: false, msg: '徭役暂不可用' };
+    try { if (typeof this.game.startCorvee === 'function') r = this.game.startCorvee(cityId, type); }
+    catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.audio && this.audio.playRecruit && this.audio.playRecruit();
+    this.toast(r.msg);
+    if (r.ok) { this._v14RenderAffairs(); this.refreshUI(); }
+  }
+
+  _v14CorveeCancel(cityId) {
+    let r = { ok: false, msg: '取消徭役暂不可用' };
+    try { if (typeof this.game.cancelCorvee === 'function') r = this.game.cancelCorvee(cityId); } catch (e) {}
+    this.toast(r.msg);
+    this._v14RenderAffairs();
+    this.refreshUI();
+  }
+
+  // ============================================================
+  //  武将单挑界面：三轮比试 + 血条 + 伤害数字 + 胜负特效
+  //  说明：当前版本无 army.executeDuel 后端 API，此处为前端对战演示，
+  //        依据双方武力/等级推演，不改变游戏状态（优雅降级）。
+  // ============================================================
+  showDuel(aId, bId) {
+    const a = this.game.getGeneral(aId);
+    if (!a) return;
+    // 若无指定对手，弹出对手选择
+    if (!bId) { this._v14DuelPick(aId); return; }
+    const b = this.game.getGeneral(bId);
+    if (!b) { this.toast('对手不存在'); return; }
+
+    const facA = a.faction ? FACTIONS[a.faction] : null;
+    const facB = b.faction ? FACTIONS[b.faction] : null;
+    const power = (g) => (typeof g.effForce === 'number' ? g.effForce : (g.force || 50)) + (g.level || 1) * 1.5;
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay v14-duel-overlay';
+    modal.innerHTML = `
+      <div class="modal v14-duel">
+        <div class="v14-duel-arena">
+          <div class="v14-duel-side left" style="--v14-fac:${facA ? facA.color : '#C4A55A'}">
+            <div class="v14-duel-name">${this._escHtml(a.name)} <small>Lv.${a.level || 1}</small></div>
+            <div class="v14-duel-portrait"><img src="${IMG.portrait(a.portrait)}" onerror="this.style.display='none'"></div>
+            <div class="v14-duel-hp"><div class="v14-duel-hp-fill" data-side="a"></div></div>
+            <div class="v14-duel-force">武力 ${Math.round(power(a))}</div>
+          </div>
+          <div class="v14-duel-vs">VS</div>
+          <div class="v14-duel-side right" style="--v14-fac:${facB ? facB.color : '#8B2500'}">
+            <div class="v14-duel-name">${this._escHtml(b.name)} <small>Lv.${b.level || 1}</small></div>
+            <div class="v14-duel-portrait"><img src="${IMG.portrait(b.portrait)}" onerror="this.style.display='none'"></div>
+            <div class="v14-duel-hp"><div class="v14-duel-hp-fill" data-side="b"></div></div>
+            <div class="v14-duel-force">武力 ${Math.round(power(b))}</div>
+          </div>
+        </div>
+        <div class="v14-duel-log" id="v14-duel-log"></div>
+        <div class="v14-duel-result" id="v14-duel-result"></div>
+        <button class="btn-ancient v14-close" id="v14-duel-close" style="display:none"
+          onclick="this.closest('.modal-overlay').remove()">收兵</button>
+      </div>`;
+    document.body.appendChild(modal);
+    try { this.audio.playDuelClash && this.audio.playDuelClash(); } catch (e) {}
+    this._v14RunDuel(modal, a, b, power);
+  }
+
+  // 对手选择（点击我方武将后选敌将）
+  _v14DuelPick(aId) {
+    const a = this.game.getGeneral(aId);
+    if (!a) return;
+    const rivals = this.game.getFactionGenerals ? this.game.getFactionGenerals(null) : [];
+    // 在野或敌将均可作为演示对手；取武力较高的 6 名
+    const list = (this.game.generals ? [...this.game.generals.values()] : [])
+      .filter(g => g.id !== a.id)
+      .sort((x, y) => (y.force || 0) - (x.force || 0)).slice(0, 6);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay';
+    modal.innerHTML = `
+      <div class="modal v14-modal v14-scroll">
+        <div class="v14-modal-corner tl"></div><div class="v14-modal-corner tr"></div>
+        <div class="v14-modal-corner bl"></div><div class="v14-modal-corner br"></div>
+        <h2 class="modal-title v14-modal-title">选择 ${this._escHtml(a.name)} 的单挑对手</h2>
+        <div class="v14-duel-pick">
+          ${list.map(g => `<div class="v14-duel-pick-row" onclick="document.querySelectorAll('.v14-overlay').forEach(m=>m.remove());__ui_.showDuel('${aId}','${g.id}')">
+            <b>${this._escHtml(g.name)}</b><small>Lv.${g.level || 1} · 武力 ${g.force || '—'}</small></div>`).join('')}
+        </div>
+        <button class="btn-ancient v14-close" onclick="this.closest('.modal-overlay').remove()">取消</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+
+  // 单挑三轮动画推演
+  _v14RunDuel(modal, a, b, powerFn) {
+    const log = modal.querySelector('#v14-duel-log');
+    const resultEl = modal.querySelector('#v14-duel-result');
+    const closeBtn = modal.querySelector('#v14-duel-close');
+    const hpA = modal.querySelector('.v14-duel-hp-fill[data-side="a"]');
+    const hpB = modal.querySelector('.v14-duel-hp-fill[data-side="b"]');
+    const sideA = modal.querySelector('.v14-duel-side.left');
+    const sideB = modal.querySelector('.v14-duel-side.right');
+    let ha = 100, hb = 100;
+    const roundLog = (txt, cls) => {
+      const line = document.createElement('div');
+      line.className = 'v14-duel-line ' + (cls || '');
+      line.textContent = txt;
+      log.appendChild(line);
+      log.scrollTop = log.scrollHeight;
+    };
+    hpA.style.width = '100%'; hpB.style.width = '100%';
+    let round = 0;
+    const step = () => {
+      round++;
+      if (round > 3 || ha <= 0 || hb <= 0) return finish();
+      const pa = powerFn(a), pb = powerFn(b);
+      // 每轮双方各攻一次，按武力差 + 随机
+      const dmgA = Math.max(6, Math.round(14 + (pa - pb) / 8 + Math.random() * 10));
+      const dmgB = Math.max(6, Math.round(14 + (pb - pa) / 8 + Math.random() * 10));
+      // A 攻击 B
+      sideB.classList.remove('v14-hit'); void sideB.offsetWidth; sideB.classList.add('v14-hit');
+      sideA.classList.remove('v14-attack'); void sideA.offsetWidth; sideA.classList.add('v14-attack');
+      roundLog(`第 ${round} 合：${a.name} 挥刃斩向 ${b.name}，造成 ${dmgA} 点伤害！`, 'atk');
+      hb = Math.max(0, hb - dmgA);
+      hpB.style.width = hb + '%';
+      setTimeout(() => {
+        if (hb <= 0) return finish();
+        sideA.classList.remove('v14-hit'); void sideA.offsetWidth; sideA.classList.add('v14-hit');
+        sideB.classList.remove('v14-attack'); void sideB.offsetWidth; sideB.classList.add('v14-attack');
+        roundLog(`　${b.name} 反击！${a.name} 受创 ${dmgB} 点。`, 'hit');
+        ha = Math.max(0, ha - dmgB);
+        hpA.style.width = ha + '%';
+        setTimeout(step, 900);
+      }, 700);
+    };
+    const finish = () => {
+      const win = ha >= hb;
+      const winner = win ? a : b;
+      const loser = win ? b : a;
+      resultEl.className = 'v14-duel-result ' + (win ? 'v14-win' : 'v14-lose');
+      resultEl.innerHTML = win
+        ? `🏆 ${this._escHtml(winner.name)} 获胜！敌将 ${this._escHtml(loser.name)} 败下阵来！<br><small>我方士气 +10</small>`
+        : `☠ ${this._escHtml(loser.name)} 不敌 ${this._escHtml(winner.name)}……<br><small>士气 -5</small>`;
+      roundLog(`—— 单挑结束：${winner.name} 胜出 ——`, 'end');
+      closeBtn.style.display = '';
+    };
+    setTimeout(step, 600);
+  }
+
+  // ============================================================
+  //  兵种进阶界面：基础 → 精锐 → 王牌
+  // ============================================================
+  showUnitAdvance(cityId) {
+    const city = this.game.cities.get(cityId);
+    if (!city) { this.toast('城市不存在'); return; }
+    if (city.owner !== this.game.playerFaction) { this.toast('非我方城市'); return; }
+    const drillLv = (city.buildings && city.buildings['drill']) || 0;
+    const res = this.game.getPlayerRes ? this.game.getPlayerRes() : { money: 0, food: 0 };
+    // 城中我方军队（用于进阶归属）
+    const armies = (this.game.getFactionArmies ? this.game.getFactionArmies(this.game.playerFaction) : [])
+      .filter(a => a.cityId === cityId);
+    const curArmies = armies.length;
+    const tree = ADVANCEMENT_TREE;
+    const rows = Object.keys(tree).map(ut => {
+      const base = UNIT_TYPES[ut] || { name: ut };
+      const nodes = tree[ut];
+      // 该兵种当前阶（取城中第一支军队，若无则按 0）
+      const curTier = (armies[0] && armies[0].unitTier) ? (armies[0].unitTier[ut] || 0) : 0;
+      const pathHtml = nodes.map((n, idx) => {
+        const tier = idx + 1;
+        const unlocked = curTier >= tier;
+        const canDo = curTier === idx && drillLv >= n.drillLevel && res.money >= n.costMoney && res.food >= n.costFood && armies.length;
+        const locked = curTier < idx;
+        return `<div class="v14-adv-node ${unlocked ? 'done' : (canDo ? 'ready' : 'locked')}">
+          <div class="v14-adv-tier">${tier === 1 ? '精锐' : '王牌'}</div>
+          <div class="v14-adv-name">${this._escHtml(n.name)}</div>
+          <div class="v14-adv-mult">战力 ×${n.mult.toFixed(2)}</div>
+          <div class="v14-adv-req">校场 ${n.drillLevel} 级 · ¥${n.costMoney} · 粮${n.costFood}</div>
+          ${unlocked ? '<div class="v14-adv-state">已进阶</div>'
+            : canDo ? `<button class="btn-small v14-up-btn" onclick="__ui_._v14DoAdvance('${cityId}','${ut}')">进阶</button>`
+            : `<div class="v14-adv-state">${locked ? '需先进阶上阶' : (drillLv < n.drillLevel ? `校场不足(${drillLv}/${n.drillLevel})` : '资源不足')}</div>`}
+        </div>`;
+      }).join('');
+      return `<div class="v14-adv-row">
+        <div class="v14-adv-base"><span class="v14-adv-base-icon">兵</span>${this._escHtml(base.name)}<small>×${base.coefficient}</small></div>
+        <div class="v14-adv-path">${pathHtml}</div>
+      </div>`;
+    }).join('');
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay';
+    modal.innerHTML = `
+      <div class="modal v14-modal v14-scroll">
+        <div class="v14-modal-corner tl"></div><div class="v14-modal-corner tr"></div>
+        <div class="v14-modal-corner bl"></div><div class="v14-modal-corner br"></div>
+        <h2 class="modal-title v14-modal-title">🎖 ${this._escHtml(city.name)} · 兵种进阶</h2>
+        <p class="v14-sub">校场等级：${drillLv}/5　|　城中驻军军队：${curArmies} 支　|　金钱 ${res.money} · 粮 ${res.food}</p>
+        <div class="v14-adv-tree">${rows}</div>
+        <button class="btn-ancient v14-close" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+
+  _v14DoAdvance(cityId, unitType) {
+    // 取城中第一支我方军队作为进阶主体
+    const armies = (this.game.getFactionArmies ? this.game.getFactionArmies(this.game.playerFaction) : [])
+      .filter(a => a.cityId === cityId);
+    if (!armies.length) { this.toast('城中无驻军军队'); return; }
+    let r = { ok: false, msg: '进阶功能暂不可用' };
+    try { if (typeof this.game.advanceUnit === 'function') r = this.game.advanceUnit(cityId, armies[0].id, unitType); }
+    catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.audio && this.audio.playRecruit && this.audio.playRecruit();
+    this.toast(r.msg);
+    if (r.ok) {
+      document.querySelectorAll('.v14-overlay').forEach(m => m.remove());
+      this.showUnitAdvance(cityId);
+      this.refreshUI();
+    }
+  }
+
+  // ============================================================
+  //  图鉴（主菜单入口）：三国题材武将名录概览
+  // ============================================================
+  showCodex() {
+    const list = (typeof GENERALS !== 'undefined') ? GENERALS.slice(0, 24) : [];
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v14-overlay';
+    modal.innerHTML = `
+      <div class="modal v14-modal v14-scroll">
+        <div class="v14-modal-corner tl"></div><div class="v14-modal-corner tr"></div>
+        <div class="v14-modal-corner bl"></div><div class="v14-modal-corner br"></div>
+        <h2 class="modal-title v14-modal-title">📜 群雄图鉴</h2>
+        <div class="v14-codex-grid">
+          ${list.map(g => `<div class="v14-codex-card">
+            <img src="${IMG.portrait(g.portrait)}" onerror="this.style.display='none'">
+            <b>${this._escHtml(g.name)}</b>
+            <small>武${g.force||'—'} 统${g.command||'—'} 智${g.intel||'—'}</small>
+          </div>`).join('')}
+        </div>
+        <button class="btn-ancient v14-close" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
   }
 
   // ---------- 提示 ----------

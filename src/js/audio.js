@@ -23,10 +23,13 @@
 // ============================================================
 
 // 五声音阶频率表（C宫调式）
+// V14.0：补充 F 系音（F3/F4/F5），供内政管理 BGM「F宫调」使用；其余音保持不变，
+// 仅新增键，不改动既有频率，不影响历史 BGM 旋律。
 const PENTATONIC = {
   C4: 261.63, D4: 293.66, E4: 329.63, G4: 392.00, A4: 440.00,
   C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.00,
-  C3: 130.81, D3: 146.83, E3: 164.81, G3: 196.00, A3: 220.00
+  C3: 130.81, D3: 146.83, E3: 164.81, G3: 196.00, A3: 220.00,
+  F3: 174.61, F4: 349.23, F5: 698.46
 };
 
 // 各场景 BGM 配置
@@ -113,6 +116,20 @@ const BGM_TRACKS = {
   cityManage: {     // 城市管理：D商调，60BPM，古琴+竹笛，宁静雅致
     bpm: 60, scale: ['D3', 'E3', 'G3', 'A3', 'C4', 'D4', 'E4', 'G4', 'A4'],
     wave: 'sine', bassWave: 'sine', stepMs: 800, hasDrum: false, density: 0.45
+  },
+
+  // ============================================================
+  // V14.0「霸业宏图」新增 2 首 BGM
+  // ============================================================
+  duel: {   // 单挑场景：G羽调，120BPM，战鼓+号角式锯齿波+不协和紧张感
+    // 羽调式音阶（羽=G）：G A C D E G A C D，强调四/五度与小二度不协和张力
+    bpm: 120, scale: ['G3', 'A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5'],
+    wave: 'sawtooth', bassWave: 'square', stepMs: 280, hasDrum: true, density: 0.95
+  },
+  domestic: { // 内政管理：F宫调，66BPM，古琴+笙+磬，宁静雅致
+    // 宫调式音阶（宫=F）：F G A C D F G A C
+    bpm: 66, scale: ['F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5'],
+    wave: 'sine', bassWave: 'sine', stepMs: 760, hasDrum: false, density: 0.45
   }
 };
 
@@ -135,12 +152,16 @@ export const BGM_INFO = {
   harem:       { name: '后庭花影',   desc: '后宫·琵琶柔美' },
   // V13.0 新增
   scenarioSelect: { name: '宏图待展', desc: '剧本选择·古筝箫声' },
-  cityManage:     { name: '安居乐业', desc: '城市管理·古琴竹笛' }
+  cityManage:     { name: '安居乐业', desc: '城市管理·古琴竹笛' },
+  // V14.0 新增
+  duel:           { name: '龙争虎斗', desc: '武将单挑·鼓角不协和' },
+  domestic:       { name: '垂拱四方', desc: '内政管理·古琴笙磬' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
+// V14.0：单挑/内政两首新 BGM 默认解锁（随新系统开放即可用）
 const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'ending',
-  'navy', 'diplomacy', 'victory', 'defeat'];
+  'navy', 'diplomacy', 'victory', 'defeat', 'duel', 'domestic'];
 
 export class AudioManager {
   constructor() {
@@ -150,12 +171,17 @@ export class AudioManager {
     this.sfxGain = null;      // 音效总线
     this.ambientGain = null;  // V8.1 环境音总线
     this.skillGain = null;    // V13.0 技能音效独立总线
+    // V14.0：单挑/内政音效独立总线
+    this.duelGain = null;     // 单挑音效总线（连入 sfxGain）
+    this.domesticGain = null; // 内政音效总线（连入 sfxGain）
     this._ambientSidechain = null; // V13.0 环境音侧链压缩器
     this.muted = false;
     this.masterVolume = 0.8;
     this.bgmVolume = 0.6;
     this.sfxVolume = 0.8;
     this.ambientVolume = 0.5; // V8.1 环境音默认音量
+    this.duelVolume = 0.9;     // V14.0 单挑总线默认音量
+    this.domesticVolume = 0.8; // V14.0 内政总线默认音量
     this._bgmTimer = null;
     this._bgmStep = 0;
     this._bgmOn = false;
@@ -189,6 +215,11 @@ export class AudioManager {
     // 多组 osc/gain 节点叠加导致的音量爆音与 GC 压力。
     this._sfxLastPlay = new Map();   // name -> 上次播放时间戳(ms)
     this._sfxCooldown = 100;         // 默认 0.1s 内不重复
+
+    // ---- V14.0 混音优化 ----
+    this._prevSceneBGM = null;        // 单挑 BGM 自动切换前的场景，结束后恢复
+    this._sfxWindow = [];             // 近期 SFX 触发时间戳滑动窗（并发 ducking 用）
+    this._noiseBufCache = null;      // 噪声 buffer 复用缓存（性能优化：避免每次新建 AudioBuffer）
   }
 
   // V10.5：音效重叠保护闸门。
@@ -229,6 +260,15 @@ export class AudioManager {
         this.skillGain = this.ctx.createGain();
         this.skillGain.gain.value = this.sfxVolume * 0.9;
         this.skillGain.connect(this.sfxGain);
+        // V14.0：单挑音效独立总线（duelGain）——连入 sfxGain，
+        // 便于单挑剧情/特写时单独推高或压低音量而不影响普通音效。
+        this.duelGain = this.ctx.createGain();
+        this.duelGain.gain.value = this.duelVolume;
+        this.duelGain.connect(this.sfxGain);
+        // V14.0：内政音效独立总线（domesticGain）——建造/税收/徭役/丰收等
+        this.domesticGain = this.ctx.createGain();
+        this.domesticGain.gain.value = this.domesticVolume;
+        this.domesticGain.connect(this.sfxGain);
         // V13.0：环境音与 BGM 侧链压缩优化
         // 当 BGM 播放时，通过侧链压缩器轻微压低环境音，避免两者互相掩蔽。
         if (this.ctx.createDynamicsCompressor) {
@@ -280,7 +320,12 @@ export class AudioManager {
       g.connect(sp);
       outNode = sp;
     }
-    const dest = bus === 'bgm' ? this.bgmGain : (bus === 'sfx' ? this.sfxGain : (bus === 'skill' ? this.skillGain : this.master));
+    // bus: 'master' | 'bgm' | 'sfx' | 'skill' | 'duel' | 'domestic'（V14.0 新增后两者）
+    const dest = bus === 'bgm' ? this.bgmGain
+      : (bus === 'sfx' ? this.sfxGain
+        : (bus === 'skill' ? this.skillGain
+          : (bus === 'duel' ? this.duelGain
+            : (bus === 'domestic' ? this.domesticGain : this.master))));
     outNode.connect(dest);
     osc.start(t0);
     osc.stop(t0 + dur + 0.05);
@@ -314,7 +359,12 @@ export class AudioManager {
     g.gain.setValueAtTime(vol, t0);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
     osc.connect(g);
-    const out = bus === 'bgm' ? this.bgmGain : (bus === 'sfx' ? this.sfxGain : (bus === 'skill' ? this.skillGain : this.master));
+    // V14.0：总线扩展 duel/domestic（连入 sfxGain 的子总线）
+    const out = bus === 'bgm' ? this.bgmGain
+      : (bus === 'sfx' ? this.sfxGain
+        : (bus === 'skill' ? this.skillGain
+          : (bus === 'duel' ? this.duelGain
+            : (bus === 'domestic' ? this.domesticGain : this.master))));
     g.connect(out);
     osc.start(t0); osc.stop(t0 + 0.3);
   }
@@ -323,13 +373,96 @@ export class AudioManager {
   // V8.1 基础合成工具：噪声 buffer / 侧链 ducking / 环境音总线
   // ============================================================
   // 生成一段白噪声 AudioBuffer（秒）。无 ctx 时返回 null。
+  // 性能优化#5（内存/GC）：
+  //   优化前：每次 noise burst 都按需求秒数新建一个 AudioBuffer（如 0.15s ≈
+  //   0.15*48000*4 ≈ 28KB），连续战斗/内政音效下每秒数十次分配，GC 压力明显。
+  //   优化后：进程内缓存一个 2s 立体声兼容的单声道噪声 buffer（≈384KB，仅一份），
+  //   所有短于 2s 的噪声 burst 复用它（播放时只 stop 在目标时长）。
+  //   预期：高频音效场景下临时分配对象数下降 90%+，主线程卡顿减少。
   _noiseBuffer(seconds = 1) {
     if (!this.ctx) return null;
+    // 复用缓存：2s 足够覆盖现有所有短时噪声 burst（最长 1s）
+    if (!this._noiseBufCache) {
+      const len = Math.floor(this.ctx.sampleRate * 2);
+      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+      this._noiseBufCache = buf;
+    }
+    if (seconds <= 2) return this._noiseBufCache;
+    // 超过 2s 的超长噪声（如未来新增环境音）按需现建
     const len = Math.floor(this.ctx.sampleRate * seconds);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = buf.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
     return buf;
+  }
+
+  // ============================================================
+  // V14.0 通用噪声 burst 工具：带通/高通/低通滤波 + ADSR 包络，
+  // 供单挑/内政音效复用（锤击/木屑/金属共振/麦穗沙沙等）。
+  // bus: 'duel' | 'domestic' | 'sfx'；sweepTo 可选频率扫频终点。
+  // ============================================================
+  _noiseBurst({ dur = 0.15, freq = 1000, q = 1, type = 'bandpass', vol = 0.2,
+                offset = 0, bus = 'sfx', sweepTo = null, pan = 0 } = {}) {
+    if (!this.ctx || this.muted) return null;
+    const t0 = this.ctx.currentTime + offset;
+    const len = Math.ceil(this.ctx.sampleRate * Math.max(dur, 0.05));
+    const nb = this._noiseBuffer(Math.max(dur, 0.05));
+    const nsrc = this.ctx.createBufferSource();
+    nsrc.buffer = nb;
+    nsrc.loop = false;
+    const nf = this.ctx.createBiquadFilter();
+    nf.type = type;
+    nf.frequency.setValueAtTime(freq, t0);
+    if (sweepTo) nf.frequency.exponentialRampToValueAtTime(Math.max(40, sweepTo), t0 + dur);
+    nf.Q.value = q;
+    const ng = this.ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t0);
+    ng.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    nsrc.connect(nf); nf.connect(ng);
+    // 立体声定位
+    let outNode = ng;
+    if (pan !== 0 && this.ctx.createStereoPanner) {
+      const sp = this.ctx.createStereoPanner();
+      sp.pan.value = Math.max(-1, Math.min(1, pan));
+      ng.connect(sp); outNode = sp;
+    }
+    const dest = bus === 'duel' ? this.duelGain
+      : (bus === 'domestic' ? this.domesticGain
+        : (bus === 'skill' ? this.skillGain : this.sfxGain));
+    outNode.connect(dest);
+    nsrc.start(t0); nsrc.stop(t0 + dur + 0.02);
+    return { src: nsrc, gain: ng };
+  }
+
+  // ============================================================
+  // V14.0 SFX 并发 ducking 优化：
+  //   多个 SFX 在 200ms 窗口内同时触发时，自动把 sfxGain 临时压到 60%，
+  //   避免音效叠加爆音；250ms 无新触发后恢复。duelGain/domesticGain 挂在
+  //   sfxGain 下游，因此会一并被合理压低（"非关键音效"）。
+  // 调用时机：新音效播放前调用 this._sfxDuck()。
+  // ============================================================
+  _sfxDuck() {
+    if (!this.ctx || !this.sfxGain) return;
+    const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+    this._sfxWindow.push(now);
+    // 修剪 200ms 窗口外的旧时间戳
+    while (this._sfxWindow.length && now - this._sfxWindow[0] > 200) this._sfxWindow.shift();
+    // 窗口内 ≥3 个并发触发 → 压低非关键音效总线
+    if (this._sfxWindow.length >= 3) {
+      const t0 = this.ctx.currentTime;
+      const normal = this.sfxVolume;
+      const ducked = normal * 0.6;
+      try {
+        this.sfxGain.gain.cancelScheduledValues(t0);
+        this.sfxGain.gain.setValueAtTime(this.sfxGain.gain.value, t0);
+        this.sfxGain.gain.linearRampToValueAtTime(ducked, t0 + 0.03);
+        this.sfxGain.gain.setValueAtTime(ducked, t0 + 0.25);
+        this.sfxGain.gain.linearRampToValueAtTime(normal, t0 + 0.25 + 0.15);
+      } catch (e) { /* 调度冲突忽略 */ }
+    }
   }
 
   // 启动一个噪声源（可循环），返回 {src, gain, filter} 节点句柄，供环境音持有
@@ -346,7 +479,12 @@ export class AudioManager {
     const g = this.ctx.createGain();
     g.gain.value = vol;
     src.connect(filter); filter.connect(g);
-    const out = bus === 'bgm' ? this.bgmGain : (bus === 'sfx' ? this.sfxGain : this.ambientGain);
+    // V14.0：总线扩展 duel/domestic
+    const out = bus === 'bgm' ? this.bgmGain
+      : (bus === 'sfx' ? this.sfxGain
+        : (bus === 'skill' ? this.skillGain
+          : (bus === 'duel' ? this.duelGain
+            : (bus === 'domestic' ? this.domesticGain : this.ambientGain))));
     g.connect(out);
     src.start();
     return { src, gain: g, filter };
@@ -857,6 +995,288 @@ export class AudioManager {
       delay.connect(wet); wet.connect(this.sfxGain);
       nsrc.start(t0); nsrc.stop(t0 + 0.15);
     }
+  }
+
+  // ============================================================
+  // V14.0「霸业宏图」新增音效（17 种，全部 Web Audio 程序化合成）
+  //   6 单挑 + 4 养成 + 5 内政 + 2 进阶；走 duel/domestic/sfx 独立总线。
+  //   技术参考：噪声 burst（_noiseBurst）+ 振荡器 ADSR 包络 + 低/高频滤波。
+  // ============================================================
+
+  // ---------- 一、武将单挑音效（走 duel 总线） ----------
+  // 1. 单挑对峙：低沉战鼓 ×2 + 双方威压低频嗡鸣（55Hz 长音）+ 不协和弦乐
+  //    （小二度 220/233Hz 叠加，制造紧张感）
+  playDuelStandoff() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    this.drum(0.5, 0, 70, 'duel');
+    this.drum(0.45, 0.5, 65, 'duel');
+    // 威压低频嗡鸣
+    this.tone(55, 1.6, 'sine', 0.16, 0.1, null, 'duel');
+    this.tone(58, 1.6, 'sine', 0.12, 0.15, null, 'duel');
+    // 紧张感弦乐：小二度不协和（A3 + A#3）
+    this.tone(220.00, 1.4, 'sawtooth', 0.08, 0.3, null, 'duel');
+    this.tone(233.08, 1.4, 'sawtooth', 0.08, 0.32, null, 'duel');
+  }
+
+  // 2. 单挑突进：马蹄急停（低频短鼓）+ 武器破空（带通噪声扫频）+ 战吼（多音失谐）
+  playDuelCharge() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 马蹄急停：两声短促低频鼓
+    this.drum(0.5, 0, 90, 'duel');
+    this.drum(0.4, 0.08, 80, 'duel');
+    // 武器破空：2.5kHz → 600Hz 扫频噪声
+    this._noiseBurst({ dur: 0.25, freq: 2500, q: 3, type: 'bandpass', vol: 0.18,
+      offset: 0.1, bus: 'duel', sweepTo: 600 });
+    // 战吼：200~320Hz 失谐锯齿波上滑
+    [196, 233, 262, 311].forEach((f, i) =>
+      this.tone(f, 0.35, 'sawtooth', 0.1, 0.28 + i * 0.03, f * 1.2, 'duel', (i - 1.5) * 0.15));
+  }
+
+  // 3. 单挑重击：低频轰鸣（50Hz 下滑）+ 金属碰撞巨响（高频噪声+方波）+ 震地闷响
+  playDuelHeavyHit() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 低频轰鸣
+    this.drum(0.7, 0, 60, 'duel');
+    this.tone(55, 0.5, 'sine', 0.28, 0, 30, 'duel');
+    // 金属碰撞巨响：高频噪声 burst + 2kHz 方波
+    this._noiseBurst({ dur: 0.18, freq: 3500, q: 1.5, type: 'highpass', vol: 0.22, bus: 'duel' });
+    this.tone(2000, 0.12, 'square', 0.14, 0, null, 'duel');
+    // 震地闷响
+    this.drum(0.5, 0.15, 45, 'duel');
+  }
+
+  // 4. 单挑格挡：金属尖锐碰撞（4kHz 短促正弦）+ 盾牌共振（1.2kHz 衰减）+ 防御者闷哼
+  playDuelParry() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 金属尖锐碰撞
+    this.tone(4200, 0.06, 'square', 0.18, 0, null, 'duel');
+    this.tone(3100, 0.08, 'sine', 0.12, 0.01, null, 'duel');
+    // 盾牌共振：1.2kHz 带尾衰减
+    this.tone(1200, 0.25, 'triangle', 0.14, 0.02, 800, 'duel');
+    // 防御者闷哼：200Hz 短促下滑
+    this.tone(200, 0.2, 'sawtooth', 0.1, 0.08, 140, 'duel');
+  }
+
+  // 5. 单挑受击：肉体撞击（低频钝响）+ 武将闷哼 + 血量下降音（下行半音）
+  playDuelHit() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 肉体撞击：低频钝响
+    this.drum(0.55, 0, 110, 'duel');
+    this.tone(110, 0.2, 'sine', 0.2, 0, 70, 'duel');
+    // 武将闷哼：260→180Hz 下滑
+    this.tone(260, 0.3, 'sawtooth', 0.12, 0.05, 180, 'duel');
+    // 血量下降：两个下行半音
+    this.tone(440, 0.12, 'square', 0.1, 0.15, null, 'duel');
+    this.tone(415.3, 0.2, 'square', 0.1, 0.25, null, 'duel');
+  }
+
+  // 6a. 单挑胜利：号角长鸣 + 欢呼声 + 金色上行琶音
+  playDuelVictory() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 号角长鸣
+    this.horn(220.00, 0.9, 0.22, 0, null, -0.1);
+    this.horn(329.63, 0.9, 0.2, 0.15, null, 0.1);
+    // 欢呼声：中频失谐叠加
+    [220, 262, 330, 392].forEach((f, i) =>
+      this.tone(f, 0.6, 'sawtooth', 0.07, 0.35 + i * 0.04, f * 1.15, 'duel', (i - 1.5) * 0.18));
+    // 金色上行琶音
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) =>
+      this.tone(f, 0.35, 'triangle', 0.2, 0.6 + i * 0.1, null, 'duel'));
+    this.drum(0.4, 0.6, 80, 'duel');
+  }
+
+  // 6b. 单挑失败：低沉号角 + 叹息声 + 下行音阶
+  playDuelDefeat() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM();
+    // 低沉号角
+    this.tone(130.81, 1.0, 'sawtooth', 0.18, 0, null, 'duel');
+    this.tone(98.00, 1.0, 'sawtooth', 0.14, 0.1, null, 'duel');
+    // 叹息声：400→250Hz 缓慢下滑
+    this.tone(400, 0.8, 'sine', 0.1, 0.3, 250, 'duel');
+    // 下行音阶
+    [392, 329.63, 261.63, 196].forEach((f, i) =>
+      this.tone(f, 0.4, 'sine', 0.16, 0.5 + i * 0.15, null, 'duel'));
+  }
+
+  // ---------- 二、武将养成音效（走 sfx 总线） ----------
+  // 7. 武将升级：升级光柱（上行音阶 + 金光高频上滑）+ 属性提升叮声×4
+  playGeneralUpgrade() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 上行音阶 C-D-E-G-C
+    [261.63, 293.66, 329.63, 392.00, 523.25].forEach((f, i) =>
+      this.tone(f, 0.25, 'triangle', 0.2, i * 0.09, null, 'sfx'));
+    // 金光高频上滑
+    this.tone(1200, 0.5, 'sine', 0.1, 0.1, 2400, 'sfx');
+    // 属性提升叮声×4（每 0.12s 一声高频）
+    for (let i = 0; i < 4; i++) this.bell(1567.98, 0.4, 0.12, 0.55 + i * 0.12);
+  }
+
+  // 8. 技能解锁：神秘和弦（小二度叠加）+ 光点汇聚（高频光点）+ 解锁叮声
+  playSkillUnlock() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 神秘和弦：E-G-A# 不协和叠加
+    [329.63, 392.00, 466.16].forEach((f, i) =>
+      this.tone(f, 1.0, 'sine', 0.12, i * 0.08, null, 'sfx'));
+    // 光点汇聚：三个高频光点缓慢上行
+    [1567.98, 1760.00, 2093.00].forEach((f, i) =>
+      this.tone(f, 0.4, 'sine', 0.08, 0.4 + i * 0.12, null, 'sfx'));
+    // 解锁叮声
+    this.bell(2637.00, 0.8, 0.16, 0.9);
+  }
+
+  // 9. 装备穿戴：金属轻响 + 属性加成提示音；音高随品质递增（白/绿/蓝/紫/橙）
+  //    rarity: 'common'|'fine'|'rare'|'epic'|'legendary'
+  playEquipWear(rarity = 'common') {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 品质 → 基频映射（白 660 → 橙 1320，逐级递增）
+    const BASE = { common: 660, fine: 784, rare: 988, epic: 1175, legendary: 1319 };
+    const f = BASE[rarity] || 660;
+    // 金属轻响：两声短促方波
+    this.tone(f, 0.08, 'square', 0.14, 0, null, 'sfx');
+    this.tone(f * 1.5, 0.1, 'triangle', 0.12, 0.08, null, 'sfx');
+    // 属性加成提示音：高频叮
+    this.bell(f * 3, 0.5, 0.1, 0.18);
+  }
+
+  // 10. 忠诚度变化：上升→温暖和弦（大三度）；下降→低沉警告音（小二度）
+  playLoyaltyChange(up = true) {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM();
+    if (up) {
+      // 温暖和弦：C-E-G 大三和弦
+      [261.63, 329.63, 392.00].forEach((f, i) =>
+        this.tone(f, 0.6, 'triangle', 0.18, i * 0.06, null, 'sfx'));
+    } else {
+      // 低沉警告：A + A# 小二度不协和
+      this.tone(220.00, 0.6, 'sawtooth', 0.16, 0, null, 'sfx');
+      this.tone(233.08, 0.6, 'sawtooth', 0.14, 0.05, null, 'sfx');
+      this.tone(110.00, 0.7, 'sine', 0.12, 0.1, null, 'sfx');
+    }
+  }
+
+  // ---------- 三、内政音效（走 domestic 总线） ----------
+  // 11. 城市发展：锤子敲击（低频鼓）+ 木材噪声 + 完成叮声
+  playCityDevelop() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 锤子敲击 ×3
+    this.drum(0.45, 0, 150, 'domestic');
+    this.drum(0.4, 0.18, 150, 'domestic');
+    this.drum(0.45, 0.36, 150, 'domestic');
+    // 木材噪声：800Hz 带通
+    this._noiseBurst({ dur: 0.2, freq: 800, q: 2, type: 'bandpass', vol: 0.12,
+      offset: 0.1, bus: 'domestic' });
+    // 完成叮声
+    this.bell(1567.98, 0.6, 0.14, 0.5);
+  }
+
+  // 12. 建筑升级：石材碰撞（低频沉闷）+ 工匠号子（人声音高）+ 完成钟声
+  playBuildingUpgrade() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 石材碰撞：两声低频沉闷鼓
+    this.drum(0.5, 0, 100, 'domestic');
+    this.drum(0.45, 0.25, 90, 'domestic');
+    // 工匠号子：300/450Hz 上滑人声感
+    this.tone(300, 0.3, 'sawtooth', 0.1, 0.35, 450, 'domestic');
+    this.tone(320, 0.3, 'sawtooth', 0.08, 0.6, 480, 'domestic');
+    // 完成钟声
+    this.bell(1046.5, 1.0, 0.18, 0.9);
+  }
+
+  // 13. 税收征收：金币连续碰撞（高频正弦连发）+ 算盘声（中频快速哒哒）
+  playTaxCollect() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 金币连续碰撞：5 枚 1.8/2.4kHz 错峰
+    for (let i = 0; i < 5; i++) {
+      this.tone(1800, 0.08, 'sine', 0.14, i * 0.07, null, 'domestic');
+      this.tone(2400, 0.06, 'sine', 0.1, i * 0.07 + 0.03, null, 'domestic');
+    }
+    // 算盘声：800Hz 短促方波 ×4
+    for (let i = 0; i < 4; i++) this.tone(800, 0.04, 'square', 0.08, 0.45 + i * 0.06, null, 'domestic');
+  }
+
+  // 14. 徭役征发：人群嘈杂（宽频噪声）+ 劳动号子 + 监工喊声
+  playCorveeLevy() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 人群嘈杂：500Hz 宽带噪声
+    this._noiseBurst({ dur: 0.8, freq: 500, q: 0.5, type: 'bandpass', vol: 0.12, bus: 'domestic' });
+    // 劳动号子：200/240Hz 交替
+    [200, 240, 200, 240].forEach((f, i) =>
+      this.tone(f, 0.25, 'sawtooth', 0.1, 0.1 + i * 0.25, null, 'domestic'));
+    // 监工喊声：高亢 600→800Hz 上滑
+    this.tone(600, 0.3, 'sawtooth', 0.12, 1.1, 800, 'domestic');
+  }
+
+  // 15. 农业丰收：欢快民乐（五声音阶短旋律）+ 麦穗沙沙（高频细噪）
+  playHarvest() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 欢快民乐：G-A-C-D-E 短旋律
+    [392, 440, 523.25, 587.33, 659.25].forEach((f, i) =>
+      this.tone(f, 0.22, 'triangle', 0.16, i * 0.12, null, 'domestic'));
+    // 麦穗沙沙：6kHz 细噪声扫频
+    this._noiseBurst({ dur: 0.6, freq: 6000, q: 2, type: 'highpass', vol: 0.06,
+      offset: 0.2, bus: 'domestic', sweepTo: 3000 });
+  }
+
+  // ---------- 四、兵种进阶音效（走 sfx 总线） ----------
+  // 16. 进阶仪式：号角 + 战鼓 + 士兵呐喊 + 金属共鸣收尾
+  playUnitAdvance() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 号角
+    this.horn(196.00, 0.6, 0.2, 0, null, 0);
+    this.horn(293.66, 0.6, 0.18, 0.2, null, 0);
+    // 战鼓
+    [0, 0.2, 0.4, 0.6].forEach(t => this.drum(0.4, t, 80, 'sfx'));
+    // 士兵呐喊
+    [220, 262, 330].forEach((f, i) =>
+      this.tone(f, 0.4, 'sawtooth', 0.08, 0.5 + i * 0.05, null, 'sfx', (i - 1) * 0.15));
+    // 金属共鸣收尾
+    this.tone(1567.98, 0.8, 'sine', 0.14, 1.0, null, 'sfx');
+    this.tone(2093.00, 0.6, 'sine', 0.08, 1.05, null, 'sfx');
+  }
+
+  // 17. 精锐兵种攻击：比普通攻击更厚重（低频增强 + 金属声更亮）
+  playEliteStrike() {
+    this.resume(); if (!this.ctx) return;
+    this._duckBGM(); this._sfxDuck();
+    // 低频增强：比普通攻击更深沉
+    this.drum(0.65, 0, 55, 'sfx');
+    this.tone(50, 0.3, 'sine', 0.22, 0, 30, 'sfx');
+    // 金属声更亮：4kHz 尖锐碰撞
+    this.tone(4000, 0.1, 'square', 0.18, 0.02, null, 'sfx');
+    this._noiseBurst({ dur: 0.12, freq: 3000, q: 1.5, type: 'highpass', vol: 0.18, offset: 0.02, bus: 'sfx' });
+    // 重击余韵
+    this.drum(0.45, 0.12, 45, 'sfx');
+  }
+
+  // ============================================================
+  // V14.0：单挑 BGM 自动切换（开始 → 单挑 BGM；结束 → 恢复原场景 BGM）
+  // 设计参考：剧情特写音乐切换——进入单挑时记住 _prevSceneBGM，
+  //   结束后调用 endDuelBGM() 恢复，避免玩家音乐上下文丢失。
+  // ============================================================
+  startDuelBGM() {
+    this._prevSceneBGM = this._currentTrack;
+    this.switchBGM('duel');
+  }
+  endDuelBGM() {
+    const restore = this._prevSceneBGM || 'map';
+    this._prevSceneBGM = null;
+    this.switchBGM(restore);
   }
 
   // ============================================================
@@ -1499,7 +1919,13 @@ export class AudioManager {
       'skillCast', 'comboSkill', 'shieldWall', 'arrowRain',
       'cavalryChargeGrand', 'siegeAttack',
       // V13.0 新增 UI 音效
-      'tabSwitch', 'generalLevelUp', 'techResearchComplete', 'achievementUnlock'
+      'tabSwitch', 'generalLevelUp', 'techResearchComplete', 'achievementUnlock',
+      // V14.0 新增：单挑（6）/养成（4）/内政（5）/进阶（2）
+      'duelStandoff', 'duelCharge', 'duelHeavyHit', 'duelParry', 'duelHit',
+      'duelVictory', 'duelDefeat',
+      'generalUpgrade', 'skillUnlock', 'equipWear', 'loyaltyChange',
+      'cityDevelop', 'buildingUpgrade', 'taxCollect', 'corveeLevy', 'harvest',
+      'unitAdvance', 'eliteStrike'
     ];
   }
 
@@ -1553,6 +1979,20 @@ export class AudioManager {
   setSkillVolume(v) {
     if (this.skillGain && this.ctx) {
       this.skillGain.gain.setValueAtTime(Math.max(0, Math.min(1, v)) * 0.9, this.ctx.currentTime);
+    }
+  }
+  // V14.0：单挑音效总线音量
+  setDuelVolume(v) {
+    this.duelVolume = Math.max(0, Math.min(1, v));
+    if (this.duelGain && this.ctx) {
+      this.duelGain.gain.setValueAtTime(this.duelVolume, this.ctx.currentTime);
+    }
+  }
+  // V14.0：内政音效总线音量
+  setDomesticVolume(v) {
+    this.domesticVolume = Math.max(0, Math.min(1, v));
+    if (this.domesticGain && this.ctx) {
+      this.domesticGain.gain.setValueAtTime(this.domesticVolume, this.ctx.currentTime);
     }
   }
   // 兼容旧接口

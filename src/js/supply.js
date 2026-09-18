@@ -67,3 +67,92 @@ export function supplyBattleBag(status) {
   if (!status || status.cut) return { allUnitMult: SUPPLY_CUTOFF_POWER_PENALTY };
   return {};
 }
+
+// ============================================================
+// V14.0「霸业宏图」：补给系统优化 API
+//  - 补给线：军队远离城池时补给效率下降
+//  - 补给类型：粮食(维持兵力)/草料(维持骑兵)/箭矢(维持弓兵)
+//  - 补给不足：士气下降、兵力损耗、战斗力下降
+// ============================================================
+
+/**
+ * 获取补给线信息
+ * @param {object} army - 军队对象
+ * @param {object} city - 己方基地城市
+ * @returns {object} { connected, distance, line: [cityId...], efficiency }
+ */
+export function getSupplyLine(army, city) {
+  if (!army || !city) return { connected: false, distance: -1, line: [], efficiency: 0 };
+  // 同城：补给线畅通
+  if (army.cityId === city.id) {
+    return { connected: true, distance: 0, line: [city.id], efficiency: 1.0 };
+  }
+  // BFS 沿 CITY_LINKS 搜索路径
+  const dist = { [army.cityId]: 0 };
+  const prev = {};
+  const queue = [army.cityId];
+  while (queue.length) {
+    const cur = queue.shift();
+    const d = dist[cur];
+    if (cur === city.id) {
+      // 回溯路径
+      const line = [];
+      let node = city.id;
+      while (node != null) { line.unshift(node); node = prev[node]; }
+      const eff = d > SUPPLY_LONG_RANGE ? 0.6 : (1 - d * 0.08);
+      return { connected: true, distance: d, line, efficiency: Math.max(0.3, eff) };
+    }
+    for (const nid of (CITY_LINKS[cur] || [])) {
+      if (dist[nid] !== undefined) continue;
+      dist[nid] = d + 1;
+      prev[nid] = cur;
+      queue.push(nid);
+    }
+  }
+  return { connected: false, distance: -1, line: [], efficiency: 0.4 };
+}
+
+/**
+ * 计算军队补给效率（综合兵力消耗、补给类型）
+ * @param {object} army - 军队对象（含 unitMix）
+ * @returns {object} { efficiency, foodNeed, fodderNeed, arrowNeed, moralePenalty, attrition }
+ */
+export function calculateSupplyEfficiency(army) {
+  const mix = army.unitMix || { infantry: 0, cavalry: 0, archer: 0 };
+  const total = (mix.infantry || 0) + (mix.cavalry || 0) + (mix.archer || 0) || 1;
+  // 各类补给需求
+  const foodNeed = Math.round(total * 0.5);          // 粮食：维持全体兵力
+  const fodderNeed = Math.round((mix.cavalry || 0) * 0.8); // 草料：骑兵
+  const arrowNeed = Math.round((mix.archer || 0) * 0.6);  // 箭矢：弓兵
+  // 补给效率基准 1.0，无补给则折减
+  const baseEff = army.supplyEfficiency || 1.0;
+  return {
+    efficiency: baseEff,
+    foodNeed,
+    fodderNeed,
+    arrowNeed,
+    moralePenalty: baseEff < 0.7 ? 5 : (baseEff < 1.0 ? 2 : 0),
+    attrition: baseEff < 0.7 ? Math.round(total * 0.03) : 0
+  };
+}
+
+/**
+ * 从城市向军队补给
+ * @param {object} army - 军队对象
+ * @param {object} city - 己方基地城市（含 food 等资源）
+ * @returns {object} { ok, msg, amount }
+ */
+export function resupplyArmy(army, city) {
+  if (!army || !city) return { ok: false, msg: '参数缺失' };
+  if (army.cityId !== city.id) {
+    return { ok: false, msg: '军队须在补给城市中方可补给' };
+  }
+  const need = calculateSupplyEfficiency(army);
+  // 扣减城市粮草（city.food 由 game 层维护，这里估算）
+  const available = city.food || 0;
+  const take = Math.min(available, Math.round(need.foodNeed * 1.5));
+  if (city.food != null) city.food -= take;
+  army.supplyEfficiency = 1.0;
+  army.morale = Math.min(100, (army.morale || 50) + 5);
+  return { ok: true, msg: `已补给军队 ${take} 粮草`, amount: take };
+}

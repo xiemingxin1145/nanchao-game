@@ -192,6 +192,141 @@ export const EQUIPMENT_ITEMS = {
     id: 'lie_ma', name: '劣马', slot: 'mount', rarity: 'common',
     stats: {},
     description: '驽马一匹，聊胜于无。'
+  },
+
+  // ============================================================
+  // V14.0「霸业宏图」新增装备（v14_ 前缀）
+  // 覆盖四槽位 × 五品质，新增暴击率/闪避率/速度等属性
+  // ============================================================
+
+  // ===== 传说（橙）=====
+  v14_zhuge_lian: {
+    id: 'v14_zhuge_lian', name: '诸葛连弩', slot: 'weapon', rarity: 'legendary',
+    stats: { force: 10, archerMult: 0.20, critRate: 0.10 },
+    description: '连发弩机，武力+10，弓兵+20%，暴击率+10%。'
+  },
+  v14_heihu_kai: {
+    id: 'v14_heihu_kai', name: '黑犀铠', slot: 'armor', rarity: 'legendary',
+    stats: { defenseMult: 0.18, dodge: 0.10, troopMax: 400 },
+    description: '黑犀重甲，防御+18%，闪避+10%，带兵+400。'
+  },
+  v14_qianli_ju: {
+    id: 'v14_qianli_ju', name: '千里驹', slot: 'mount', rarity: 'legendary',
+    stats: { moveSpeed: 3, speed: 15, cavalryMult: 0.12 },
+    description: '日行千里，移动+3，速度+15，骑兵+12%。'
+  },
+  v14_taisheng_bingfa: {
+    id: 'v14_taisheng_bingfa', name: '太公兵法', slot: 'treasure', rarity: 'legendary',
+    stats: { intel: 18, command: 10, politics: 8 },
+    description: '六韬三略，智力+18，统帅+10，政治+8。'
+  },
+
+  // ===== 史诗（紫）=====
+  v14_bawang_qiang: {
+    id: 'v14_bawang_qiang', name: '霸王枪', slot: 'weapon', rarity: 'epic',
+    stats: { force: 12, critRate: 0.08 },
+    description: '霸王遗枪，武力+12，暴击率+8%。'
+  },
+  v14_qilin_jia: {
+    id: 'v14_qilin_jia', name: '麒麟铠', slot: 'armor', rarity: 'epic',
+    stats: { defenseMult: 0.14, force: 5 },
+    description: '麟片如鳞，防御+14%，武力+5。'
+  },
+  v14_yeyan_ma: {
+    id: 'v14_yeyan_ma', name: '夜燕马', slot: 'mount', rarity: 'epic',
+    stats: { moveSpeed: 2, dodge: 0.08 },
+    description: '夜行如燕，移动+2，闪避+8%。'
+  },
+  v14_sima_fa: {
+    id: 'v14_sima_fa', name: '司马法', slot: 'treasure', rarity: 'epic',
+    stats: { command: 12, intel: 8 },
+    description: '古司马兵法，统帅+12，智力+8。'
+  },
+  v14_ju_que: {
+    id: 'v14_ju_que', name: '巨阙剑', slot: 'weapon', rarity: 'epic',
+    stats: { force: 9, attackMult: 0.08 },
+    description: '巨阙断金，武力+9，攻击+8%。'
+  },
+
+  // ===== 稀有（蓝）=====
+  v14_qingfeng_jian: {
+    id: 'v14_qingfeng_jian', name: '青锋剑', slot: 'weapon', rarity: 'rare',
+    stats: { force: 7, critRate: 0.05 },
+    description: '青锋如电，武力+7，暴击率+5%。'
+  },
+  v14_lianye_jia: {
+    id: 'v14_lianye_jia', name: '炼铁甲', slot: 'armor', rarity: 'rare',
+    stats: { defenseMult: 0.09, troopMax: 200 },
+    description: '百炼精铁，防御+9%，带兵+200。'
+  },
+  v14_feihuang_ma: {
+    id: 'v14_feihuang_ma', name: '飞黄马', slot: 'mount', rarity: 'rare',
+    stats: { moveSpeed: 1, speed: 8 },
+    description: '飞黄腾踏，移动+1，速度+8。'
+  },
+  v14_zhanguo_ce: {
+    id: 'v14_zhanguo_ce', name: '战国策', slot: 'treasure', rarity: 'rare',
+    stats: { politics: 10, intel: 5 },
+    description: '纵横捭阖，政治+10，智力+5。'
+  },
+  v14_dunjia: {
+    id: 'v14_dunjia', name: '铁甲盾', slot: 'armor', rarity: 'rare',
+    stats: { defenseMult: 0.07, dodge: 0.05 },
+    description: '坚盾护身，防御+7%，闪避+5%。'
+  },
+  v14_gongnu: {
+    id: 'v14_gongnu', name: '神臂弓', slot: 'weapon', rarity: 'rare',
+    stats: { archerMult: 0.12, force: 4 },
+    description: '神臂弓劲，弓兵+12%，武力+4。'
+  },
+
+  // ===== 精良（绿）=====
+  v14_tiegun: {
+    id: 'v14_tiegun', name: '铁辊', slot: 'weapon', rarity: 'fine',
+    stats: { force: 4 },
+    description: '沉重铁辊，武力+4。'
+  },
+  v14_pijia_v: {
+    id: 'v14_pijia_v', name: '精制皮甲', slot: 'armor', rarity: 'fine',
+    stats: { defenseMult: 0.05 },
+    description: '鞣制精良，防御+5%。'
+  },
+  v14_zouma: {
+    id: 'v14_zouma', name: '走骡', slot: 'mount', rarity: 'fine',
+    stats: { moveSpeed: 0.5, speed: 4 },
+    description: '稳健走骡，移动+0.5，速度+4。'
+  },
+  v14_mulan: {
+    id: 'v14_mulan', name: '木兰卷', slot: 'treasure', rarity: 'fine',
+    stats: { intel: 4, politics: 3 },
+    description: '木兰辞卷，智力+4，政治+3。'
+  },
+  v14_yaodao: {
+    id: 'v14_yaodao', name: '腰刀', slot: 'weapon', rarity: 'fine',
+    stats: { force: 3, critRate: 0.03 },
+    description: '随身腰刀，武力+3，暴击率+3%。'
+  },
+
+  // ===== 普通（白）=====
+  v14_mudun: {
+    id: 'v14_mudun', name: '木盾', slot: 'armor', rarity: 'common',
+    stats: { defenseMult: 0.02 },
+    description: '简陋木盾，防御+2%。'
+  },
+  v14_tieji: {
+    id: 'v14_tieji', name: '铁蒺藜', slot: 'weapon', rarity: 'common',
+    stats: { force: 1 },
+    description: '铁制蒺藜，武力+1。'
+  },
+  v14_buma: {
+    id: 'v14_buma', name: '挽马', slot: 'mount', rarity: 'common',
+    stats: { speed: 2 },
+    description: '寻常挽马，速度+2。'
+  },
+  v14_bijian: {
+    id: 'v14_bijian', name: '竹简', slot: 'treasure', rarity: 'common',
+    stats: { intel: 2 },
+    description: '旧书竹简，智力+2。'
   }
 };
 
@@ -363,4 +498,58 @@ export function checkBonds(generalIds) {
     }
   }
   return { activated, bag };
+}
+
+// ============================================================
+// V14.0「霸业宏图」：装备系统增强 API
+// ============================================================
+
+/** 返回装备槽位定义列表 */
+export function getEquipmentSlots() {
+  return EQUIP_SLOTS.map(slot => ({
+    id: slot,
+    name: { weapon: '武器', armor: '护甲', mount: '坐骑', treasure: '宝物' }[slot] || slot
+  }));
+}
+
+/** 获取某武将某槽位已装备的物品对象（null = 空） */
+export function getEquipped(general, slot) {
+  if (!general || !general.equipment) return null;
+  const itemId = general.equipment[slot];
+  if (!itemId) return null;
+  return getItem(itemId);
+}
+
+/** 装备物品到武将身上（自动卸下该槽位原装备）。返回 { ok, msg } */
+export function equipItem(general, itemId) {
+  const item = getItem(itemId);
+  if (!item) return { ok: false, msg: '装备不存在' };
+  if (!general.equipment) general.equipment = { weapon: null, armor: null, mount: null, treasure: null };
+  // 同槽位已有则先卸下
+  const prev = general.equipment[item.slot];
+  general.equipment[item.slot] = itemId;
+  return { ok: true, msg: `${general.name} 装备【${item.name}】`, previous: prev };
+}
+
+/** 卸下某槽位装备。返回 { ok, msg, itemId } */
+export function unequipItem(general, slot) {
+  if (!general || !general.equipment || !general.equipment[slot]) {
+    return { ok: false, msg: '该槽位无装备' };
+  }
+  const itemId = general.equipment[slot];
+  general.equipment[slot] = null;
+  return { ok: true, msg: '已卸下', itemId };
+}
+
+/** 获取物品品质等级对象 { id, name, color } */
+export function getItemQuality(itemId) {
+  const item = getItem(itemId);
+  if (!item) return null;
+  return RARITIES[item.rarity] || null;
+}
+
+/** 获取物品属性加成袋 */
+export function getItemStats(itemId) {
+  const item = getItem(itemId);
+  return item ? { ...(item.stats || {}) } : null;
 }

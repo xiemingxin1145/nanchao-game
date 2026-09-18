@@ -3504,3 +3504,445 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
 /* 面板通用入场（从下方滑入+淡入+缩放） */
 .modal.v13-panel-in { animation: slideInPanel 0.4s cubic-bezier(0.16,1,0.3,1); }
 .modal.v13-panel-out { animation: slideOutPanel 0.28s ease-in forwards; }
+
+/* ============================================================
+   V14.0「霸业宏图」UI 精修
+   新配色体系：鎏金 / 朱砂 / 青玉 / 墨色 / 绢白 / 青铜 / 紫檀
+   约定：所有新增类名使用 v14- 前缀。
+   ============================================================ */
+
+/* ---- V14 设计变量 ---- */
+:root {
+  --v14-gilded:   #E8C060;   /* 鎏金 */
+  --v14-gold:     #FFD700;   /* 明金 */
+  --v14-cinnabar: #B03A2E;   /* 朱砂 */
+  --v14-jade:     #3AA69A;   /* 青玉 */
+  --v14-ink:      #16130F;    /* 墨色 */
+  --v14-silk:     #F2E8CF;   /* 绢白 */
+  --v14-bronze:   #8B7A4A;   /* 青铜 */
+  --v14-redsand:  #6B3A2A;   /* 紫檀 */
+  /* 装备品质色：白/绿/蓝/紫/橙 */
+  --v14-q-common:    #C8C8C8;
+  --v14-q-fine:       #4CAF50;
+  --v14-q-rare:       #3D7BFF;
+  --v14-q-epic:       #9C4DFF;
+  --v14-q-legendary:  #FF8C00;
+  --v14-panel-bg:    linear-gradient(180deg, #241d14 0%, #1a1510 100%);
+}
+
+/* ---- V14 新 keyframes ---- */
+/* 升级闪光 */
+@keyframes v14LevelUpFlash {
+  0%   { box-shadow: 0 0 0 0 rgba(255,215,0,0.9); }
+  60%  { box-shadow: 0 0 24px 8px rgba(255,215,0,0.6); }
+  100% { box-shadow: 0 0 0 0 rgba(255,215,0,0); }
+}
+/* 技能解锁光环 */
+@keyframes v14SkillUnlock {
+  0%   { box-shadow: 0 0 0 0 rgba(156,77,255,0.0); transform: scale(1); }
+  50%  { box-shadow: 0 0 18px 4px rgba(156,77,255,0.7); transform: scale(1.06); }
+  100% { box-shadow: 0 0 10px 1px rgba(156,77,255,0.3); transform: scale(1); }
+}
+/* 单挑攻击前冲 */
+@keyframes v14DuelAttack {
+  0%   { transform: translateX(0); }
+  40%  { transform: translateX(-26px); }
+  100% { transform: translateX(0); }
+}
+@keyframes v14DuelAttackR {
+  0%   { transform: translateX(0); }
+  40%  { transform: translateX(26px); }
+  100% { transform: translateX(0); }
+}
+/* 单挑受击红闪 */
+@keyframes v14DuelHit {
+  0%, 100% { filter: none; transform: translateX(0); }
+  20%      { filter: brightness(1.8) drop-shadow(0 0 8px #ff3020); transform: translateX(-5px); }
+  40%      { filter: brightness(1.2); transform: translateX(4px); }
+  60%      { filter: brightness(1.5); transform: translateX(-3px); }
+}
+/* 建造进度条流动 */
+@keyframes v14BuildingProgress {
+  0%   { background-position: 0 0; }
+  100% { background-position: 24px 0; }
+}
+/* 税率滑块拖动 */
+@keyframes v14TaxSlider {
+  0%   { transform: scale(1); }
+  50%  { transform: scale(1.08); }
+  100% { transform: scale(1); }
+}
+/* 经验条渐变填充 */
+@keyframes v14ExpBarFill {
+  from { width: 0; }
+}
+
+/* ---- 通用 V14 弹窗：古风装饰边框（四角花纹） ---- */
+.v14-modal-overlay, .v14-overlay { background: rgba(10, 8, 5, 0.78); }
+.v14-modal {
+  position: relative;
+  max-width: 720px; width: 92%;
+  max-height: 86vh;
+  overflow: hidden;
+  background: var(--v14-panel-bg);
+  border: 1px solid var(--v14-bronze);
+  border-radius: 10px;
+  box-shadow: 0 18px 50px rgba(0,0,0,0.7), inset 0 0 24px rgba(0,0,0,0.5);
+  color: var(--v14-silk);
+  padding: 18px 20px;
+}
+.v14-scroll { overflow-y: auto; }
+/* 四角花纹 */
+.v14-modal-corner {
+  position: absolute; width: 14px; height: 14px;
+  border: 2px solid var(--v14-gilded); pointer-events: none;
+}
+.v14-modal-corner.tl { top: 6px; left: 6px; border-right: none; border-bottom: none; border-top-left-radius: 6px; }
+.v14-modal-corner.tr { top: 6px; right: 6px; border-left: none; border-bottom: none; border-top-right-radius: 6px; }
+.v14-modal-corner.bl { bottom: 6px; left: 6px; border-right: none; border-top: none; border-bottom-left-radius: 6px; }
+.v14-modal-corner.br { bottom: 6px; right: 6px; border-left: none; border-top: none; border-bottom-right-radius: 6px; }
+.v14-modal-title {
+  color: var(--v14-gold); font-size: 22px; letter-spacing: 3px;
+  text-align: center; margin-bottom: 14px;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.8), 0 0 12px rgba(255,215,0,0.25);
+}
+.v14-modal-title small { font-size: 13px; color: var(--v14-bronze); letter-spacing: 0; }
+.v14-close { margin-top: 14px; width: 100%; }
+.v14-empty { color: #9a8b6a; font-size: 12px; text-align: center; padding: 12px 0; }
+.v14-sub { font-size: 12px; color: #b8a575; text-align: center; margin-bottom: 10px; }
+.v14-btn-flat { letter-spacing: 1px; }
+
+/* ---- 主菜单版本徽章 V14 ---- */
+.v14-version-badge {
+  background: linear-gradient(90deg, transparent, rgba(255,215,0,0.18), transparent);
+  border-top: 1px solid rgba(255,215,0,0.35);
+  border-bottom: 1px solid rgba(255,215,0,0.35);
+  text-shadow: 0 0 10px rgba(255,215,0,0.6);
+}
+
+/* ============================================================
+   武将养成界面
+   ============================================================ */
+.v14-gen-entry { display: flex; gap: 6px; margin-top: 8px; }
+.v14-gen-growth { display: flex; gap: 18px; }
+.v14-growth-left {
+  flex: 0 0 150px; display: flex; flex-direction: column; align-items: center;
+}
+.v14-portrait-glow {
+  width: 130px; height: 170px; border-radius: 8px; overflow: hidden;
+  border: 3px solid var(--v14-fac, #C4A55A);
+  box-shadow: 0 0 18px var(--v14-fac, rgba(255,215,0,0.5)), inset 0 0 20px rgba(0,0,0,0.6);
+  animation: v14LevelUpFlash 2.4s ease-out infinite;
+}
+.v14-portrait { width: 100%; height: 100%; object-fit: cover; }
+.v14-loyalty-badge { margin-top: 10px; font-size: 15px; font-weight: bold; letter-spacing: 2px; }
+.v14-loyalty-icon { margin-right: 4px; }
+.v14-loyalty-trend { margin-left: 6px; font-size: 13px; }
+.v14-loyalty-bar {
+  width: 130px; height: 6px; margin-top: 6px;
+  background: rgba(0,0,0,0.4); border-radius: 3px; overflow: hidden;
+}
+.v14-loyalty-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+.v14-loyalty-num { font-size: 11px; color: #b8a575; margin-top: 3px; }
+
+.v14-growth-right { flex: 1; min-width: 0; }
+.v14-level-chip {
+  display: inline-block; margin-left: 8px; padding: 1px 8px;
+  background: rgba(255,215,0,0.15); border: 1px solid var(--v14-gold);
+  border-radius: 10px; font-size: 12px; color: var(--v14-gold);
+}
+/* 经验条渐变填充 */
+.v14-exp-row { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; }
+.v14-exp-label { font-size: 12px; color: #b8a575; }
+.v14-exp-track {
+  flex: 1; height: 10px; background: rgba(0,0,0,0.5);
+  border: 1px solid var(--v14-bronze); border-radius: 5px; overflow: hidden;
+}
+.v14-exp-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, #8B6914, #FFD700, #FFF3B0);
+  background-size: 200% 100%;
+  box-shadow: 0 0 8px rgba(255,215,0,0.6);
+  animation: v14ExpBarFill 0.8s ease-out, v14BuildingProgress 2s linear infinite;
+}
+.v14-exp-num { font-size: 12px; color: var(--v14-gold); white-space: nowrap; }
+.v14-section-title {
+  font-size: 14px; color: var(--v14-gilded); letter-spacing: 2px;
+  margin: 10px 0 6px; padding-left: 8px;
+  border-left: 3px solid var(--v14-gold);
+}
+/* 属性分项表 */
+.v14-attr-table { display: flex; flex-direction: column; gap: 3px; }
+.v14-attr-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.v14-attr-label { flex: 0 0 34px; color: #b8a575; }
+.v14-attr-base { color: var(--v14-silk); width: 28px; text-align: right; }
+.v14-attr-plus { color: #7fb8ff; font-size: 11px; }
+.v14-attr-eq { color: #8fe08f; font-size: 11px; }
+.v14-attr-total { margin-left: auto; color: var(--v14-gold); font-weight: bold; font-size: 14px; }
+/* 技能树 */
+.v14-skill-tree { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.v14-skill-slot {
+  padding: 8px; border-radius: 6px; text-align: center;
+  border: 1px solid var(--v14-bronze); background: rgba(0,0,0,0.3);
+}
+.v14-skill-slot.unlocked {
+  border-color: var(--v14-q-epic);
+  box-shadow: 0 0 10px rgba(156,77,255,0.35);
+  animation: v14SkillUnlock 1.6s ease-out;
+}
+.v14-skill-slot.locked { opacity: 0.55; }
+.v14-skill-icon { font-size: 20px; }
+.v14-skill-name { font-size: 13px; color: var(--v14-gold); margin: 4px 0; }
+.v14-skill-slot.locked .v14-skill-name { color: #8a7a5a; }
+.v14-skill-desc { font-size: 11px; color: #b8a575; line-height: 1.4; min-height: 30px; }
+.v14-skill-type { font-size: 10px; color: #9C4DFF; margin-top: 4px; }
+/* 装备四槽 */
+.v14-equip-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.v14-equip-slot {
+  padding: 8px 4px; text-align: center; border-radius: 6px; cursor: pointer;
+  border: 1.5px solid var(--v14-rar, #5a4a2a);
+  background: rgba(0,0,0,0.35); transition: transform 0.15s, box-shadow 0.15s;
+}
+.v14-equip-slot:hover { transform: translateY(-2px); box-shadow: 0 0 12px var(--v14-rar, rgba(255,215,0,0.4)); }
+.v14-equip-icon { font-size: 20px; }
+.v14-equip-name { font-size: 12px; margin: 3px 0; font-weight: bold; }
+.v14-equip-bonus { font-size: 10px; color: #b8a575; min-height: 24px; }
+.v14-equip-rar { font-size: 10px; color: var(--v14-rar); }
+/* 装备选择列表 */
+.v14-equip-list { display: flex; flex-direction: column; gap: 6px; }
+.v14-equip-row {
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  border-left: 3px solid var(--v14-rar, var(--v14-bronze));
+  background: rgba(0,0,0,0.3); transition: background 0.15s;
+}
+.v14-equip-row:hover { background: rgba(255,215,0,0.08); }
+.v14-equip-desc { display: block; font-size: 11px; color: #b8a575; margin-top: 2px; }
+
+/* ============================================================
+   内政管理面板
+   ============================================================ */
+.v14-tabs {
+  display: flex; gap: 4px; margin-bottom: 12px;
+  border-bottom: 1px solid var(--v14-bronze);
+}
+.v14-tab {
+  flex: 1; padding: 8px 4px; cursor: pointer;
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: #b8a575; font-family: inherit; font-size: 14px; letter-spacing: 1px;
+  transition: all 0.2s;
+}
+.v14-tab:hover { color: var(--v14-gold); }
+.v14-tab.active {
+  color: var(--v14-gold); border-bottom-color: var(--v14-gold);
+  background: linear-gradient(180deg, rgba(255,215,0,0.08), transparent);
+}
+.v14-tab-body { animation: v14FadeIn 0.25s ease; }
+@keyframes v14FadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.v14-dev-row {
+  padding: 8px 10px; margin-bottom: 8px; border-radius: 6px;
+  background: rgba(0,0,0,0.3); border: 1px solid rgba(139,122,74,0.4);
+}
+.v14-dev-head { display: flex; justify-content: space-between; font-size: 14px; }
+.v14-dev-head b { color: var(--v14-gold); }
+.v14-dev-bar { height: 8px; margin: 6px 0; background: rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; }
+.v14-dev-fill {
+  height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, #2D5A4B, #55cc88);
+  animation: v14BuildingProgress 1.6s linear infinite;
+}
+.v14-dev-out { font-size: 11px; color: #b8a575; margin-bottom: 6px; }
+
+/* 建筑网格 */
+.v14-build-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.v14-build-card {
+  padding: 8px; border-radius: 6px; text-align: center;
+  background: rgba(0,0,0,0.3); border: 1px solid var(--v14-bronze);
+}
+.v14-build-card.maxed { opacity: 0.7; }
+.v14-build-name { font-size: 13px; color: var(--v14-gilded); }
+.v14-build-lv { font-size: 11px; color: #b8a575; margin: 2px 0; }
+.v14-build-mini { height: 4px; background: rgba(0,0,0,0.5); border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
+.v14-build-mini-fill { height: 100%; background: var(--v14-gold); }
+.v14-build-desc { font-size: 10px; color: #9a8b6a; min-height: 28px; line-height: 1.3; }
+.v14-build-max { font-size: 11px; color: #55cc55; margin-top: 4px; }
+
+/* 税收 */
+.v14-tax-row { display: flex; justify-content: center; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.v14-tax-big { font-size: 32px; color: var(--v14-gold); text-shadow: 0 0 10px rgba(255,215,0,0.4); }
+.v14-slider {
+  width: 100%; accent-color: var(--v14-gold); cursor: pointer;
+  animation: v14TaxSlider 0.3s ease;
+}
+.v14-tax-preview { text-align: center; font-size: 12px; color: #b8a575; margin: 8px 0; }
+.v14-tax-types { display: flex; justify-content: space-around; margin: 10px 0; }
+.v14-tax-type { font-size: 12px; color: #b8a575; text-align: center; }
+.v14-tax-type b { display: block; color: var(--v14-gold); font-size: 16px; margin-top: 2px; }
+.v14-tax-level { text-align: center; font-size: 12px; margin-bottom: 8px; }
+
+/* 徭役 */
+.v14-corvee-status { text-align: center; margin-bottom: 10px; font-size: 13px; }
+.v14-corvee-active { color: #e8a33c; }
+.v14-corvee-lock { color: #e05555; }
+.v14-corvee-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.v14-corvee-type {
+  padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3);
+  border: 1px solid var(--v14-bronze); text-align: center;
+}
+.v14-corvee-type p { font-size: 11px; color: #b8a575; margin: 4px 0; }
+
+/* ============================================================
+   武将单挑界面
+   ============================================================ */
+.v14-duel-overlay { background: radial-gradient(ellipse at center, rgba(40,10,8,0.92), rgba(0,0,0,0.96)); }
+.v14-duel {
+  max-width: 880px; width: 94%; padding: 16px;
+  background: linear-gradient(180deg, #2a1410, #140a08);
+  border: 1px solid var(--v14-gilded);
+  box-shadow: 0 0 40px rgba(176,58,46,0.4), inset 0 0 30px rgba(0,0,0,0.7);
+}
+.v14-duel-arena { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.v14-duel-side {
+  flex: 1; text-align: center; padding: 10px;
+  border-top: 3px solid var(--v14-fac, #C4A55A);
+  border-radius: 8px; background: rgba(0,0,0,0.3);
+}
+.v14-duel-name { font-size: 16px; color: var(--v14-gold); margin-bottom: 8px; }
+.v14-duel-name small { color: #b8a575; }
+.v14-duel-portrait {
+  width: 110px; height: 140px; margin: 0 auto; border-radius: 6px; overflow: hidden;
+  border: 2px solid var(--v14-fac, #C4A55A);
+  box-shadow: 0 0 16px var(--v14-fac, rgba(255,215,0,0.4));
+}
+.v14-duel-portrait img { width: 100%; height: 100%; object-fit: cover; }
+.v14-duel-side.v14-attack { animation: v14DuelAttack 0.7s ease; }
+.v14-duel-side.right.v14-attack { animation: v14DuelAttackR 0.7s ease; }
+.v14-duel-side.v14-hit { animation: v14DuelHit 0.6s ease; }
+.v14-duel-hp { height: 10px; margin: 8px auto; width: 90%; background: rgba(0,0,0,0.6); border-radius: 5px; overflow: hidden; }
+.v14-duel-hp-fill {
+  height: 100%; width: 100%; border-radius: 5px;
+  background: linear-gradient(90deg, #b03a2e, #e05555); transition: width 0.4s;
+}
+.v14-duel-force { font-size: 12px; color: #b8a575; }
+.v14-duel-vs {
+  font-size: 40px; font-weight: bold; color: var(--v14-gold);
+  text-shadow: 0 0 20px rgba(255,215,0,0.7);
+  animation: v14TaxSlider 1.2s ease infinite;
+  padding: 0 6px;
+}
+.v14-duel-log {
+  height: 110px; overflow-y: auto; margin-top: 12px; padding: 8px;
+  background: rgba(0,0,0,0.4); border-radius: 6px; border: 1px solid rgba(139,122,74,0.4);
+  font-size: 12px; line-height: 1.7;
+}
+.v14-duel-line.atk { color: #ffd0a0; }
+.v14-duel-line.hit { color: #ff8a7a; }
+.v14-duel-line.end { color: var(--v14-gold); text-align: center; margin-top: 4px; }
+.v14-duel-result {
+  text-align: center; font-size: 18px; margin-top: 10px; min-height: 44px;
+  font-weight: bold;
+}
+.v14-duel-result.v14-win { color: var(--v14-gold); text-shadow: 0 0 16px rgba(255,215,0,0.7); }
+.v14-duel-result.v14-lose { color: #9a9a9a; text-shadow: 0 0 10px rgba(120,120,120,0.5); }
+.v14-duel-result small { display: block; font-size: 12px; color: #b8a575; font-weight: normal; }
+/* 对手选择 */
+.v14-duel-pick { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; }
+.v14-duel-pick-row {
+  display: flex; justify-content: space-between; padding: 8px 12px;
+  border-radius: 6px; cursor: pointer; background: rgba(0,0,0,0.3);
+  border: 1px solid var(--v14-bronze); transition: all 0.15s;
+}
+.v14-duel-pick-row:hover { border-color: var(--v14-gold); background: rgba(255,215,0,0.08); }
+.v14-duel-pick-row small { color: #b8a575; }
+
+/* ============================================================
+   兵种进阶界面
+   ============================================================ */
+.v14-adv-tree { display: flex; flex-direction: column; gap: 10px; }
+.v14-adv-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px; border-radius: 6px; background: rgba(0,0,0,0.3);
+  border: 1px solid var(--v14-bronze);
+}
+.v14-adv-base { flex: 0 0 90px; text-align: center; font-size: 14px; color: var(--v14-silk); }
+.v14-adv-base small { display: block; font-size: 11px; color: #b8a575; }
+.v14-adv-base-icon {
+  display: inline-block; width: 28px; height: 28px; line-height: 28px;
+  border-radius: 50%; background: rgba(139,122,74,0.3); color: var(--v14-gold);
+  margin-bottom: 2px;
+}
+.v14-adv-path { flex: 1; display: flex; gap: 8px; }
+.v14-adv-node {
+  flex: 1; padding: 8px; text-align: center; border-radius: 6px;
+  border: 1px solid var(--v14-bronze); background: rgba(0,0,0,0.3);
+}
+.v14-adv-node.done { border-color: var(--v14-jade); box-shadow: 0 0 8px rgba(58,166,154,0.4); }
+.v14-adv-node.ready { border-color: var(--v14-gold); box-shadow: 0 0 10px rgba(255,215,0,0.4); }
+.v14-adv-node.locked { opacity: 0.55; }
+.v14-adv-tier { font-size: 11px; color: #b8a575; }
+.v14-adv-name { font-size: 13px; color: var(--v14-gold); margin: 2px 0; }
+.v14-adv-mult { font-size: 11px; color: #8fe08f; }
+.v14-adv-req { font-size: 10px; color: #9a8b6a; margin: 3px 0; }
+.v14-adv-state { font-size: 11px; color: #b8a575; }
+
+/* ============================================================
+   图鉴
+   ============================================================ */
+.v14-codex-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-height: 60vh; overflow-y: auto; }
+.v14-codex-card {
+  text-align: center; padding: 6px; border-radius: 6px;
+  background: rgba(0,0,0,0.3); border: 1px solid var(--v14-bronze);
+}
+.v14-codex-card img { width: 56px; height: 74px; object-fit: cover; border-radius: 4px; }
+.v14-codex-card b { display: block; font-size: 12px; color: var(--v14-gold); margin-top: 3px; }
+.v14-codex-card small { font-size: 10px; color: #b8a575; }
+
+/* ---- V14 古风精致滚动条 ---- */
+.v14-scroll::-webkit-scrollbar { width: 8px; }
+.v14-scroll::-webkit-scrollbar-track { background: rgba(0,0,0,0.3); border-radius: 4px; }
+.v14-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #C4A55A, #8B7A4A);
+  border-radius: 4px; border: 1px solid rgba(0,0,0,0.4);
+}
+.v14-scroll::-webkit-scrollbar-thumb:hover { background: var(--v14-gilded); }
+
+/* ---- V14 响应式适配 ---- */
+@media (max-width: 720px) {
+  .v14-gen-growth { flex-direction: column; }
+  .v14-growth-left { flex: none; flex-direction: row; flex-wrap: wrap; justify-content: center; gap: 10px; }
+  .v14-skill-tree { grid-template-columns: 1fr; }
+  .v14-equip-grid { grid-template-columns: repeat(2, 1fr); }
+  .v14-build-grid, .v14-corvee-grid { grid-template-columns: 1fr; }
+  .v14-codex-grid { grid-template-columns: repeat(3, 1fr); }
+  .v14-duel-arena { flex-direction: column; }
+  .v14-duel-vs { font-size: 28px; }
+  .v14-adv-row { flex-direction: column; }
+  .v14-adv-path { flex-direction: column; }
+}
+
+/* ---- V14 主菜单标题：鎏金立体 + 渐变 + 外发光 ---- */
+.v14-game-title {
+  background: linear-gradient(180deg, #FFF6D8 0%, #FFD700 40%, #C49A3A 70%, #8B6914 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 0 #5a3a1a) drop-shadow(0 4px 10px rgba(0,0,0,0.8))
+          drop-shadow(0 0 22px rgba(255,215,0,0.45));
+  letter-spacing: 24px;
+}
+/* V14 按钮按下凹陷效果 */
+.v14-btn-flat:active, .v14-up-btn:active { transform: scale(0.95); filter: brightness(0.85); }
+.v14-up-btn { margin-top: 4px; }
+
+/* ---- V14 加载画面：进度百分比 + 名言轮播 ---- */
+.v14-loading-title {
+  background: linear-gradient(180deg, #6b4a2a, #3a2814);
+  -webkit-background-clip: text; background-clip: text;
+}
+#v14-loading-pct {
+  margin-top: 6px; font-size: 13px; color: #6a4a2a; letter-spacing: 2px;
+}
+.loading-quote {
+  margin-top: 10px; font-size: 12px; color: #7a5a30;
+  letter-spacing: 2px; min-height: 18px;
+  transition: opacity 0.3s;
+}

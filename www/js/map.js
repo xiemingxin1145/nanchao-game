@@ -75,10 +75,12 @@ export class IsometricMap {
     // ============================================================
     // V13.0：地图独立粒子系统（与 animation.js 隔离）
     //   上限 80，仅渲染视口内；用于边关烽火/沙漠沙尘/森林落叶/港口波纹
+    // V14.0 霸业宏图：上限提升至 120，新增草丛摇曳/水鸟/麦浪/炊烟增强
     // ============================================================
     this._mapParticles = [];
     this._mapParticlePool = [];
-    this._MAP_PARTICLE_CAP = 80;
+    this._mapParticlePools = {};   // V14.0：按类型分池优化（grass/bird/wheat/...）
+    this._MAP_PARTICLE_CAP = 120;  // V14.0：80 → 120
     this._warActive = false;          // 战时开关（边关烽火冒烟，外部 setWarActive 设置）
     this._beaconTimer = 0;            // 烽火台冒烟计时
     this._sandstormTimer = 0;        // 沙漠沙尘暴计时
@@ -86,6 +88,13 @@ export class IsometricMap {
     this._forestLeafTimer = 0;       // 森林落叶计时
     this._marchDustTimer = 0;        // 行军尘土节流计时
     this._lastMarchDustEmit = 0;     // 上次行军尘土生成时刻（_animTime 基准）
+    this._grassTimer = 0;            // V14.0：草丛摇曳计时
+    this._birdTimer = 0;             // V14.0：水鸟飞过计时
+    this._wheatTimer = 0;            // V14.0：农田麦浪计时
+
+    // V14.0：城市/军队图标离屏缓存（按势力+规模缓存）
+    this._cityIconCache = new Map();   // key: `${color}|${sizeLevel}` -> canvas
+    this._armyIconCache = new Map();  // key: `${factionColor}` -> canvas
 
     this._bindEvents();
     this._initView();
@@ -246,6 +255,18 @@ export class IsometricMap {
     this.dirty = true;
     this.render();
   }
+
+  // ============================================================
+  // V14.0 — 视口缩放公共 API（0.5x ~ 2x）
+  // ============================================================
+  // 设置缩放级别（自动钳制到 0.5~2.0），触发静态层重绘
+  setZoom(level) {
+    this.scale = Math.max(0.5, Math.min(2.0, Number(level) || 1.0));
+    this.dirty = true;
+    return this.scale;
+  }
+  // 获取当前缩放级别
+  getZoom() { return this.scale; }
 
   // V5.0：视口裁剪 —— 屏幕坐标是否落在可见区域（含余量）
   _onScreen(x, y, margin = 120) {
@@ -509,9 +530,10 @@ export class IsometricMap {
   // V13.0：地图独立粒子系统（上限 80，仅渲染视口内）
   // ============================================================
 
-  // 从对象池取一个粒子
-  _mapGetParticle() {
-    const p = this._mapParticlePool.pop();
+  // 从对象池取一个粒子（V14.0：按类型分池，减少 GC）
+  _mapGetParticle(type = 'default') {
+    const pool = (this._mapParticlePools[type] || (this._mapParticlePools[type] = []));
+    const p = pool.pop() || this._mapParticlePool.pop();
     if (p) {
       p.type = ''; p.x = 0; p.y = 0; p.vx = 0; p.vy = 0;
       p.gravity = 0; p.life = 1; p.maxLife = 1; p.size = 2;
@@ -521,9 +543,10 @@ export class IsometricMap {
     return { type: '', x: 0, y: 0, vx: 0, vy: 0, gravity: 0,
       life: 1, maxLife: 1, size: 2, color: '#fff', seed: 0 };
   }
-  // 回收粒子到对象池
+  // 回收粒子到对象池（V14.0：按类型分池）
   _mapReleaseParticle(p) {
-    if (this._mapParticlePool.length < 300) this._mapParticlePool.push(p);
+    const pool = (this._mapParticlePools[p.type] || this._mapParticlePool);
+    if (pool.length < 300) pool.push(p);
   }
 
   // 生成一个地图粒子（带上限保护，超限时淘汰最旧）
@@ -546,7 +569,9 @@ export class IsometricMap {
       p.x += p.vx * dt;
       p.y += p.vy * dt;
       if (p.gravity) p.vy += p.gravity * dt;
-      if (p.life >= p.maxLife) {
+      // V14.0：超出视口自动回收（避免粒子飘出屏幕仍占内存）
+      const outOfView = !this._onScreen(p.x, p.y, 60);
+      if (p.life >= p.maxLife || outOfView) {
         this._mapParticles.splice(i, 1);
         this._mapReleaseParticle(p);
       }
@@ -613,6 +638,43 @@ export class IsometricMap {
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.size * (1 + prog), 0, Math.PI * 2);
           ctx.fill();
+          break;
+        }
+        case 'grass_sway': {
+          // V14.0：草丛摇曳（小绿短线，随风摆）
+          const sway = Math.sin(this._animTime * 3 + (p.seed || 0)) * 2;
+          ctx.globalAlpha = alpha * 0.7;
+          ctx.strokeStyle = p.color || '#6aa050';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(p.x, p.y);
+          ctx.lineTo(p.x + sway, p.y - 4);
+          ctx.stroke();
+          break;
+        }
+        case 'bird': {
+          // V14.0：水鸟飞过（V形翅膀，随飞行时间扑翼）
+          const flap = Math.sin(this._animTime * 8 + (p.seed || 0)) * 2;
+          ctx.globalAlpha = alpha * 0.8;
+          ctx.strokeStyle = p.color || '#3a3a3a';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(p.x - 4, p.y);
+          ctx.quadraticCurveTo(p.x - 2, p.y - 2 - flap, p.x, p.y);
+          ctx.quadraticCurveTo(p.x + 2, p.y - 2 - flap, p.x + 4, p.y);
+          ctx.stroke();
+          break;
+        }
+        case 'wheat_wave': {
+          // V14.0：农田麦浪（金色小弧线起伏）
+          const wave = Math.sin(this._animTime * 2.5 + (p.seed || 0)) * 1.5;
+          ctx.globalAlpha = alpha * 0.6;
+          ctx.strokeStyle = p.color || '#d4b54a';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(p.x - 3, p.y);
+          ctx.quadraticCurveTo(p.x, p.y - 3 - wave, p.x + 3, p.y);
+          ctx.stroke();
           break;
         }
       }
@@ -697,6 +759,76 @@ export class IsometricMap {
           });
       }
     }
+
+    // ---- V14.0 新增：草丛摇曳（平原）----
+    this._grassTimer -= dt;
+    if (this._grassTimer <= 0) {
+      this._grassTimer = 0.7;
+      for (const city of this.game.cities.values()) {
+        if (city.terrain !== 'plain') continue;
+        const pos = this.isoToScreen(city.isoX, city.isoY);
+        if (!this._onScreen(pos.x, pos.y, 60)) continue;
+        this._spawnMapParticle('grass_sway',
+          pos.x + (Math.random() - 0.5) * 30, pos.y + (Math.random() - 0.5) * 10, {
+            vx: 0, vy: 0, gravity: 0,
+            life: 0, maxLife: 1.2, size: 2, color: '#6aa050',
+            seed: Math.random() * 10
+          });
+      }
+    }
+
+    // ---- V14.0 新增：水鸟飞过（河流城上空）----
+    this._birdTimer -= dt;
+    if (this._birdTimer <= 0) {
+      this._birdTimer = 3.0 + Math.random() * 2.0;
+      for (const city of this.game.cities.values()) {
+        if (city.terrain !== 'river') continue;
+        const pos = this.isoToScreen(city.isoX, city.isoY);
+        if (!this._onScreen(pos.x, pos.y, 100)) continue;
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        this._spawnMapParticle('bird',
+          pos.x - dir * 40, pos.y - 40 - Math.random() * 20, {
+            vx: dir * (30 + Math.random() * 20), vy: 0, gravity: 0,
+            life: 0, maxLife: 2.0, size: 2, color: '#3a3a3a',
+            seed: Math.random() * 10
+          });
+      }
+    }
+
+    // ---- V14.0 新增：农田麦浪（城市周边，size>=2 的城）----
+    this._wheatTimer -= dt;
+    if (this._wheatTimer <= 0) {
+      this._wheatTimer = 1.5;
+      for (const city of this.game.cities.values()) {
+        if (!city.size || city.size < 2) continue;
+        const pos = this.isoToScreen(city.isoX, city.isoY);
+        if (!this._onScreen(pos.x, pos.y, 80)) continue;
+        this._spawnMapParticle('wheat_wave',
+          pos.x + (Math.random() - 0.5) * 40, pos.y + 10, {
+            vx: (Math.random() - 0.5) * 6, vy: 0, gravity: 0,
+            life: 0, maxLife: 1.6, size: 2, color: '#d4b54a',
+            seed: Math.random() * 10
+          });
+      }
+    }
+
+    // ---- V14.0：战时战场区域尘土飞扬（军队所在处）----
+    if (this._warActive) {
+      for (const army of this.game.armies) {
+        const c = this.game.cities.get(army.cityId);
+        if (!c) continue;
+        const pos = this.isoToScreen(c.isoX, c.isoY);
+        if (!this._onScreen(pos.x, pos.y, 60)) continue;
+        if (Math.random() < 0.3) {
+          this._spawnMapParticle('march_dust',
+            pos.x + (Math.random() - 0.5) * 20, pos.y - 10, {
+              vx: (Math.random() - 0.5) * 10, vy: -5 - Math.random() * 8,
+              gravity: 3, life: 0, maxLife: 0.9 + Math.random() * 0.3,
+              size: 2 + Math.random() * 2, color: '#8B7355'
+            });
+        }
+      }
+    }
   }
 
   render() {
@@ -743,6 +875,10 @@ export class IsometricMap {
 
     // V8.1：飘动云层（最上层，半透明不遮挡）
     this._drawClouds(ctx);
+
+    // V14.0：小地图（右下角，缩略全图 + 视口框 + 城市/军队点）
+    const mmW = 140, mmH = 90;
+    this.drawMinimap(ctx, W - mmW - 12, H - mmH - 12, mmW, mmH);
   }
 
   // 构建离屏静态层
@@ -997,7 +1133,9 @@ export class IsometricMap {
       const faction = city.owner ? FACTIONS[city.owner] : null;
       const color = faction ? faction.color : '#666666';
       const size = city.size;
-      const r = (10 + size * 4) * this.scale;
+      // V14.0：城市规模可视化（小/中/大/都城 四档缩放）
+      const sizeScale = this.getCityIconScale(city);
+      const r = (10 + size * 4) * this.scale * sizeScale;
 
       // 城市待机动画：轻微呼吸缩放（周期 2.5s，幅度 1~1.04）
       const breathe = 1 + 0.04 * (0.5 + 0.5 * Math.sin(t * Math.PI * 2 / 2.5 + city.isoX));
@@ -1029,6 +1167,14 @@ export class IsometricMap {
 
       // 都城宫殿标识 + 王旗飘动（V13.0：王旗为多角飘带，正弦波摆动）
       if (city.capital) {
+        // V14.0：都城更大的势力色光圈
+        ctx.save();
+        const capGlow = ctx.createRadialGradient(0, 0, r * 0.5, 0, 0, r * 2.2);
+        capGlow.addColorStop(0, this._factionColorWithAlpha(color, 0.35));
+        capGlow.addColorStop(1, this._factionColorWithAlpha(color, 0));
+        ctx.fillStyle = capGlow;
+        ctx.beginPath(); ctx.arc(0, 0, r * 2.2, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
         ctx.fillStyle = '#FFD700';
         ctx.beginPath();
         ctx.moveTo(0, -r - 8 * this.scale);
@@ -1288,5 +1434,278 @@ export class IsometricMap {
         }
       }
     }
+  }
+
+  // 颜色 hex 转 rgba（供都城光圈渐变用）
+  _factionColorWithAlpha(hex, a) {
+    if (!hex || hex[0] !== '#') return `rgba(255,255,255,${a})`;
+    const n = parseInt(hex.slice(1), 16);
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  // ============================================================
+  // V14.0 霸业宏图 — 城市规模可视化
+  // ============================================================
+  // 城市规模分级：1-2 小城市(1) / 3 中城市(2) / 4-5 大城市(3)，都城额外+1
+  getCitySizeLevel(city) {
+    if (!city) return 1;
+    const s = city.size || 1;
+    let level = 1;
+    if (s >= 4) level = 3;
+    else if (s >= 3) level = 2;
+    else level = 1;
+    if (city.capital) level = Math.min(4, level + 1);
+    return level;
+  }
+
+  // 城市图标缩放系数（小/中/大/都城 四档）
+  getCityIconScale(city) {
+    const lv = this.getCitySizeLevel(city);
+    return [0, 0.75, 1.0, 1.25, 1.5][lv] || 1.0;
+  }
+
+  // ============================================================
+  // V14.0 — 军队单位绘制（含武将头像 / 兵力条 / 待机晃动）
+  // ============================================================
+  // 在 (x,y) 绘制军队棋子：圆形底 + 势力色 + 兵力条 + 待机晃动
+  drawArmyUnit(ctx, army, x, y, time) {
+    if (!ctx || !army) return;
+    const faction = (this.game && FACTIONS[army.faction]) || { color: '#666', colorLight: '#888' };
+    const t = time || this._animTime;
+    const r = 8 * this.scale;
+
+    // 待机轻微晃动（模拟士兵活动）
+    const sway = Math.sin(t * 2 + (army.id || 0)) * 0.8 * this.scale;
+    ctx.save();
+    ctx.translate(x + sway, y);
+
+    // 军队圆形棋子
+    ctx.fillStyle = faction.color;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#E8D5A3';
+    ctx.lineWidth = 1.5 * this.scale;
+    ctx.stroke();
+
+    // 兵力条：根据兵力多少显示高度，低兵力红色闪烁
+    const troops = army.troops || 0;
+    const maxT = army.maxTroops || 100000;
+    const ratio = Math.max(0, Math.min(1, troops / maxT));
+    const barH = (2 + ratio * 5) * this.scale;
+    const barW = r * 1.6;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(-barW / 2, r + 2 * this.scale, barW, barH);
+    // 低兵力红色闪烁
+    if (ratio < 0.25) {
+      const blink = 0.5 + 0.5 * Math.sin(t * 8);
+      ctx.fillStyle = `rgba(255,60,60,${0.5 + blink * 0.5})`;
+    } else {
+      ctx.fillStyle = ratio > 0.6 ? '#66dd66' : (ratio > 0.3 ? '#e8d040' : '#e88040');
+    }
+    ctx.fillRect(-barW / 2, r + 2 * this.scale, barW * ratio, barH);
+
+    ctx.restore();
+  }
+
+  // 绘制武将头像缩略图（圆形裁剪 + 势力色边框）
+  drawArmyPortrait(ctx, general, x, y, size = 16) {
+    if (!ctx) return;
+    const s = size * this.scale;
+    const faction = (this.game && general && FACTIONS[general.faction]) || { color: '#c03030' };
+    ctx.save();
+    ctx.translate(x, y);
+    // 圆形裁剪
+    ctx.beginPath(); ctx.arc(0, 0, s / 2, 0, Math.PI * 2); ctx.clip();
+    // 占位底（势力色渐变）
+    const g = ctx.createLinearGradient(-s / 2, -s / 2, s / 2, s / 2);
+    g.addColorStop(0, faction.color);
+    g.addColorStop(1, '#1a1a1a');
+    ctx.fillStyle = g;
+    ctx.fillRect(-s / 2, -s / 2, s, s);
+    // 首字
+    ctx.fillStyle = '#FFE9A8';
+    ctx.font = `bold ${Math.round(s * 0.55)}px "STSong", serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText((general && general.name ? general.name : '将').charAt(0), 0, 0);
+    ctx.restore();
+    // 势力色圆形边框
+    ctx.save();
+    ctx.strokeStyle = faction.color;
+    ctx.lineWidth = 1.5 * this.scale;
+    ctx.beginPath(); ctx.arc(x, y, s / 2, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V14.0 — 地形瓦片绘制（平原/山地/森林/河流/沙漠 视觉提升）
+  // ============================================================
+  drawTerrainTile(ctx, terrain, x, y, size, time = 0) {
+    if (!ctx || !terrain) return;
+    const w = size, h = size * 0.5;
+    ctx.save();
+    ctx.translate(x, y);
+    switch (terrain) {
+      case 'plain': {
+        // 绿色渐变 + 草丛摇曳
+        const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+        g.addColorStop(0, '#5a8c4a'); g.addColorStop(1, '#3a6c2a');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, 0);
+        ctx.lineTo(0, h / 2); ctx.lineTo(-w / 2, 0);
+        ctx.closePath(); ctx.fill();
+        // 草丛（随时间摇曳）
+        ctx.strokeStyle = 'rgba(80,140,60,0.7)';
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 3; i++) {
+          const gx = Math.sin(time + i) * 2;
+          ctx.beginPath();
+          ctx.moveTo(-w / 4 + i * w / 5, 0);
+          ctx.lineTo(-w / 4 + i * w / 5 + gx, -h / 4);
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'mountain': {
+        // 棕色岩石 + 山顶积雪
+        ctx.fillStyle = '#7A6B5A';
+        ctx.beginPath();
+        ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, 0);
+        ctx.lineTo(0, h / 2); ctx.lineTo(-w / 2, 0);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#8A7B6A';
+        ctx.beginPath();
+        ctx.moveTo(0, -h * 0.8); ctx.lineTo(w * 0.28, -h * 0.2); ctx.lineTo(-w * 0.28, -h * 0.2);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.beginPath();
+        ctx.moveTo(0, -h * 0.8); ctx.lineTo(w * 0.16, -h * 0.5); ctx.lineTo(-w * 0.16, -h * 0.5);
+        ctx.closePath(); ctx.fill();
+        break;
+      }
+      case 'forest': {
+        // 深绿 + 多层树木
+        ctx.fillStyle = '#2D5A2D';
+        ctx.beginPath();
+        ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, 0);
+        ctx.lineTo(0, h / 2); ctx.lineTo(-w / 2, 0);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#1a4a1a';
+        for (let i = 0; i < 2; i++) {
+          ctx.beginPath();
+          ctx.arc(-w / 5 + i * w / 3, -h / 8, h / 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        break;
+      }
+      case 'river': {
+        // 蓝色水流波纹（3条流线）+ 反光
+        const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+        g.addColorStop(0, '#4A8BC0'); g.addColorStop(1, '#2A5B9C');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, 0);
+        ctx.lineTo(0, h / 2); ctx.lineTo(-w / 2, 0);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(200,230,255,0.5)';
+        ctx.lineWidth = 1;
+        for (let r = 0; r < 3; r++) {
+          ctx.beginPath();
+          for (let i = 0; i <= 8; i++) {
+            const px = -w / 2 + (w * i / 8);
+            const py = Math.sin(i * 0.9 + time * 3 + r * 2) * 2 + (r - 1) * 4;
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        }
+        break;
+      }
+      case 'desert': {
+        // 黄色渐变 + 沙丘纹理
+        const g = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+        g.addColorStop(0, '#d4b56a'); g.addColorStop(1, '#b4954a');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.moveTo(0, -h / 2); ctx.lineTo(w / 2, 0);
+        ctx.lineTo(0, h / 2); ctx.lineTo(-w / 2, 0);
+        ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = 'rgba(160,130,80,0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(-w / 3, -h / 8);
+        ctx.quadraticCurveTo(0, h / 6, w / 3, -h / 8);
+        ctx.stroke();
+        break;
+      }
+      default: break;
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V14.0 — 小地图（右下角缩略全图 + 视口框 + 城市点 + 军队点）
+  // ============================================================
+  drawMinimap(ctx, x, y, w, h) {
+    if (!ctx || !this.game) return;
+    ctx.save();
+    // 背景
+    ctx.fillStyle = 'rgba(20,30,20,0.85)';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#C4A55A';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+
+    // 计算全图包围盒
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const city of this.game.cities.values()) {
+      if (city.isoX < minX) minX = city.isoX;
+      if (city.isoX > maxX) maxX = city.isoX;
+      if (city.isoY < minY) minY = city.isoY;
+      if (city.isoY > maxY) maxY = city.isoY;
+    }
+    if (!isFinite(minX)) { ctx.restore(); return; }
+    const pad = 1;
+    minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+    const sx = w / (maxX - minX);
+    const sy = h / (maxY - minY);
+    const toMini = (isoX, isoY) => ({
+      mx: x + (isoX - minX) * sx,
+      my: y + (isoY - minY) * sy
+    });
+
+    // 城市点
+    for (const city of this.game.cities.values()) {
+      const { mx, my } = toMini(city.isoX, city.isoY);
+      const faction = city.owner ? FACTIONS[city.owner] : null;
+      ctx.fillStyle = faction ? faction.color : '#888';
+      const r = city.capital ? 2.5 : 1.5;
+      ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill();
+    }
+    // 军队点
+    for (const army of this.game.armies) {
+      const c = this.game.cities.get(army.cityId);
+      if (!c) continue;
+      const { mx, my } = toMini(c.isoX, c.isoY);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.beginPath(); ctx.arc(mx, my, 1.8, 0, Math.PI * 2); ctx.fill();
+    }
+    // 视口框（当前 offset/scale 对应的等距范围近似）
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 1;
+    const corners = [
+      this.screenToIso(0, 0),
+      this.screenToIso(this.canvas.width, 0),
+      this.screenToIso(this.canvas.width, this.canvas.height),
+      this.screenToIso(0, this.canvas.height)
+    ];
+    ctx.beginPath();
+    corners.forEach((c, i) => {
+      const { mx, my } = toMini(c.isoX, c.isoY);
+      if (i === 0) ctx.moveTo(mx, my); else ctx.lineTo(mx, my);
+    });
+    ctx.closePath();
+    ctx.stroke();
+
+    ctx.restore();
   }
 }

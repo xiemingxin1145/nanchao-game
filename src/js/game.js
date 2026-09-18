@@ -2067,6 +2067,30 @@ export class Game {
   settleTurn() {
     const season = this.getSeason();
 
+    // ===== 性能优化#1：回合结算势力分组缓存 =====
+    // 优化前：本方法对每个活跃势力分别调用 getFactionCities/getFactionGenerals/
+    //   getFactionArmies，三者各自对 this.cities(72)/this.generals(129)/this.armies
+    //   做一次全表 filter。设势力数 F≈10，则每回合 O(F×(72+129+armies))≈2000+ 次遍历。
+    // 优化后：方法入口单次扫描三张表，按势力分组建立索引 Map，
+    //   后续每势力查找 O(1)；总开销降为 O(72+129+armies)，约减少 80~90% 遍历。
+    // 正确性：settleTurn 期间不发生势力归属变更（无战斗），分组在方法生命周期内有效。
+    const fidCities = new Map();
+    for (const c of this.cities.values()) {
+      if (!c.owner) continue;
+      (fidCities.get(c.owner) || fidCities.set(c.owner, []).get(c.owner)).push(c);
+    }
+    const fidGenerals = new Map();
+    for (const g of this.generals.values()) {
+      if (!g.faction) continue;
+      (fidGenerals.get(g.faction) || fidGenerals.set(g.faction, []).get(g.faction)).push(g);
+    }
+    const fidArmies = new Map();
+    for (const a of this.armies) {
+      (fidArmies.get(a.faction) || fidArmies.set(a.faction, []).get(a.faction)).push(a);
+    }
+    // 缓存本次回合的势力城市数（供末尾迷雾刷新复用，避免重复遍历）
+    this._fidCityCountCache = fidCities;
+
     // 玩家科技研究推进
     if (this.researching) {
       this.researching.turnsLeft--;
@@ -2087,7 +2111,8 @@ export class Game {
 
     for (const [fid, res] of this.factionRes) {
       let totalIncome = 0, totalFood = 0;
-      const cities = this.getFactionCities(fid);
+      // 性能优化#1：使用入口处建立的势力分组索引，替代每势力一次全表 filter
+      const cities = fidCities.get(fid) || [];
       for (const city of cities) {
         const { income, food } = city.endTurn(season);
         totalIncome += income;
@@ -2115,7 +2140,8 @@ export class Game {
       const moraleBonus = this.getTechBonus(fid, 'moralePerTurn');
       if (moraleBonus) for (const c of cities) c.morale = Math.min(100, c.morale + moraleBonus);
 
-      const armies = this.getFactionArmies(fid);
+      // 性能优化#1：使用势力分组索引替代 getFactionArmies 全表 filter
+      const armies = fidArmies.get(fid) || [];
       let armyFoodCost = 0;
       for (const army of armies) {
         // V2.5：补给线影响粮草消耗（切断×2 / 过长×1.5），切断时每回合士气 -5
@@ -2131,7 +2157,8 @@ export class Game {
         res.food = 0;
       }
 
-      for (const gen of this.getFactionGenerals(fid)) {
+      // 性能优化#1：使用势力分组索引替代 getFactionGenerals 全表 filter
+      for (const gen of fidGenerals.get(fid) || []) {
         gen.endTurn();
         if (gen.loyalty < 30 && Math.random() < 0.15) {
           gen.faction = null;
@@ -2152,11 +2179,10 @@ export class Game {
     resolveSpies(this);            // 密探任务结算
     settlePasses(this);            // 关隘建造完工
     settleBarbarians(this);        // 蛮族进贡 / 劫掠
-    // 性能优化#1：战争迷雾刷新——仅对仍有城池的存活势力调用，
-    // 原逻辑遍历 FACTIONS 全表（含已灭亡势力），每回合 O(n) 次 settleFog。
-    // 优化后仅遍历 factionRes 中仍存活的势力，预期减少 30~50% 的迷雾计算。
+    // 性能优化#1：复用本次回合入口建立的势力城市索引，避免再次全表 filter
     for (const fid of this.factionRes.keys()) {
-      if (this.getFactionCities(fid).length > 0) settleFog(this, fid);
+      const myCities = (fidCities.get(fid) || []);
+      if (myCities.length > 0) settleFog(this, fid);
     }
     this.diplomacy.refreshMarriageBag(this); // 联姻经济袋刷新
 
@@ -2182,7 +2208,7 @@ export class Game {
     // ---- V8.0：赋税/徭役过重事件检查 ----
     const taxEvt = checkTaxEvent(this, this.playerFaction);
     if (taxEvt) {
-      const evt = (EVENTS || []).find(e => e.id === taxEvt);
+      const evt = this._eventById(taxEvt);
       if (evt) {
         this.eventSystem.pendingEvents.push(evt);
         this.pushLog(`赋税事件：${evt.name}`);
@@ -2190,7 +2216,7 @@ export class Game {
     }
     const corveeEvt = checkCorveeEvent(this, this.playerFaction);
     if (corveeEvt) {
-      const evt = (EVENTS || []).find(e => e.id === corveeEvt);
+      const evt = this._eventById(corveeEvt);
       if (evt) {
         this.eventSystem.pendingEvents.push(evt);
         this.pushLog(`徭役事件：${evt.name}`);
@@ -2203,7 +2229,12 @@ export class Game {
     }
     // ---- V8.5：后宫生育/子嗣年长结算（所有激活势力）----
     if (this.harem) {
-      for (const fid of Object.keys(this.factionRes)) {
+      // BUG修复#8：factionRes 是 Map 而非普通对象，Object.keys(Map) 恒返回 []，
+      // 导致后宫生育结算每回合都被静默跳过（看似运行正常但子嗣永不出生）。
+      // 修复方案：改用 this.factionRes.keys() 遍历活跃势力 id。
+      // 验证方式：修复前 Object.keys(this.factionRes) 为空数组，settleBirth 从不被调用；
+      //   修复后所有活跃势力的 settleBirth 被正常执行。
+      for (const fid of this.factionRes.keys()) {
         this.harem.settleBirth(this, fid);
       }
     }
@@ -2212,13 +2243,30 @@ export class Game {
       const an = this.calendar.rollAnomaly(this);
       if (an && this.eventSystem) {
         // 推送天文异象事件到待展示队列（events.js 中注册）
-        const evt = (EVENTS || []).find(e => e.id === an.eventId);
+        const evt = this._eventById(an.eventId);
         if (evt) {
           this.eventSystem.pendingEvents.push(evt);
           this.pushLog(`天文异象：${an.name}`);
         }
       }
     }
+  }
+
+  // ============================================================
+  // 性能优化#2：297 事件触发检查——分类索引替代全表遍历。
+  //   优化前：settleTurn 中三处 `(EVENTS||[]).find(e=>e.id===x)` 每回合各做一次
+  //   O(297) 线性扫描，合计 O(3×297)≈900 次比较/回合。
+  //   优化后：惰性构建 id→事件 的 Map 索引（O(297) 一次性），
+  //   后续查找 O(1)；长期运行下回合尾 CPU 开销显著下降。
+  // 适用场景：297 事件的按 id 反查（赋税/徭役/天文异象等）。
+  // ============================================================
+  _eventById(id) {
+    if (!id) return null;
+    if (!this._eventIndex) {
+      this._eventIndex = new Map();
+      for (const e of (EVENTS || [])) this._eventIndex.set(e.id, e);
+    }
+    return this._eventIndex.get(id) || null;
   }
 
   // ---------- 胜负 ----------

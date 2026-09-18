@@ -58,7 +58,10 @@ export class DiplomacySystem {
     gen.faction = game.playerFaction;
     gen.loyalty = 60;
     // 从原城市撤出
-    gen.location = game.cities.get(FACTIONS[game.playerFaction].capital).id;
+    // BUG修复#9：防御性校验——都城城可能已被攻陷/摧毁（game.cities.get 返回 undefined），
+    // 直接访问 .id 会导致 TypeError 崩溃。此处做空值兜底。
+    const capital = game.cities.get(FACTIONS[game.playerFaction].capital);
+    gen.location = capital ? capital.id : null;
     return { ok: true, msg: `${gen.name} 已被策反，投奔我方！` };
   }
 
@@ -192,9 +195,13 @@ export class DiplomacySystem {
       return m;
     });
     if (!broken) return;
+    // BUG修复#12：防御性校验——getRelation 可能返回 null（异势力 pair 未初始化或存档缺失），
+    // 直接访问 rel.relation 会导致 TypeError 崩溃。此处做空值兜底。
     const rel = this.getRelation(attackerFid, defenderFid);
-    rel.relation = Math.max(-100, rel.relation - MARRIAGE_BREAK_REL_PENALTY);
-    rel.ceasefire = false;
+    if (rel) {
+      rel.relation = Math.max(-100, rel.relation - MARRIAGE_BREAK_REL_PENALTY);
+      rel.ceasefire = false;
+    }
     game.pushLog(`⚔ ${FACTIONS[attackerFid].name} 背盟弃好，两国姻亲之谊断绝！关系-${MARRIAGE_BREAK_REL_PENALTY}，天下共鄙之。`);
     game.pushLog('【背盟事件】背信弃义，人心尽失，各路诸侯咸有戒心。');
     this.refreshMarriageBag(game);
@@ -208,7 +215,10 @@ export class DiplomacySystem {
     if (!gen || gen.faction !== fromFid) return { ok: false, msg: '该武将不属我方' };
     if (gen.inArmy) return { ok: false, msg: '该武将正在军中，不能为质' };
     if (gen.role === '君主') return { ok: false, msg: '君主不可为质' };
+    // BUG修复#10：防御性校验——对方都城可能已被摧毁，game.cities.get 返回 undefined，
+    // 直接访问 capital.id 会导致 TypeError 崩溃。此处做空值兜底。
     const capital = game.cities.get(FACTIONS[toFid].capital);
+    if (!capital) return { ok: false, msg: '对方都城已失，无法为质' };
     const hostage = {
       id: 'host_' + (++hostageCounter),
       from: fromFid, to: toFid,
@@ -241,8 +251,10 @@ export class DiplomacySystem {
     game.hostages = game.hostages.filter(x => x.id !== hostageId);
     if (gen) {
       gen.onHostage = false;
+      // BUG修复#11：防御性校验——赎回方都城可能已被摧毁，game.cities.get 返回 undefined，
+      // 直接访问 capital.id 会导致 TypeError 崩溃。此处做空值兜底。
       const capital = game.cities.get(FACTIONS[factionId].capital);
-      gen.location = capital.id;
+      gen.location = capital ? capital.id : null;
     }
     game.pushLog(`🏠 ${gen ? gen.name : '人质'} 自 ${FACTIONS[h.to].name} 赎回（耗 ${cost} 金）。`);
     return { ok: true, msg: `${gen ? gen.name : '人质'} 已赎回` };

@@ -383,3 +383,124 @@ function _distributeLoss(game, L, totalLoss) {
     a.troops = Math.max(0, a.troops - share);
   }
 }
+
+// ============================================================
+// V14.0「霸业宏图」：军团系统优化 API
+//  - 编制：军-师-旅-团 四级
+//  - 战力：综合武将属性、兵种、装备、阵型、士气、补给
+// ============================================================
+
+/**
+ * 获取军团四级编制结构
+ * 军(总指挥) → 师(军团长直辖) → 旅(各军队) → 团(各兵种)
+ * @param {object} legion - Legion 实例
+ * @param {object} game - Game 上下文（用于解析军队/武将）
+ * @returns {object} { army, divisions, brigades, regiments }
+ */
+export function getLegionStructure(legion, game) {
+  const armies = legion.armyIds.map(id => game.armies.find(a => a.id === id)).filter(Boolean);
+  const brigades = armies.map(a => {
+    const g = game.generals.get(a.generalId);
+    return {
+      armyId: a.id,
+      generalId: a.generalId,
+      generalName: g ? g.name : '未知',
+      troops: a.troops,
+      unitMix: a.unitMix
+    };
+  });
+  // 团级：按兵种汇总
+  const regiments = { infantry: 0, cavalry: 0, archer: 0 };
+  for (const b of brigades) {
+    for (const k of Object.keys(regiments)) {
+      regiments[k] += (b.unitMix && b.unitMix[k]) || 0;
+    }
+  }
+  return {
+    army: {
+      id: legion.id,
+      name: legion.name,
+      commanderId: legion.commanderId,
+      totalTroops: legion.totalTroops(game.armies)
+    },
+    division: { level: legion.level, formation: legion.formation, formationLevel: legion.formationLevel },
+    brigades,
+    regiments
+  };
+}
+
+/**
+ * 计算军团综合战力（综合武将/兵种/装备/阵型/士气/补给）
+ * @param {object} legion - Legion 实例
+ * @param {object} game - Game 上下文
+ * @param {object} enemyL - 敌方军团（可选，用于克制）
+ * @param {string} terrain - 地形（可选）
+ * @returns {number} 战力数值
+ */
+export function calculateLegionPower(legion, game, enemyL = null, terrain = 'plain') {
+  const armies = legion.armyIds.map(id => game.armies.find(a => a.id === id)).filter(Boolean);
+  if (!armies.length) return 0;
+  let power = 0;
+  for (const a of armies) {
+    const coeff = a.getAvgUnitCoeff ? a.getAvgUnitCoeff() : 1.0;
+    power += a.troops * coeff;
+  }
+  // 军团长属性
+  const gen = game.generals.get(legion.commanderId);
+  const cmd = gen ? (gen.effCommand || gen.command) : 50;
+  const force = gen ? (gen.effForce || gen.force) : 50;
+  const intel = gen ? (gen.effIntel || gen.intel) : 50;
+  power *= (cmd + force) / 100;
+  power *= (0.8 + intel / 250);
+  // 阵型加成
+  const fmBag = getFormationBag(legion.formation, enemyL ? enemyL.formation : null, legion.formationLevel);
+  const fmMult = 1 + clampBonus(
+    (fmBag.infantryMult || 0) + (fmBag.cavalryMult || 0) + (fmBag.archerMult || 0) + (fmBag.allUnitMult || 0)
+  );
+  power *= fmMult;
+  // 副将加成
+  power *= (1 + legion.lieutenantIds.length * 0.03);
+  // 军团等级
+  power *= (1 + (legion.level - 1) * 0.05);
+  // 士气（忠诚影响）
+  if (gen) {
+    const moraleMod = gen.getLoyaltyMoraleMod ? gen.getLoyaltyMoraleMod() : 0;
+    power *= (1 + moraleMod);
+  }
+  // 补给状态折减
+  const supply = getLegionSupplyStatus(legion, game);
+  if (supply.cut) power *= 0.7;
+  else if (supply.long) power *= 0.85;
+  return Math.round(power);
+}
+
+/**
+ * 获取军团补给状态
+ * @param {object} legion - Legion 实例
+ * @param {object} game - Game 上下文
+ * @returns {object} { cut, long, distance, efficiency }
+ */
+export function getLegionSupplyStatus(legion, game) {
+  const armies = legion.armyIds.map(id => game.armies.find(a => a.id === id)).filter(Boolean);
+  if (!armies.length) return { cut: false, long: false, distance: 0, efficiency: 1.0 };
+  // 取军团第一支军队的补给状态为代表
+  const primary = armies[0];
+  // 复用 supply.computeSupplyStatus（延迟 require 避免循环依赖）
+  let cut = false, long = false, distance = 0;
+  try {
+    // 动态获取，避免顶层循环依赖
+    const supplyMod = game.__supplyModule || null;
+    if (supplyMod && typeof supplyMod.computeSupplyStatus === 'function') {
+      const st = supplyMod.computeSupplyStatus(game, primary);
+      cut = !!st.cut; long = !!st.long; distance = st.distance || 0;
+    } else {
+      // 无 game 上下文时按距离粗算
+      distance = primary.cityId === legion.cityId ? 0 : 2;
+      long = distance > 3;
+    }
+  } catch (e) {
+    long = distance > 3;
+  }
+  const efficiency = cut ? 0.4 : (long ? 0.75 : 1.0);
+  return { cut, long, distance, efficiency };
+}
