@@ -3110,6 +3110,15 @@ html, body {
   --v13-blood:    #e05555;   /* 血色（损耗/警告） */
   --v13-line:     #8B7A4A;   /* 古铜描边 */
   --v13-ease:     0.3s ease; /* 全局交互过渡 */
+  /* ---- V17.0「血战沙场版」专属变量 ---- */
+  --v17-blood:    #c0392b;   /* 血战血红 */
+  --v17-army:     #3a6b4f;   /* 甲胄绿 */
+  --v17-banner:   #e8c060;   /* 战旗金 */
+  --v17-morale-g: #4caf50;   /* 士气高·绿 */
+  --v17-morale-y: #e8c060;   /* 士气中·黄 */
+  --v17-morale-r: #e05555;   /* 士气低·红 */
+  --v17-panel-bg: rgba(24, 20, 14, 0.92);
+  --v17-line:     #7a5a30;
 }
 
 /* ---- 字体渲染优化：中文古风字体栈 ---- */
@@ -4555,3 +4564,198 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
 /* ---------- V16 别名补全（配对校验） ---------- */
 .v16-camp-page { /* 复用 .v16-page */ }
 .v16-ng-tree { /* 复用 .v16-tree 容器 */ }
+
+/* ============================================================
+   V17.0「血战沙场版」UI 精修
+   类名 v17- 前缀；新增 keyframes；响应式优化
+   ============================================================ */
+
+/* ---------- 版本徽章 ---------- */
+.v17-version-badge {
+  background: linear-gradient(135deg, #c0392b, #7a1f14) !important;
+  border-color: var(--v17-banner) !important;
+  color: #ffe9b0 !important;
+  text-shadow: 0 0 8px rgba(232, 192, 96, 0.6);
+  animation: v17BadgeGlow 2.4s ease-in-out infinite;
+}
+@keyframes v17BadgeGlow {
+  0%, 100% { box-shadow: 0 0 6px rgba(232,192,96,0.35); }
+  50%      { box-shadow: 0 0 16px rgba(232,192,96,0.75); }
+}
+
+/* ---------- 战斗：天气图标条（顶部） ---------- */
+.v17-battle-weather {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 4px 10px; font-size: 13px; color: var(--v17-banner);
+  background: linear-gradient(180deg, rgba(0,0,0,0.35), transparent);
+  letter-spacing: 1px;
+}
+.v17-wx-icon { font-size: 18px; animation: v17WeatherFloat 3s ease-in-out infinite; }
+.v17-wx-label { font-weight: bold; }
+.v17-wx-hint { color: #c9b478; font-size: 11px; }
+@keyframes v17WeatherFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+
+/* ---------- 战斗：战场边缘地形标注 ---------- */
+.v17-terrain-tag {
+  position: absolute; top: 6px; left: 8px; z-index: 5;
+  font-size: 11px; color: #d8c690; background: rgba(0,0,0,0.45);
+  padding: 2px 8px; border-radius: 4px; border-left: 3px solid var(--v17-line);
+  pointer-events: none;
+}
+
+/* ---------- 战斗/军队：士气条（绿→黄→红渐变） ---------- */
+.v17-morale-track {
+  position: relative; display: inline-block; width: 100%; height: 10px;
+  background: rgba(0,0,0,0.5); border: 1px solid var(--v17-line); border-radius: 6px;
+  overflow: hidden; margin-top: 3px;
+}
+.v17-morale-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 50%;
+  background: linear-gradient(90deg, var(--v17-morale-g), var(--v17-morale-y), var(--v17-morale-r));
+  transition: width 0.5s ease;
+}
+.v17-morale-track.v17-morale-high .v17-morale-fill { background: var(--v17-morale-g); box-shadow: 0 0 6px rgba(76,175,80,0.7); }
+.v17-morale-track.v17-morale-mid  .v17-morale-fill { background: var(--v17-morale-y); box-shadow: 0 0 6px rgba(232,192,96,0.7); }
+.v17-morale-track.v17-morale-low  .v17-morale-fill { background: var(--v17-morale-r); box-shadow: 0 0 8px rgba(224,85,85,0.8); animation: v17MoraleWarn 1s ease-in-out infinite; }
+.v17-morale-text {
+  position: absolute; right: 4px; top: -1px; font-size: 9px; color: #fff;
+  text-shadow: 0 0 3px #000; line-height: 10px;
+}
+@keyframes v17MoraleWarn { 0%,100%{opacity:1;} 50%{opacity:0.55;} }
+
+/* ---------- 战斗：连胜/连败提示 ---------- */
+.v17-streak-hint {
+  text-align: center; padding: 4px; font-size: 12px; border-radius: 4px; margin: 2px 8px;
+}
+.v17-streak-win  { color: #ffd54f; background: rgba(120,60,10,0.4); animation: v17StreakFlash 1.6s ease-in-out infinite; }
+.v17-streak-lose { color: #ff8a80; background: rgba(80,20,20,0.4); }
+@keyframes v17StreakFlash { 0%,100%{box-shadow:inset 0 0 0 rgba(255,213,79,0);} 50%{box-shadow:inset 0 0 12px rgba(255,213,79,0.4);} }
+
+/* ---------- 战斗：阵型切换栏 ---------- */
+.v17-formation-bar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 5px 10px; border-top: 1px solid var(--v17-line); border-bottom: 1px solid var(--v17-line);
+  background: rgba(0,0,0,0.25);
+}
+.v17-fm-label { color: #b8a060; font-size: 12px; }
+.v17-fm-cur { color: var(--v17-banner); font-weight: bold; font-size: 13px; padding: 0 6px; }
+.v17-fm-sep { color: #7a6a40; }
+.v17-fm-btn { font-size: 11px; padding: 2px 8px !important; }
+.v17-fm-btn.on { background: var(--v17-banner); color: #2a1a08; box-shadow: 0 0 8px rgba(232,192,96,0.6); }
+
+/* ---------- 战斗：技能栏（冷却进度） ---------- */
+.v17-skill-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 4px 10px; }
+.v17-skill-label { color: #b8a060; font-size: 12px; }
+.v17-skill-chip { position: relative; display: inline-flex; flex-direction: column; align-items: center;
+  font-size: 11px; padding: 3px 10px !important; }
+.v17-skill-chip.ready { border-color: var(--v17-banner); color: #ffe9b0; box-shadow: 0 0 8px rgba(232,192,96,0.4); }
+.v17-skill-chip.cd { opacity: 0.55; }
+.v17-skill-cd { font-size: 9px; color: #ff9a80; }
+.v17-skill-cdbar { width: 100%; height: 3px; background: rgba(0,0,0,0.5); border-radius: 2px; overflow: hidden; margin-top: 2px; }
+.v17-skill-cdbar i { display: block; height: 100%; background: var(--v17-banner); }
+
+/* ---------- 地图：缩放控件 ---------- */
+.v17-map-controls {
+  position: absolute; right: 10px; top: 10px; z-index: 30;
+  display: flex; flex-direction: column; gap: 4px; align-items: center;
+  background: var(--v17-panel-bg); border: 1px solid var(--v17-line); border-radius: 6px; padding: 5px;
+}
+.v17-map-btn {
+  width: 30px; height: 30px; line-height: 28px; text-align: center; font-size: 16px;
+  background: rgba(120,90,40,0.4); color: var(--v17-banner); border: 1px solid var(--v17-line);
+  border-radius: 4px; cursor: pointer;
+}
+.v17-map-btn:hover { background: rgba(200,160,80,0.5); }
+.v17-zoom-label { font-size: 10px; color: #c9b478; }
+
+/* ---------- 地图：搜索框 ---------- */
+.v17-map-search {
+  position: absolute; right: 10px; top: 130px; z-index: 30;
+  width: 150px; padding: 5px 10px; font-size: 12px;
+  background: var(--v17-panel-bg); color: var(--v17-banner);
+  border: 1px solid var(--v17-line); border-radius: 14px; outline: none;
+}
+.v17-map-search::placeholder { color: #8a7a50; }
+
+/* ---------- 地图：小地图 ---------- */
+.v17-minimap {
+  position: absolute; right: 10px; bottom: 10px; z-index: 30;
+  border: 1px solid var(--v17-line); border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.6); cursor: pointer;
+}
+
+/* ---------- 地图：右键快速菜单 ---------- */
+.v17-ctx-menu {
+  position: fixed; z-index: 9999; min-width: 140px;
+  background: var(--v17-panel-bg); border: 1px solid var(--v17-banner); border-radius: 6px;
+  padding: 4px 0; box-shadow: 0 4px 16px rgba(0,0,0,0.7);
+}
+.v17-ctx-item { padding: 7px 14px; font-size: 13px; color: var(--v17-banner); cursor: pointer; }
+.v17-ctx-item:hover { background: rgba(232,192,96,0.18); }
+
+/* ---------- 新手指引气泡 ---------- */
+.v17-guide-bubble {
+  position: absolute; z-index: 50; min-width: 180px; max-width: 240px;
+  background: linear-gradient(160deg, #2a2014, #1a140c); color: #ffe9b0;
+  border: 1px solid var(--v17-banner); border-radius: 8px;
+  padding: 10px 12px; font-size: 12px; line-height: 1.6;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.7);
+  animation: v17BubbleIn 0.35s ease;
+}
+.v17-guide-close { margin-top: 6px; text-align: right; color: #c9a450; cursor: pointer; font-size: 11px; }
+@keyframes v17BubbleIn { from { opacity: 0; transform: translateY(8px) scale(0.95); } to { opacity: 1; transform: none; } }
+
+/* ---------- 通知系统（战斗相关） ---------- */
+.v17-battle-notify {
+  position: fixed; left: 50%; top: 70px; transform: translateX(-50%); z-index: 9998;
+  display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none;
+}
+.v17-notify-item {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--v17-panel-bg); border: 1px solid var(--v17-line); border-radius: 20px;
+  padding: 6px 16px; font-size: 13px; color: var(--v17-banner);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.6);
+  animation: v17NotifyIn 0.35s ease;
+}
+.v17-notify-item.win  { border-color: #ffd54f; color: #ffe9b0; }
+.v17-notify-item.lose { border-color: #e05555; color: #ff9a80; }
+.v17-notify-item.streak { border-color: #ff8a3d; }
+.v17-notify-item.skill  { border-color: #9c6ade; }
+.v17-notify-item.out { opacity: 0; transition: opacity 0.4s ease; }
+.v17-notify-icon { font-size: 15px; }
+@keyframes v17NotifyIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+
+/* ---------- 军队信息面板深化 ---------- */
+.v17-army-block {
+  margin: 8px 0; padding: 8px; border: 1px solid var(--v17-line);
+  border-radius: 6px; background: rgba(0,0,0,0.22);
+}
+.v17-army-title { font-size: 13px; color: var(--v17-banner); margin-bottom: 4px; border-bottom: 1px dashed var(--v17-line); padding-bottom: 3px; }
+.v17-army-row { display: flex; align-items: center; gap: 8px; font-size: 12px; margin: 3px 0; flex-wrap: wrap; }
+.v17-army-k { color: #b8a060; min-width: 38px; }
+.v17-army-block b { color: #e8d5a3; }
+.v17-good { color: var(--v17-morale-g) !important; }
+.v17-warn { color: var(--v17-morale-y) !important; }
+.v17-bad  { color: var(--v17-morale-r) !important; }
+.v17-mix-bar { display: inline-flex; flex: 1; min-width: 90px; height: 10px; border-radius: 5px; overflow: hidden; border: 1px solid var(--v17-line); }
+.v17-mix-seg { display: inline-block; text-align: center; font-size: 8px; line-height: 10px; color: #1a1a1a; background: #8a7a50; }
+.v17-mix-seg:nth-child(1) { background: #7a9a6a; }
+.v17-mix-seg:nth-child(2) { background: #b07050; }
+.v17-mix-seg:nth-child(3) { background: #6a8ab0; }
+
+/* ---------- 响应式优化（窄屏） ---------- */
+@media (max-width: 768px) {
+  .v17-map-search { width: 110px; top: 120px; }
+  .v17-minimap { width: 120px; height: 80px; }
+  .v17-formation-bar { font-size: 11px; }
+  .v17-battle-weather { font-size: 11px; }
+  .v17-guide-bubble { max-width: 180px; font-size: 11px; }
+}
+@media (max-width: 480px) {
+  .v17-map-controls { right: 4px; top: 4px; }
+  .v17-map-search { right: 4px; top: 110px; width: 96px; }
+  .v17-minimap { display: none; } /* 极窄屏隐藏小地图 */
+}

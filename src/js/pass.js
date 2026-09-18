@@ -66,6 +66,13 @@ export function requestBuildPass(game, factionId, cityId, passNameOrId) {
   }
   res.money -= PASS_BUILD_COST_MONEY;
   res.food -= PASS_BUILD_COST_FOOD;
+  // BUG修复（pass.js #1）：模组新增关隘时 game.passes 运行时表可能尚未为该 id 初始化条目
+  //   （上面 requestBuildPass 的过滤条件 `!(game.passes[p.id] && ...)` 对缺失条目视为可建，
+  //   会选中 target；随后直接取 game.passes[target.id].pending 会抛 TypeError）。
+  //   修复：条目缺失时按默认结构补建，再写入 pending。
+  if (!game.passes[target.id]) {
+    game.passes[target.id] = { id: target.id, built: false, owner: null, garrison: 0, pending: 0 };
+  }
   game.passes[target.id].pending = PASS_BUILD_TURNS;
   game.pushLog(`${FACTIONS[factionId].name} 开始修建【${target.name}】（${PASS_BUILD_TURNS} 回合）`);
   return { ok: true, msg: `开始修建${target.name}`, passId: target.id };

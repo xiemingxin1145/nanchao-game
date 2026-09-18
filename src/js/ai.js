@@ -125,8 +125,13 @@ export class AIPlayer {
       if (gen.inArmy) continue;
       const city = game.cities.get(gen.location);
       if (city && city.garrison >= 2000) {
-        const troops = Math.min(gen.getMaxTroops() * (isStrong ? 1 : 0.8), city.garrison, isWeak ? 2500 : 3500);
-        if (troops < 1000) continue;
+        // BUG修复（ai.js #3）：旧存档/模组武将 getMaxTroops() 可能缺失或返回 undefined，
+        //   直接相乘得 NaN；而 `NaN < 1000` 恒为 false → 继续执行 `city.garrison -= NaN`，
+        //   把城市驻军污染成 NaN（后续所有城防/战斗计算连锁 NaN）。
+        //   修复：先把上限钳为有效数字，再用 `!(troops >= 1000)` 同时挡住 NaN 与过小值。
+        const maxT = Number(gen.getMaxTroops && gen.getMaxTroops()) || 1000;
+        const troops = Math.min(maxT * (isStrong ? 1 : 0.8), city.garrison, isWeak ? 2500 : 3500);
+        if (!(troops >= 1000)) continue;
         city.garrison -= troops;
         const army = new Army({
           factionId: this.factionId, generalId: gen.id, cityId: city.id,
@@ -177,7 +182,15 @@ export class AIPlayer {
     // 6) 招募在野武将
     const idleGens = game.getIdleGenerals();
     const recruitBonus = (this.techBag().recruitBonus || 0) + 0.2;
+    // 性能优化（ai.js #2 170+将后 AI 决策）：
+    //   基准：原版对全势力在野武将逐个掷招募概率，170+ 将时 idleGens 可能上百，
+    //   每个都要写 faction/loyalty/location，AI 回合尾帧卡顿。
+    //   优化：每回合最多扫描前 10 个候选，命中招募即停；其余下回合再扫，不影响策略。
+    const RECRUIT_SCAN_LIMIT = 10;
+    let recruitScanned = 0;
     for (const gen of idleGens) {
+      if (recruitScanned >= RECRUIT_SCAN_LIMIT) break;
+      recruitScanned++;
       if (res.money > 800 && Math.random() < recruitBonus) {
         gen.faction = this.factionId;
         gen.loyalty = 65;
@@ -298,7 +311,10 @@ export class AIPlayer {
       const eCmd = Number(gen && gen.effCommand) || 0;
       const eForce = Number(gen && gen.effForce) || 0;
       const atkPow = army.troops * (gen ? Math.max(1, (eCmd + eForce) / 100) : 1);
-      const defPow = target.garrison * (1 + target.defense / 100);
+      // BUG修复（ai.js #4）：模组新增城市可能缺 defense 字段（undefined），
+      //   原 `1 + target.defense/100` 得 NaN → defPow 为 NaN → 后续 `defPow * 1.1 > atkPow`
+      //   恒为 false，AI「明明能打却不打」。修复：缺失时按默认防御 10 兜底。
+      const defPow = target.garrison * (1 + (Number(target.defense) || 10) / 100);
       // V4.0: AI进攻阈值 1.5→1.3（原值1.5，新值1.3，调整原因: 让AI更积极进攻但不过于鲁莽）
       // V4.0: 防御检查 — 若己方城市少于3座则优先防守，不主动攻城
       // 性能优化（ai.js #2）：改用本回合入口缓存的势力城市数 _turnCityCounts，

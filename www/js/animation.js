@@ -108,6 +108,17 @@ export class CharacterAnimator {
     this._prologueSilhouetteCache = null; // 战场剪影预渲染帧
     this._timelineBgCache = {};              // 时间线关键事件预渲染缓存 {eventName:canvas}
     this._campMarkerPool = [];          // 战役标记对象池（map.js 复用）
+
+    // ============================================================
+    // V17.0 — 动画与地图增强：战斗动画深化
+    // 设计：play* 触发一次性粒子爆发 + 在 ctx 上直接绘制即时特效；
+    //      连续形变用 FX 列表 + update(dt) 推进 t，draw*BattleFX 渲染。
+    //      粒子上限仍受 _maxParticles / _achParticleCap 约束。
+    // ============================================================
+    this._battleFXs = [];          // 战斗FX列表 [{type,t,dur,x,y,...}]
+    this._battleFXCap = 24;        // 同时存活的战斗FX上限
+    this._moraleBars = new Map();   // 军队士气条 {key:{x,y,morale,t}}  供 map.js 每帧绘制
+    this._V17_CHARGE_HORN = false;  // 预留：马蹄声视觉标记（不接音频，仅视觉）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -482,7 +493,31 @@ export class CharacterAnimator {
       this._campaignVicFX.t += deltaTime;
       if (this._campaignVicFX.t >= this._campaignVicFX.dur) this._campaignVicFX = null;
     }
+
+    // ---- V17.0：战斗FX时间线推进（真实时间，不受慢动作影响）----
+    for (let i = this._battleFXs.length - 1; i >= 0; i--) {
+      const fx = this._battleFXs[i];
+      fx.t += deltaTime;
+      if (fx.t >= fx.dur) this._battleFXs.splice(i, 1);
+    }
+    // 士气条淡入淡出推进
+    for (const [k, m] of this._moraleBars) {
+      m.t += deltaTime;
+      if (m.t > 3.0) this._moraleBars.delete(k);
+    }
   }
+
+  // V17.0：推入战斗FX（带上限保护）
+  _pushBattleFX(fx) {
+    if (this._battleFXs.length >= this._battleFXCap) this._battleFXs.shift();
+    fx.t = 0;
+    this._battleFXs.push(fx);
+  }
+
+  // V17.0：缓动函数集合
+  _v17EaseOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+  _v17EaseInOut(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
+  _v17Lerp(a, b, t) { return a + (b - a) * t; }
 
   // V15.0：覆盖层一次性粒子（带上限保护，复用 _pushParticle 队列）
   _burstFXParticles(x, y, count, opts) {
@@ -1458,6 +1493,67 @@ export class CharacterAnimator {
         ctx.fillStyle = extra.color || '#8B7355';
         ctx.beginPath();
         ctx.arc(x, y, extra.size * (1 + (1 - t) * 1.2), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      // ---- V17.0 战斗动画深化粒子绘制 ----
+      case 'form_soldier': {
+        // 阵型切换中的士兵小方块（金色甲士）
+        ctx.globalAlpha = t * 0.9;
+        ctx.fillStyle = extra.color || '#d8c890';
+        ctx.fillRect(x - extra.size / 2, y - extra.size / 2, extra.size, extra.size);
+        break;
+      }
+      case 'rout_soldier': {
+        // 士气崩溃：四散逃跑士兵（小棕点，越跑越淡）
+        ctx.globalAlpha = t * 0.8;
+        ctx.fillStyle = extra.color || '#7a6a5a';
+        ctx.beginPath();
+        ctx.ellipse(x, y, extra.size, extra.size * 1.3, Math.atan2(extra.vy, extra.vx), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'volley_trail': {
+        // 齐射弹道尾迹：金色小线段（沿角度）
+        ctx.globalAlpha = t * 0.9;
+        ctx.strokeStyle = extra.color || '#e8d8a0';
+        ctx.lineWidth = 1.5;
+        const a = extra.angle || 0;
+        ctx.beginPath();
+        ctx.moveTo(x - Math.cos(a) * 6, y - Math.sin(a) * 6);
+        ctx.lineTo(x + Math.cos(a) * 6, y + Math.sin(a) * 6);
+        ctx.stroke();
+        break;
+      }
+      case 'shield': {
+        // 盾墙盾牌：灰蓝小矩形（竖直盾牌），随生命升起
+        ctx.globalAlpha = t * 0.85;
+        ctx.fillStyle = extra.color || '#7a8a9a';
+        ctx.strokeStyle = '#c0c8d0';
+        ctx.lineWidth = 0.8;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(extra.angle || 0);
+        ctx.fillRect(-extra.size / 2, -extra.size, extra.size, extra.size * 1.4);
+        ctx.strokeRect(-extra.size / 2, -extra.size, extra.size, extra.size * 1.4);
+        ctx.restore();
+        break;
+      }
+      case 'splash': {
+        // 水花：蓝色小水滴
+        ctx.globalAlpha = t * 0.85;
+        ctx.fillStyle = extra.color || '#6ab0e8';
+        ctx.beginPath();
+        ctx.ellipse(x, y, extra.size * 0.7, extra.size, 0, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'footprint': {
+        // 雪地脚印：白色椭圆渐隐
+        ctx.globalAlpha = t * 0.5;
+        ctx.fillStyle = extra.color || '#ffffff';
+        ctx.beginPath();
+        ctx.ellipse(x, y, extra.size, extra.size * 0.6, (extra.seed || 0) * 0.1, 0, Math.PI * 2);
         ctx.fill();
         break;
       }
@@ -3872,6 +3968,487 @@ export class CharacterAnimator {
     return !!(this._achFX || this._tierFX || this._endingFX
       || this._prologueFX || this._timelineFX
       || this._campaignIntroFX || this._campaignObjFX || this._campaignVicFX);
+  }
+
+  // ============================================================
+  // V17.0 — 战斗动画深化：阵型 / 士气 / 天气 / 技能 / 冲锋 / 齐射 /
+  //         盾墙 / 水战 / 崩溃
+  // 设计：每个 play* 方法触发粒子爆发 + 在 ctx 上立即绘制一帧即时特效；
+  //      连续形变由 _battleFXs 驱动，drawBattleFX(ctx) 每帧渲染。
+  //      粒子上限受 _pushParticle 统一约束。
+  // ============================================================
+
+  // ---- 阵型切换动画：方阵 → 锋矢/雁行/方阵 ----
+  // fromF/toF: 'square'(方阵) | 'arrow'(锋矢) | 'wildgoose'(雁行) | 'line'(横队)
+  // 在 (x,y) 处绘制 1.0s 的阵型形变过渡（士兵粒子从旧位飞到新位）
+  playFormationSwitch(ctx, fromF, toF, x, y) {
+    x = x || 0; y = y || 0;
+    // 士兵粒子从旧阵型目标位置飞向新阵型目标位置
+    const fromShape = this._v17FormationPoints(fromF || 'square', 60);
+    const toShape = this._v17FormationPoints(toF || 'arrow', 60);
+    const n = Math.min(12, fromShape.length, toShape.length);
+    for (let i = 0; i < n; i++) {
+      const a = fromShape[i], b = toShape[i];
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: 'form_soldier',
+        x: x + a[0], y: y + a[1],
+        vx: (b[0] - a[0]) * 1.6, vy: (b[1] - a[1]) * 1.6,
+        gravity: 0, drag: 2.0,
+        life: 0.7, maxLife: 0.7,
+        size: 2.2, color: '#d8c890',
+        seed: Math.random() * 100
+      });
+      this._pushParticle(s);
+    }
+    // 地面冲击波环（阵型切换完成时的气势）
+    this._pushBattleFX({ type: 'formation_ring', x, y, dur: 0.9,
+      color: '#FFD700', maxR: 48 });
+    // 立即绘制一帧光环
+    if (ctx) this._drawFormationRing(ctx, x, y, 0, 0.9, '#FFD700', 48);
+  }
+
+  // 按阵型名返回 N 个相对坐标点
+  _v17FormationPoints(name, spread = 60) {
+    const pts = [];
+    if (name === 'arrow') {           // 锋矢：三角箭头
+      for (let row = 0; row < 4; row++) {
+        const cnt = 4 + row;
+        for (let i = 0; i < cnt; i++) {
+          pts.push([(i - cnt / 2) * 8, -row * 8]);
+        }
+      }
+    } else if (name === 'wildgoose') { // 雁行：V 字斜列
+      for (let i = -5; i <= 5; i++) {
+        pts.push([i * 10, Math.abs(i) * -6]);
+      }
+    } else if (name === 'line') {      // 横队：一排
+      for (let i = -6; i <= 6; i++) pts.push([i * 8, 0]);
+    } else {                            // square 方阵（默认）
+      for (let r = 0; r < 3; r++) for (let c = -3; c <= 3; c++) {
+        pts.push([c * 8, (r - 1) * 8]);
+      }
+    }
+    return pts;
+  }
+
+  _drawFormationRing(ctx, x, y, t, dur, color, maxR) {
+    const p = Math.min(1, t / dur);
+    const r = this._v17EaseOutCubic(p) * maxR;
+    const alpha = (1 - p) * 0.8;
+    ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.beginPath(); ctx.arc(x, y, r * 0.6, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---- 士气可视化：在军队上方画士气条（绿→黄→红）----
+  // morale: 0~1。key 用于追踪同一军队（如 army.id），外部每帧调用以刷新位置
+  drawMoraleBar(ctx, x, y, morale, key = 'default') {
+    const m = Math.max(0, Math.min(1, morale));
+    const w = 28, h = 4;
+    // 颜色：高(>0.6)绿 / 中(0.3~0.6)黄 / 低(<0.3)红
+    const color = m > 0.6 ? '#4caf50' : m > 0.3 ? '#ffb300' : '#e53935';
+    ctx.save();
+      // 底板
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(x - w / 2 - 1, y - 1, w + 2, h + 2);
+      // 填充
+      ctx.fillStyle = color;
+      ctx.fillRect(x - w / 2, y, w * m, h);
+      // 高光
+      ctx.fillStyle = 'rgba(255,255,255,0.25)';
+      ctx.fillRect(x - w / 2, y, w * m, 1);
+    ctx.restore();
+    // 记录供 update 推进淡入淡出
+    this._moraleBars.set(key, { x, y, morale: m, t: 0 });
+  }
+
+  // ---- 士气崩溃动画：士兵四散逃跑 + 旗帜倒下 ----
+  playMoraleBreak(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 四散逃跑士兵粒子（向 8 个方向跑，渐隐）
+    for (let i = 0; i < 18; i++) {
+      const ang = (i / 18) * Math.PI * 2;
+      const sp = 60 + Math.random() * 90;
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: 'rout_soldier',
+        x: x + (Math.random() - 0.5) * 20,
+        y: y + (Math.random() - 0.5) * 10,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30,
+        gravity: 80, drag: 0.6,
+        life: 0.9 + Math.random() * 0.5, maxLife: 1.4,
+        size: 2 + Math.random() * 1.5,
+        color: Math.random() < 0.5 ? '#7a6a5a' : '#9a8a7a'
+      });
+      this._pushParticle(s);
+    }
+    // 2) 旗帜倒下 FX（1.2s）
+    this._pushBattleFX({ type: 'flag_fall', x, y, dur: 1.2 });
+    // 3) 尘土扬起
+    this.spawnParticle(x, y, 'dust');
+    // 4) 立即绘制旗帜倒下第一帧
+    if (ctx) this._drawFlagFall(ctx, x, y, 0, 1.2);
+  }
+
+  _drawFlagFall(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    const rot = p * Math.PI / 2.2;     // 旗帜倒下旋转角度
+    const alpha = 1 - Math.max(0, (p - 0.7) / 0.3); // 末尾渐隐
+    ctx.save();
+      ctx.translate(x, y);
+      ctx.globalAlpha = alpha;
+      // 旗杆
+      ctx.strokeStyle = '#6a4a2a';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -16); ctx.stroke();
+      // 旗帜（绕旗杆顶旋转倒下）
+      ctx.translate(0, -16);
+      ctx.rotate(rot);
+      ctx.fillStyle = '#a03030';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(8, 2, 14, 0);
+      ctx.quadraticCurveTo(8, 6, 0, 6);
+      ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // ---- 弓兵齐射动画：多支箭同时射出 + 轨迹 + 命中效果 ----
+  // dir: 1 向右 / -1 向左。在 (x,y) 处从弓兵阵位射出 N 支箭
+  playVolley(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    const N = 10 + Math.floor(Math.random() * 4); // 10~13 支
+    for (let i = 0; i < N; i++) {
+      const sx = x + (Math.random() - 0.5) * 30;
+      const sy = y - 10 - Math.random() * 15;
+      const tx = x + dir * (120 + Math.random() * 60);
+      const ty = y - 5 + Math.random() * 20;
+      // 弹道尾迹（一串点）
+      const segs = 6;
+      for (let k = 0; k < segs; k++) {
+        const tt = k / segs;
+        const s = this._getParticle();
+        // 抛物线高度
+        const arc = Math.sin(tt * Math.PI) * 25;
+        Object.assign(s, {
+          type: 'volley_trail',
+          x: this._v17Lerp(sx, tx, tt),
+          y: this._v17Lerp(sy, ty, tt) - arc,
+          vx: 0, vy: 0, gravity: 0, drag: 0,
+          life: 0.28, maxLife: 0.28,
+          size: 1.8, color: '#e8d8a0', angle: Math.atan2(ty - sy, tx - sx)
+        });
+        this._pushParticle(s);
+      }
+      // 命中火花
+      this._pushBattleFX({ type: 'volley_hit', x: tx, y: ty, dur: 0.35 });
+    }
+    // 弓兵阵位的开弓闪光
+    if (ctx) {
+      ctx.save();
+        ctx.globalAlpha = 0.6;
+        ctx.strokeStyle = '#fff2b0';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(x, y - 8, 8, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ---- 步兵盾墙动画：盾牌竖起 + 金属碰撞光效 ----
+  playShieldWall(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 盾牌竖起：一圈半透明盾牌（竖直矩形）从地面升起
+    const N = 7;
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI - Math.PI;  // 面向前半圆
+      const sx = x + Math.cos(ang) * 22;
+      const sy = y + Math.sin(ang) * 6;
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: 'shield',
+        x: sx, y: sy + 12,
+        vx: 0, vy: -8, gravity: 0, drag: 2,
+        life: 0.5, maxLife: 0.5,
+        size: 6, color: '#7a8a9a', angle: ang
+      });
+      this._pushParticle(s);
+    }
+    // 金属碰撞闪光（金色星形）
+    this._pushBattleFX({ type: 'shield_glint', x, y, dur: 0.45 });
+    // 立即绘制一帧金属闪光
+    if (ctx) {
+      ctx.save();
+        ctx.globalAlpha = 0.8;
+        ctx.strokeStyle = '#fff8c0';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          ctx.moveTo(x + Math.cos(a) * 6, y - 6 + Math.sin(a) * 6);
+          ctx.lineTo(x + Math.cos(a) * 14, y - 6 + Math.sin(a) * 14);
+        }
+        ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ---- 水军水战动画：战船碰撞 + 水花 + 箭雨 ----
+  playNavalBattle(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 水花（蓝色水滴从碰撞点向四周溅起）
+    for (let i = 0; i < 16; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 120;
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: 'splash',
+        x, y: y + 4,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 80,
+        gravity: 260, drag: 0.3,
+        life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+        size: 2 + Math.random() * 2.5,
+        color: Math.random() < 0.5 ? '#6ab0e8' : '#a8d8f0'
+      });
+      this._pushParticle(s);
+    }
+    // 2) 涟漪环
+    for (let i = 0; i < 3; i++) {
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: 'ripple', x: x + i * 6, y: y + i * 2,
+        vx: 0, vy: 0, gravity: 0, drag: 0,
+        life: 0.9 + i * 0.2, maxLife: 0.9 + i * 0.2,
+        size: 5, color: '#6ab0e8', angle: i * 0.5
+      });
+      this._pushParticle(s);
+    }
+    // 3) 箭雨（复用 arrow 粒子）
+    this.spawnParticle(x, y - 10, 'arrow');
+    // 4) 战船碰撞冲击环
+    this._pushBattleFX({ type: 'naval_ring', x, y, dur: 0.7 });
+    if (ctx) this._drawNavalRing(ctx, x, y, 0, 0.7);
+  }
+
+  _drawNavalRing(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    const r = this._v17EaseOutCubic(p) * 40;
+    ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.7;
+      ctx.strokeStyle = '#a8d8f0';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.3, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---- 骑兵冲锋动画：速度线 + 尘土 + 马蹄视觉 ----
+  // dir: 1 向右 / -1 向左
+  playCavalryCharge(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    // 速度线（5~8 条白色短线，沿冲锋方向向后）
+    const n = 5 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < n; i++) {
+      const s = this._getParticle();
+      Object.assign(s, {
+        type: 'speedline',
+        x: x - dir * (10 + Math.random() * 30),
+        y: y - 6 - Math.random() * 22,
+        vx: -dir * (220 + Math.random() * 160),
+        vy: 0, gravity: 0, drag: 0,
+        life: 0.18 + Math.random() * 0.15, maxLife: 0.33,
+        size: 16 + Math.random() * 12,
+        color: 'rgba(255,255,255,0.75)', angle: dir > 0 ? 0 : Math.PI
+      });
+      this._pushParticle(s);
+    }
+    // 尘土（马蹄下）
+    this.spawnParticle(x, y + 4, 'dust');
+    // 前冲位移
+    this.lunges.push({ x, y, dir, distance: 14 + Math.random() * 6, life: 0.35, maxLife: 0.35 });
+  }
+
+  // ---- 天气战斗效果：雨中溅水 / 雪中脚印 / 雾中模糊 ----
+  // weather: '雨' | '雪' | '雾'。在 (x,y) 处触发对应天气战斗粒子
+  playWeatherBattle(ctx, weather, x, y) {
+    x = x || 0; y = y || 0;
+    if (weather === '雨') {
+      // 雨滴击打地面溅起小水花
+      for (let i = 0; i < 10; i++) {
+        const s = this._getParticle();
+        Object.assign(s, {
+          type: 'splash',
+          x: x + (Math.random() - 0.5) * 30, y: y,
+          vx: (Math.random() - 0.5) * 40, vy: -30 - Math.random() * 30,
+          gravity: 200, drag: 0.3,
+          life: 0.3 + Math.random() * 0.2, maxLife: 0.5,
+          size: 1.5 + Math.random() * 1.5, color: '#9fc0e8'
+        });
+        this._pushParticle(s);
+      }
+    } else if (weather === '雪') {
+      // 雪中脚印（白色椭圆渐隐）
+      for (let i = 0; i < 5; i++) {
+        const s = this._getParticle();
+        Object.assign(s, {
+          type: 'footprint',
+          x: x + (Math.random() - 0.5) * 24,
+          y: y + (Math.random() - 0.5) * 10,
+          vx: 0, vy: 0, gravity: 0, drag: 0,
+          life: 1.2 + Math.random() * 0.6, maxLife: 1.8,
+          size: 2.5 + Math.random() * 1.5, color: '#ffffff',
+          seed: Math.random() * 100
+        });
+        this._pushParticle(s);
+      }
+    } else if (weather === '雾') {
+      // 雾中战斗：一团朦胧白雾扩散
+      for (let i = 0; i < 6; i++) {
+        const s = this._getParticle();
+        Object.assign(s, {
+          type: 'mist',
+          x: x + (Math.random() - 0.5) * 20,
+          y: y + (Math.random() - 0.5) * 12,
+          vx: (Math.random() - 0.5) * 14, vy: (Math.random() - 0.5) * 8,
+          gravity: 0, drag: 0.2,
+          life: 1.2 + Math.random() * 0.6, maxLife: 1.8,
+          size: 14 + Math.random() * 12, color: '#e8eef2'
+        });
+        this._pushParticle(s);
+      }
+    }
+  }
+
+  // ---- 技能释放动画深化：每个技能独特视觉（范围更大/粒子更多）----
+  // 复用 playSkill，但针对 V17 增加更大范围与更多粒子的深化版本
+  playSkillDeep(ctx, x, y, element = 'fire', power = 1) {
+    const k = Math.max(0.5, Math.min(2.5, power));  // 威力倍率
+    x = x || 0; y = y || 0;
+    if (element === 'water') {
+      // 巨浪：蓝色水墙扩散 + 大量水花
+      for (let i = 0; i < Math.round(14 * k); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 40 + Math.random() * 120 * k;
+        const s = this._getParticle();
+        Object.assign(s, { type: 'element_water',
+          x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40,
+          gravity: 120, drag: 0.5,
+          life: 0.7 + Math.random() * 0.5, maxLife: 1.2,
+          size: 3 + Math.random() * 3, color: '#6ab0e8' });
+        this._pushParticle(s);
+      }
+      this._pushBattleFX({ type: 'water_ring', x, y, dur: 0.8, maxR: 60 * k });
+    } else if (element === 'wind') {
+      // 飓风：旋转青色旋风（16 个粒子绕中心转）
+      for (let i = 0; i < Math.round(16 * k); i++) {
+        const a = (i / (16 * k)) * Math.PI * 2 + this.time * 4;
+        const r = 10 + Math.random() * 20 * k;
+        const s = this._getParticle();
+        Object.assign(s, { type: 'element_wind',
+          x: x + Math.cos(a) * r, y: y + Math.sin(a) * r,
+          vx: Math.cos(a + Math.PI / 2) * 80, vy: Math.sin(a + Math.PI / 2) * 80 - 20,
+          gravity: 0, drag: 0.8,
+          life: 0.5 + Math.random() * 0.3, maxLife: 0.8,
+          size: 2 + Math.random() * 2, color: '#8fe8d8', angle: a });
+        this._pushParticle(s);
+      }
+    } else if (element === 'thunder') {
+      // 雷霆：闪电分叉（白色折线粒子 + 冲击环）
+      this.spawnParticle(x, y, 'lightning');
+      for (let i = 0; i < Math.round(10 * k); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const s = this._getParticle();
+        Object.assign(s, { type: 'spark',
+          x, y, vx: Math.cos(a) * 120 * k, vy: Math.sin(a) * 120 * k,
+          gravity: 0, drag: 0.5,
+          life: 0.3 + Math.random() * 0.2, maxLife: 0.5,
+          size: 2, color: '#bfeaff' });
+        this._pushParticle(s);
+      }
+    } else { // fire 默认
+      this.spawnParticle(x, y, 'fire');
+      for (let i = 0; i < Math.round(16 * k); i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 60 + Math.random() * 140 * k;
+        const s = this._getParticle();
+        Object.assign(s, { type: 'element_fire', x, y,
+          vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          gravity: -40, drag: 0.5,
+          life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+          size: 3 + Math.random() * 3,
+          color: Math.random() < 0.5 ? '#ff5a2a' : '#ffaa22' });
+        this._pushParticle(s);
+      }
+      this._pushBattleFX({ type: 'fire_ring', x, y, dur: 0.7, maxR: 50 * k });
+    }
+  }
+
+  // ---- 每帧绘制所有激活的战斗 FX（外部 render 循环调用）----
+  drawBattleFX(ctx) {
+    if (!ctx || this._battleFXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._battleFXs) {
+      const p = fx.t / fx.dur;
+      switch (fx.type) {
+        case 'formation_ring':
+          this._drawFormationRing(ctx, fx.x, fx.y, fx.t, fx.dur, fx.color, fx.maxR);
+          break;
+        case 'flag_fall':
+          this._drawFlagFall(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'volley_hit': {
+          // 命中点金色火花
+          const alpha = (1 - p) * 0.9;
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = '#fff2b0';
+          ctx.beginPath(); ctx.arc(fx.x, fx.y, 3 + p * 6, 0, Math.PI * 2); ctx.fill();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'shield_glint': {
+          const alpha = (1 - p) * 0.9;
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = '#fff8c0';
+          ctx.lineWidth = 1.5;
+          const R = 8 + p * 18;
+          ctx.beginPath();
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + p * 2;
+            ctx.moveTo(fx.x + Math.cos(a) * R * 0.4, fx.y - 6 + Math.sin(a) * R * 0.4);
+            ctx.lineTo(fx.x + Math.cos(a) * R, fx.y - 6 + Math.sin(a) * R);
+          }
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'naval_ring':
+          this._drawNavalRing(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'water_ring': {
+          const r = this._v17EaseOutCubic(p) * (fx.maxR || 60);
+          ctx.globalAlpha = (1 - p) * 0.7;
+          ctx.strokeStyle = '#6ab0e8';
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.ellipse(fx.x, fx.y, r, r * 0.35, 0, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 1;
+          break;
+        }
+        case 'fire_ring': {
+          const r = this._v17EaseOutCubic(p) * (fx.maxR || 50);
+          ctx.globalAlpha = (1 - p) * 0.8;
+          ctx.strokeStyle = '#ff8a3a';
+          ctx.lineWidth = 2.5;
+          ctx.beginPath(); ctx.arc(fx.x, fx.y, r, 0, Math.PI * 2); ctx.stroke();
+          ctx.globalAlpha = 1;
+          break;
+        }
+      }
+    }
+    ctx.restore();
   }
 }
 

@@ -143,6 +143,23 @@ export class IsometricMap {
     this._lightAngle = Math.PI / 4;   // 光源方向（用于山体阴影；右上 45°）
     this._windowLightCache = new Map(); // 夜晚窗口亮灯离屏缓存 {cityId:canvas}
 
+    // ============================================================
+    // V17.0 — 动画与地图增强：交互与视觉
+    // 平滑缩放 / 拖拽 rAF / 小地图离屏缓存+点击跳转 / flyTo /
+    // 悬停高亮 / 战斗交叉剑标记 / 增援虚线箭头 / 天气粒子随缩放调节
+    // ============================================================
+    this._targetScale = this.scale;       // 平滑缩放目标值（wheel/setZoom 写入）
+    this._minimapCanvas = null;           // 小地图离屏缓存 canvas
+    this._minimapDirty = true;            // 小地图脏标记（城市归属/军队变化时置真）
+    this._hoverCity = null;               // 悬停城市 id
+    this._hoverArmy = null;                // 悬停军队 id
+    this._flyToAnim = null;               // {fromX,fromY,toX,toY,startTime,dur} 平滑飞行动画
+    this._reinforcementPaths = [];        // 增援路线 [{pts:[{isoX,isoY}...], color}]
+    this._battleMarkers = [];             // 战斗中军队标记 [{x,y,seed}]（屏幕坐标，每帧重算）
+    this._mMouseX = 0;                    // 鼠标位置（悬停用）
+    this._mMouseY = 0;
+    this._hoverPulse = 0;                 // 悬停脉冲计时
+
     this._bindEvents();
     this._initView();
   }
@@ -157,11 +174,40 @@ export class IsometricMap {
       this._lastFrame = now;
       this._animTime += dt;
       Animator.update(dt);
+
+      // V17.0：平滑缩放插值（this.scale → this._targetScale）
+      if (Math.abs(this.scale - this._targetScale) > 0.001) {
+        this.scale += (this._targetScale - this.scale) * Math.min(1, dt * 8);
+        this.dirty = true;
+        this._minimapDirty = true;
+      } else if (this.scale !== this._targetScale) {
+        this.scale = this._targetScale;
+      }
+
+      // V17.0：flyTo 平滑飞行动画推进
+      if (this._flyToAnim) {
+        const fa = this._flyToAnim;
+        const prog = Math.min(1, (now - fa.startTime) / fa.dur);
+        // easeInOutCubic
+        const e = prog < 0.5 ? 4 * prog * prog * prog
+                             : 1 - Math.pow(-2 * prog + 2, 3) / 2;
+        this.offsetX = fa.fromX + (fa.toX - fa.fromX) * e;
+        this.offsetY = fa.fromY + (fa.toY - fa.fromY) * e;
+        this.dirty = true;
+        this._minimapDirty = true;
+        if (prog >= 1) this._flyToAnim = null;
+      }
+
+      // V17.0：悬停脉冲推进
+      this._hoverPulse = Math.sin(this._animTime * 4) * 0.5 + 0.5;
+
       // V8.1：更新动态氛围（云/粒子）
       this._updateAtmosphere(dt);
       // 自适应帧率：有军队正在滑动 -> 60fps；否则 30fps 节能
       const moving = [...this._armyPosAnims.values()].some(a => a.moving);
-      const interval = (moving || this.dragging) ? this._fastFps : this._staticFps;
+      const interacting = moving || this.dragging || this._flyToAnim
+                          || Math.abs(this.scale - this._targetScale) > 0.001;
+      const interval = interacting ? this._fastFps : this._staticFps;
       this._accum += now - (loop._prev || now);
       loop._prev = now;
       if (this._accum >= interval) {
@@ -205,6 +251,13 @@ export class IsometricMap {
     const canvas = this.canvas;
 
     canvas.addEventListener('mousedown', (e) => {
+      // V17.0：若点击落在小地图区域内，则跳转而非开始拖拽
+      const mm = this._lastMinimapRect;
+      if (mm && e.clientX >= mm.x && e.clientX <= mm.x + mm.w
+          && e.clientY >= mm.y && e.clientY <= mm.y + mm.h) {
+        this._handleMinimapClick(e);
+        return;
+      }
       this.dragging = true;
       this.lastMouseX = e.clientX;
       this.lastMouseY = e.clientY;
@@ -212,6 +265,11 @@ export class IsometricMap {
     });
 
     window.addEventListener('mousemove', (e) => {
+      // V17.0：记录鼠标位置（悬停检测 + 小地图热区）
+      const rect = canvas.getBoundingClientRect();
+      this._mMouseX = e.clientX - rect.left;
+      this._mMouseY = e.clientY - rect.top;
+
       if (this.dragging) {
         const dx = e.clientX - this.lastMouseX;
         const dy = e.clientY - this.lastMouseY;
@@ -221,8 +279,9 @@ export class IsometricMap {
         this.lastMouseX = e.clientX;
         this.lastMouseY = e.clientY;
         this.dirty = true; // V5.0：平移使静态层失效
-        this.render();
+        // V17.0：拖拽时不立即 render，由 rAF loop 统一绘制（平滑）
       }
+      // V17.0：悬停检测（节流：在 render 中每帧根据 _mMouseX/Y 计算，这里只记录）
     });
 
     window.addEventListener('mouseup', (e) => {
@@ -234,11 +293,101 @@ export class IsometricMap {
 
     canvas.addEventListener('wheel', (e) => {
       e.preventDefault();
+      // V17.0：平滑缩放——只更新目标值，在 loop 中插值过渡
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      this.scale = Math.max(0.5, Math.min(2.0, this.scale * delta));
-      this.dirty = true; // V5.0：缩放使静态层失效
-      this.render();
+      this._targetScale = Math.max(0.5, Math.min(2.0, this._targetScale * delta));
+      this._minimapDirty = true;   // 缩放变化使小地图视口框失效
     }, { passive: false });
+  }
+
+  // V17.0：小地图点击跳转——点击位置对应到世界等距坐标，平滑飞过去
+  _handleMinimapClick(e) {
+    if (!this.game || !this._lastMinimapRect) return;
+    const mm = this._lastMinimapRect;
+    // 重新计算小地图使用的包围盒（与 drawMinimap 一致）
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const city of this.game.cities.values()) {
+      if (city.isoX < minX) minX = city.isoX;
+      if (city.isoX > maxX) maxX = city.isoX;
+      if (city.isoY < minY) minY = city.isoY;
+      if (city.isoY > maxY) maxY = city.isoY;
+    }
+    if (!isFinite(minX)) return;
+    const pad = 1; minX -= pad; maxX += pad; minY -= pad; maxY += pad;
+    const rect = this.canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left - mm.x;
+    const my = e.clientY - rect.top - mm.y;
+    const isoX = minX + (mx / mm.w) * (maxX - minX);
+    const isoY = minY + (my / mm.h) * (maxY - minY);
+    // 计算该等距点对应的屏幕中心坐标（使点击点落到视口中心）
+    const sx = (isoX - isoY) * (TILE_W / 2);
+    const sy = (isoX + isoY) * (TILE_H / 2);
+    // 求解 offsetX/offsetY 使 isoToScreen(isoX,isoY) = (canvasW/2, canvasH/2)
+    // (sx + offsetX) * scale = W/2  => offsetX = W/(2*scale) - sx
+    // (sy + offsetY) * scale = H/2  => offsetY = H/(2*scale) - sy
+    const W = this.canvas.width, H = this.canvas.height;
+    const toX = W / (2 * this.scale) - sx;
+    const toY = H / (2 * this.scale) - sy;
+    this._startFlyTo(this.offsetX, this.offsetY, toX, toY, 0.8);
+  }
+
+  // V17.0：启动一段平滑飞行动画
+  _startFlyTo(fromX, fromY, toX, toY, dur = 0.8) {
+    this._flyToAnim = {
+      fromX, fromY, toX, toY,
+      startTime: performance.now(), dur: dur * 1000
+    };
+  }
+
+  // V17.0：公共 API——平滑飞到指定城市
+  // cityId: 城市 id（this.game.cities 的 key）
+  flyTo(cityId) {
+    if (!this.game) return;
+    const city = this.game.cities.get(cityId);
+    if (!city) return;
+    const sx = (city.isoX - city.isoY) * (TILE_W / 2);
+    const sy = (city.isoX + city.isoY) * (TILE_H / 2);
+    const W = this.canvas.width, H = this.canvas.height;
+    const toX = W / (2 * this.scale) - sx;
+    const toY = H / (2 * this.scale) - sy;
+    this._startFlyTo(this.offsetX, this.offsetY, toX, toY, 0.9);
+  }
+
+  // V17.0：设置增援路线（己方援军出发时调用）
+  // points: [{isoX,isoY},...] 从出发地到目的地的节点；null 清除
+  setReinforcementRoute(points, color) {
+    if (!Array.isArray(points) || points.length < 2) {
+      this._reinforcementRoutes = [];
+      return;
+    }
+    this._reinforcementRoutes = [{
+      pts: points.filter(p => p && p.isoX != null).slice(0, 16),
+      color: color || '#7ec8ff'
+    }];
+    this._minimapDirty = true;
+  }
+
+  // V17.0：追加一条增援路线（多支援军同时出发）
+  addReinforcementRoute(points, color) {
+    if (!Array.isArray(points) || points.length < 2) return;
+    this._reinforcementRoutes.push({
+      pts: points.filter(p => p && p.isoX != null).slice(0, 16),
+      color: color || '#7ec8ff'
+    });
+    if (this._reinforcementRoutes.length > 4) this._reinforcementRoutes.shift();
+    this._minimapDirty = true;
+  }
+
+  // V17.0：清除增援路线
+  clearReinforcementRoutes() {
+    this._reinforcementRoutes = [];
+    this._minimapDirty = true;
+  }
+
+  // V17.0：标记战斗中军队（交战双方显示红色交叉剑标记）
+  // battles: [{armyIdA, armyIdB}]  调用方每帧传入当前交战对；空数组清除
+  setBattles(battles) {
+    this._battleMarkers = Array.isArray(battles) ? battles.slice(0, 12) : [];
   }
 
   _handleClick(e) {
@@ -298,19 +447,19 @@ export class IsometricMap {
 
   // V7.5：切换大地图/小地图缩放（M 键）
   toggleZoom() {
-    this.scale = this.scale > 1.2 ? 1.0 : 1.5;
-    this.dirty = true;
-    this.render();
+    // V17.0：平滑缩放——只改目标值，loop 中插值
+    this._targetScale = this._targetScale > 1.2 ? 1.0 : 1.5;
+    this._minimapDirty = true;
   }
 
   // ============================================================
   // V14.0 — 视口缩放公共 API（0.5x ~ 2x）
   // ============================================================
-  // 设置缩放级别（自动钳制到 0.5~2.0），触发静态层重绘
+  // 设置缩放级别（自动钳制到 0.5~2.0），V17.0 平滑过渡
   setZoom(level) {
-    this.scale = Math.max(0.5, Math.min(2.0, Number(level) || 1.0));
-    this.dirty = true;
-    return this.scale;
+    this._targetScale = Math.max(0.5, Math.min(2.0, Number(level) || 1.0));
+    this._minimapDirty = true;
+    return this._targetScale;
   }
   // 获取当前缩放级别
   getZoom() { return this.scale; }
@@ -1043,10 +1192,16 @@ export class IsometricMap {
     if (this._fxFrameSkip !== 0 && (this.weather === '雾' || this.weather === '多云')) return;
 
     const intervalMap = { '雨': 0.02, '雪': 0.06, '雾': 0.12, '沙暴': 0.04, '多云': 0.2, '晴': 999 };
-    const iv = intervalMap[this.weather] || 999;
+    let iv = intervalMap[this.weather] || 999;
+    // V17.0：缩放级别调节——放大时粒子更少更稀（聚焦局部），缩小时粒子更多
+    // scale∈[0.5,2.0]：scale=2 → iv×1.8（少）；scale=0.5 → iv×0.6（多）
+    const zoomFactor = this.scale || 1.0;
+    iv = iv * (0.6 + zoomFactor * 0.6);
     if (this._weatherEmitTimer > 0) return;
     this._weatherEmitTimer = iv;
-    if (this._weatherParticles.length >= this._WEATHER_PARTICLE_CAP) return;
+    // V17.0：粒子上限也随缩放微调（放大时上限降低，减少 fillrate 压力）
+    const cap = Math.round(this._WEATHER_PARTICLE_CAP * (zoomFactor > 1.4 ? 0.6 : zoomFactor < 0.8 ? 1.2 : 1.0));
+    if (this._weatherParticles.length >= cap) return;
 
     const p = this._weatherGet();
     switch (this.weather) {
@@ -1396,6 +1551,16 @@ export class IsometricMap {
     // V15.0：天气粒子（雨滴/雪花/雾气/沙尘，最上层覆盖）
     this._drawWeatherParticles(ctx);
 
+    // V17.0：悬停高亮（鼠标悬停城市/军队时金色脉冲圈）
+    this._updateHover();
+    this._drawHoverHighlight(ctx);
+
+    // V17.0：战斗中军队标记（红色交叉剑）
+    this._drawBattleMarkers(ctx);
+
+    // V17.0：增援路线（主地图上的蓝色虚线箭头）
+    this._drawReinforcementRoutes(ctx);
+
     // V14.0：小地图（右下角，缩略全图 + 视口框 + 城市/军队点）
     const mmW = 140, mmH = 90;
     const mmX = W - mmW - 12, mmY = H - mmH - 12;
@@ -1407,6 +1572,9 @@ export class IsometricMap {
     // V16.0：战役模式地图标记（最上层，覆盖一切）
     this._drawCampaignMarkers(ctx);
     this._drawCampaignParticles(ctx);
+
+    // V17.0：战斗动画深化 FX（阵型环/旗帜倒下/齐射命中/盾墙闪光/水战环）
+    Animator.drawBattleFX(ctx);
   }
 
   // 构建离屏静态层
@@ -2184,15 +2352,48 @@ export class IsometricMap {
   // ============================================================
   // V14.0 — 小地图（右下角缩略全图 + 视口框 + 城市点 + 军队点）
   // ============================================================
+  // 小地图：V17.0 离屏渲染缓存 + 军队/城市/战争迷雾/视口框 + 点击跳转热区
   drawMinimap(ctx, x, y, w, h) {
     if (!ctx || !this.game) return;
+    // 记录热区（供 mousedown 检测点击跳转）
+    this._lastMinimapRect = { x, y, w, h };
+
+    // V17.0：离屏缓存——仅在脏标记时重建小地图底图（城市/军队/战争迷雾）
+    if (this._minimapDirty || !this._minimapCanvas) {
+      this._renderMinimapToCache(w, h);
+      this._minimapDirty = false;
+    }
+
     ctx.save();
+    // 绘制缓存底图
+    if (this._minimapCanvas) {
+      ctx.drawImage(this._minimapCanvas, x, y, w, h);
+    }
+    // 视口框（每帧重画，随缩放/平移实时更新）
+    this._drawMinimapViewport(ctx, x, y, w, h);
+    // 增援路线（小地图上用势力色虚线）
+    this._drawMinimapReinforcements(ctx, x, y, w, h);
+    ctx.restore();
+  }
+
+  // V17.0：把小地图底图渲染到离屏 canvas（城市/军队/战争迷雾）
+  _renderMinimapToCache(w, h) {
+    if (!this._minimapCanvas) {
+      this._minimapCanvas = document.createElement('canvas');
+    }
+    // 离屏 canvas 用 2x 分辨率提升清晰度
+    const DPR = 2;
+    this._minimapCanvas.width = w * DPR;
+    this._minimapCanvas.height = h * DPR;
+    const c = this._minimapCanvas.getContext('2d');
+    c.scale(DPR, DPR);
+
     // 背景
-    ctx.fillStyle = 'rgba(20,30,20,0.85)';
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeStyle = '#C4A55A';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(x, y, w, h);
+    c.fillStyle = 'rgba(20,30,20,0.85)';
+    c.fillRect(0, 0, w, h);
+    c.strokeStyle = '#C4A55A';
+    c.lineWidth = 1;
+    c.strokeRect(0, 0, w, h);
 
     // 计算全图包围盒
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -2202,34 +2403,65 @@ export class IsometricMap {
       if (city.isoY < minY) minY = city.isoY;
       if (city.isoY > maxY) maxY = city.isoY;
     }
-    if (!isFinite(minX)) { ctx.restore(); return; }
+    if (!isFinite(minX)) return;
     const pad = 1;
     minX -= pad; maxX += pad; minY -= pad; maxY += pad;
     const sx = w / (maxX - minX);
     const sy = h / (maxY - minY);
     const toMini = (isoX, isoY) => ({
-      mx: x + (isoX - minX) * sx,
-      my: y + (isoY - minY) * sy
+      mx: (isoX - minX) * sx,
+      my: (isoY - minY) * sy
     });
 
-    // 城市点
+    // 战争迷雾：未探索城市画灰雾点
     for (const city of this.game.cities.values()) {
+      const explored = (typeof this.game.isCityExplored === 'function')
+        ? this.game.isCityExplored(city.id) : true;
       const { mx, my } = toMini(city.isoX, city.isoY);
+      if (!explored) {
+        c.fillStyle = 'rgba(80,80,80,0.6)';
+        c.beginPath(); c.arc(mx, my, 2, 0, Math.PI * 2); c.fill();
+        continue;
+      }
       const faction = city.owner ? FACTIONS[city.owner] : null;
-      ctx.fillStyle = faction ? faction.color : '#888';
+      c.fillStyle = faction ? faction.color : '#888';
       const r = city.capital ? 2.5 : 1.5;
-      ctx.beginPath(); ctx.arc(mx, my, r, 0, Math.PI * 2); ctx.fill();
+      c.beginPath(); c.arc(mx, my, r, 0, Math.PI * 2); c.fill();
     }
-    // 军队点
+    // 军队点（白色小三角/圆点）
     for (const army of this.game.armies) {
-      const c = this.game.cities.get(army.cityId);
-      if (!c) continue;
-      const { mx, my } = toMini(c.isoX, c.isoY);
-      ctx.fillStyle = '#FFFFFF';
-      ctx.beginPath(); ctx.arc(mx, my, 1.8, 0, Math.PI * 2); ctx.fill();
+      const city = this.game.cities.get(army.cityId);
+      if (!city) continue;
+      const { mx, my } = toMini(city.isoX, city.isoY);
+      c.fillStyle = '#FFFFFF';
+      c.beginPath(); c.arc(mx, my, 1.8, 0, Math.PI * 2); c.fill();
+      // V17.0：战斗中军队画红色小点
+      if (this._isArmyInBattle(army.id)) {
+        c.fillStyle = '#ff3030';
+        c.beginPath(); c.arc(mx, my, 2.6, 0, Math.PI * 2); c.fill();
+      }
     }
-    // 视口框（当前 offset/scale 对应的等距范围近似）
-    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    // 保存包围盒供视口框计算
+    this._minimapBounds = { minX, minY, sx, sy, w, h };
+  }
+
+  // V17.0：判断某军队是否在战斗中（由 setBattles 提供）
+  _isArmyInBattle(armyId) {
+    for (const b of this._battleMarkers) {
+      if (b.armyIdA === armyId || b.armyIdB === armyId) return true;
+    }
+    return false;
+  }
+
+  // V17.0：小地图视口框（每帧重画）
+  _drawMinimapViewport(ctx, x, y, w, h) {
+    if (!this._minimapBounds) return;
+    const b = this._minimapBounds;
+    const toMini = (isoX, isoY) => ({
+      mx: x + (isoX - b.minX) * b.sx,
+      my: y + (isoY - b.minY) * b.sy
+    });
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 1;
     const corners = [
       this.screenToIso(0, 0),
@@ -2244,7 +2476,26 @@ export class IsometricMap {
     });
     ctx.closePath();
     ctx.stroke();
+  }
 
+  // V17.0：小地图上的增援路线（势力色虚线）
+  _drawMinimapReinforcements(ctx, x, y, w, h) {
+    if (!this._minimapBounds || this._reinforcementRoutes.length === 0) return;
+    const b = this._minimapBounds;
+    ctx.save();
+    for (const route of this._reinforcementRoutes) {
+      ctx.strokeStyle = route.color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 2]);
+      ctx.beginPath();
+      route.pts.forEach((p, i) => {
+        const mx = x + (p.isoX - b.minX) * b.sx;
+        const my = y + (p.isoY - b.minY) * b.sy;
+        if (i === 0) ctx.moveTo(mx, my); else ctx.lineTo(mx, my);
+      });
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
     ctx.restore();
   }
 
@@ -2741,6 +2992,164 @@ export class IsometricMap {
         ctx.fillStyle = 'rgba(255,220,120,0.85)';
         ctx.fillRect(wx, wy, 2.5, 2.5);
       }
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V17.0：悬停高亮 / 战斗标记 / 增援路线
+  // ============================================================
+
+  // 每帧根据鼠标位置检测悬停城市/军队（节流：render 中调用）
+  _updateHover() {
+    this._hoverCity = null;
+    this._hoverArmy = null;
+    if (!this.game) return;
+    const mx = this._mMouseX, my = this._mMouseY;
+    // 小地图区域内不触发悬停
+    const mm = this._lastMinimapRect;
+    if (mm && mx >= mm.x && mx <= mm.x + mm.w && my >= mm.y && my <= mm.y + mm.h) return;
+
+    // 检测城市
+    let bestCity = null, bestCityD = Infinity;
+    for (const city of this.game.cities.values()) {
+      if (typeof this.game.isCityExplored === 'function'
+          && !this.game.isCityExplored(city.id)) continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      const r = (20 + city.size * 6) * this.scale;
+      const dx = mx - pos.x, dy = my - pos.y;
+      const d = dx * dx + dy * dy;
+      if (d < r * r && d < bestCityD) { bestCityD = d; bestCity = city; }
+    }
+    this._hoverCity = bestCity ? bestCity.id : null;
+
+    // 检测军队
+    let bestArmy = null, bestArmyD = Infinity;
+    for (const army of this.game.armies) {
+      const city = this.game.cities.get(army.cityId);
+      if (!city) continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      const r = 16 * this.scale;
+      const dx = mx - pos.x, dy = my - (pos.y - 20 * this.scale);
+      const d = dx * dx + dy * dy;
+      if (d < r * r && d < bestArmyD) { bestArmyD = d; bestArmy = army; }
+    }
+    this._hoverArmy = bestArmy ? bestArmy.id : null;
+  }
+
+  // 绘制悬停高亮（金色脉冲圈）
+  _drawHoverHighlight(ctx) {
+    if (!this.game) return;
+    const pulse = 0.6 + this._hoverPulse * 0.4;
+    ctx.save();
+    if (this._hoverCity) {
+      const city = this.game.cities.get(this._hoverCity);
+      if (city) {
+        const pos = this.isoToScreen(city.isoX, city.isoY);
+        const r = (20 + city.size * 6) * this.scale;
+        ctx.globalAlpha = 0.7 * pulse;
+        ctx.strokeStyle = '#FFD700';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.lineDashOffset = -this._animTime * 15;
+        ctx.beginPath(); ctx.arc(pos.x, pos.y, r + 4, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+    if (this._hoverArmy && !this._hoverCity) {
+      const army = this.game.armies.find(a => a.id === this._hoverArmy);
+      if (army) {
+        const city = this.game.cities.get(army.cityId);
+        if (city) {
+          const pos = this.isoToScreen(city.isoX, city.isoY);
+          ctx.globalAlpha = 0.7 * pulse;
+          ctx.strokeStyle = '#FFE080';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y - 20 * this.scale, 14 * this.scale + 3, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // 战斗中军队标记：在交战双方军队上方画红色交叉剑
+  _drawBattleMarkers(ctx) {
+    if (!this.game || this._battleMarkers.length === 0) return;
+    ctx.save();
+    for (const b of this._battleMarkers) {
+      // 找到两支军队的屏幕位置，在其中点画交叉剑
+      const armyA = this.game.armies.find(a => a.id === b.armyIdA);
+      const armyB = this.game.armies.find(a => a.id === b.armyIdB);
+      if (!armyA || !armyB) continue;
+      const cityA = this.game.cities.get(armyA.cityId);
+      const cityB = this.game.cities.get(armyB.cityId);
+      if (!cityA || !cityB) continue;
+      const pa = this.isoToScreen(cityA.isoX, cityA.isoY);
+      const pb = this.isoToScreen(cityB.isoX, cityB.isoY);
+      const mx = (pa.x + pb.x) / 2;
+      const my = (pa.y + pb.y) / 2 - 20 * this.scale;
+      if (!this._onScreen(mx, my, 100)) continue;
+      // 红色脉冲外圈
+      const pulse = 0.6 + Math.sin(this._animTime * 6) * 0.3;
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = 'rgba(200,30,30,0.25)';
+      ctx.beginPath(); ctx.arc(mx, my, 12 * this.scale, 0, Math.PI * 2); ctx.fill();
+      // 交叉剑（红色）
+      ctx.strokeStyle = '#e53935';
+      ctx.lineWidth = 2 * this.scale;
+      ctx.lineCap = 'round';
+      const s = 7 * this.scale;
+      ctx.beginPath();
+      ctx.moveTo(mx - s, my - s); ctx.lineTo(mx + s, my + s);
+      ctx.moveTo(mx + s, my - s); ctx.lineTo(mx - s, my + s);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 增援路线：主地图上的蓝色虚线箭头（流动光点）
+  _drawReinforcementRoutes(ctx) {
+    if (!this.game || this._reinforcementRoutes.length === 0) return;
+    ctx.save();
+    for (const route of this._reinforcementRoutes) {
+      const pts = route.pts.map(p => this.isoToScreen(p.isoX, p.isoY));
+      if (pts.length < 2) continue;
+      // 视口粗裁剪
+      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+      if (!this._onScreen(cx, cy, 400)) continue;
+      // 虚线（流动）
+      ctx.strokeStyle = route.color;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([8, 6]);
+      ctx.lineDashOffset = -this._animTime * 30;
+      ctx.beginPath();
+      pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // 沿路径流动的箭头光点
+      const total = pts.length - 1;
+      const segT = (this._animTime * 0.5) % total;
+      const i0 = Math.floor(segT);
+      const f = segT - i0;
+      const a = pts[i0], b = pts[Math.min(i0 + 1, pts.length - 1)];
+      const ax = a.x + (b.x - a.x) * f;
+      const ay = a.y + (b.y - a.y) * f;
+      const glow = ctx.createRadialGradient(ax, ay, 0, ax, ay, 10);
+      glow.addColorStop(0, 'rgba(200,230,255,0.9)');
+      glow.addColorStop(1, 'rgba(100,180,255,0)');
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(ax, ay, 10, 0, Math.PI * 2); ctx.fill();
+      // 箭头三角
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      ctx.fillStyle = route.color;
+      ctx.beginPath();
+      ctx.moveTo(ax + Math.cos(ang) * 8, ay + Math.sin(ang) * 8);
+      ctx.lineTo(ax + Math.cos(ang + 2.5) * 6, ay + Math.sin(ang + 2.5) * 6);
+      ctx.lineTo(ax + Math.cos(ang - 2.5) * 6, ay + Math.sin(ang - 2.5) * 6);
+      ctx.closePath(); ctx.fill();
     }
     ctx.restore();
   }

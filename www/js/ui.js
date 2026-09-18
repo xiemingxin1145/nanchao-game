@@ -21,6 +21,7 @@ import { BGM_INFO } from './audio.js';
 import { GAME_GUIDE, TUTORIAL_CHAPTERS } from './tutorial.js';
 import { OFFICES, TITLES as RANKS, getOffice } from './office.js'; // V7.0 官职爵位
 import { FORMATIONS, availableFormations, maxFormationLevel } from './formation.js'; // V9.0 阵法
+import { computeSupplyStatus } from './supply.js'; // V17.0 补给状态（军队面板深化）
 import { formatPlayTime } from './stats.js';
 // V4.0: 模组系统
 import { modManager } from './modding.js';
@@ -153,7 +154,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge">V16.0 · 史诗长卷版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge">V17.0 · 血战沙场版</div>
         </div>
       </div>
     `;
@@ -1062,8 +1063,10 @@ export class UI {
     this.map.onSelect = (sel) => this.handleMapSelect(sel);
     this.map.resize();
     this.map.startLoop(); // 启动待机动画渲染循环
+    // V17.0：地图交互增强（缩放控件/搜索/小地图/双击/右键菜单）
+    this._v17InitMapExtras(canvas);
 
-    window.addEventListener('resize', () => { if (this.map) { this.map.resize(); this._updateMapMarker(); } });
+    window.addEventListener('resize', () => { if (this.map) { this.map.resize(); this._updateMapMarker(); this._v17RenderMinimap(); } });
 
     // 绑定按钮
     document.getElementById('btn-end-turn').onclick = () => this.endTurn();
@@ -1533,6 +1536,8 @@ export class UI {
           <div class="stat-row"><span>忠诚</span><b>${Math.round(gen.loyalty)}</b></div>
         </div>
       ` : ''}
+      <!-- V17.0：军队信息深化（士气/阵型/兵种/补给/天气修正/武将详情/战斗预览） -->
+      ${this._v17ArmyDeepHTML(army, gen, city)}
       <div class="action-buttons">
         ${this._legionButtons(army)}
         ${!army.hasMoved ? `
@@ -2049,7 +2054,11 @@ export class UI {
     modal.innerHTML = `
       <div class="modal battle-modal v13-battle-modal">
         <div class="battle-round-badge v13-round-badge" id="bt-round">第 1 / ${st.maxRounds || 5} 回合</div>
+        <!-- V17.0：战场顶部天气图标条 -->
+        <div class="v17-battle-weather" id="bt-v17-weather"></div>
         <div class="battle-arena v13-battle-arena" id="bt-arena">
+          <!-- V17.0：战场边缘地形标注 -->
+          <div class="v17-terrain-tag" id="bt-v17-terrain"></div>
           <div class="battle-scene" style="background-image:url('${IMG.battle(sceneKey)}')" onerror="this.style.display='none'"></div>
           <canvas id="battle-canvas" width="760" height="260"></canvas>
           <div class="battle-side-box" id="bt-att-box" style="--v13-faction:${attColor}">
@@ -2060,6 +2069,10 @@ export class UI {
               <div class="battle-gen-name name-glow">${(st.attacker && st.attacker.name) || '我军'}</div>
               <div class="troop-bar-wrap"><div class="troop-bar v13-troop-bar" id="bt-att-bar"></div></div>
               <div class="troop-num" id="bt-att-num">0</div>
+              <!-- V17.0：攻方士气条（绿→黄→红渐变） -->
+              <div class="v17-morale-track" id="bt-v17-morale-att" title="军心">
+                <div class="v17-morale-fill"></div><span class="v17-morale-text">军心 --</span>
+              </div>
             </div>
           </div>
           <div class="battle-vs-big">VS</div>
@@ -2071,17 +2084,217 @@ export class UI {
               <div class="battle-gen-name name-glow">${(st.defender && st.defender.name) || '守军'}</div>
               <div class="troop-bar-wrap"><div class="troop-bar v13-troop-bar" id="bt-def-bar"></div></div>
               <div class="troop-num" id="bt-def-num">0</div>
+              <!-- V17.0：守方士气条 -->
+              <div class="v17-morale-track" id="bt-v17-morale-def" title="军心">
+                <div class="v17-morale-fill"></div><span class="v17-morale-text">军心 --</span>
+              </div>
             </div>
           </div>
         </div>
+        <!-- V17.0：连胜/连败士气影响提示 -->
+        <div class="v17-streak-hint" id="bt-v17-streak" style="display:none"></div>
         <div class="siege-wrap" id="bt-siege-wrap" style="display:none">
           <div class="siege-label">破城进度 —— ${st.cityName || ''}</div>
           <div class="siege-bar"><div class="siege-fill" id="bt-siege-fill"></div></div>
         </div>
+        <!-- V17.0：当前阵型 + 可切换阵型按钮 -->
+        <div class="v17-formation-bar" id="bt-v17-formation"></div>
         <div class="battle-log" id="bt-log"></div>
+        <!-- V17.0：技能按钮栏（可用技能 + 冷却进度） -->
+        <div class="v17-skill-bar" id="bt-v17-skills"></div>
         <div class="battle-actions v13-scroll-bar" id="bt-actions"></div>
       </div>
     `;
+    // V17.0：战斗增强层（天气/地形/士气/阵型/技能/连胜）
+    this._v17RenderBattleExtras(st, true);
+  }
+
+  // ============================================================
+  // V17.0「血战沙场版」战斗界面深化
+  //  约定：所有新类名 v17- 前缀；所有模型 API 调用带 typeof 守卫。
+  //  统一读取战斗状态，兼容嵌套(st.attacker.troops)与扁平(st.attackerTroops)两种结构。
+  // ============================================================
+  _v17Att(st) { return (st && st.attacker) || {}; }
+  _v17Def(st) { return (st && st.defender) || {}; }
+  _v17AttTroops(st) { const a = this._v17Att(st); return a.troops != null ? a.troops : (st.attackerTroops != null ? st.attackerTroops : 0); }
+  _v17DefTroops(st) { const d = this._v17Def(st); return d.troops != null ? d.troops : (st.defenderTroops != null ? st.defenderTroops : 0); }
+
+  // 读取一支战斗方的士气（0~100），缺失时由兵力比例派生
+  _v17MoraleOf(st, side) {
+    const s = side === 'att' ? this._v17Att(st) : this._v17Def(st);
+    if (typeof s.morale === 'number') return Math.max(0, Math.min(100, s.morale));
+    if (typeof s.armyMorale === 'number') return Math.max(0, Math.min(100, s.armyMorale));
+    // 派生：以当前兵力/初始兵力估算军心
+    const cur = side === 'att' ? this._v17AttTroops(st) : this._v17DefTroops(st);
+    const max = side === 'att' ? (st._attMax || st.startAttackerTroops || cur || 1)
+                               : (st._defMax || st.startDefenderTroops || cur || 1);
+    return Math.max(10, Math.min(100, Math.round((cur / Math.max(1, max)) * 100)));
+  }
+
+  // 天气图标（依据季节 + 随机战场气象）
+  _v17BattleWeatherIcon(st) {
+    const season = (this.game && typeof this.game.getSeason === 'function') ? this.game.getSeason() : '';
+    // 地形衍生天气倾向
+    const t = (st && st.terrain) || 'plain';
+    const map = { spring: '🌸', summer: '☀️', autumn: '🍂', winter: '❄️' };
+    let icon = map[season] || '🌤';
+    let label = season ? (season + '季') : '晴';
+    if (t === 'river') { icon = '🌊'; label = '水泽·风急'; }
+    else if (t === 'mountain' || t === 'hill') { icon = '⛰️'; label = '山地·雾霭'; }
+    else if (t === 'forest') { icon = '🌲'; label = '林地·阴沉'; }
+    else if (t === 'desert') { icon = '🏜️'; label = '荒漠·烈日'; }
+    return { icon, label };
+  }
+
+  // 集中渲染战斗增强层
+  _v17RenderBattleExtras(st, isFirst) {
+    if (!st) return;
+    // ---- 天气图标（顶部） ----
+    const wEl = document.getElementById('bt-v17-weather');
+    if (wEl) {
+      const w = this._v17BattleWeatherIcon(st);
+      wEl.innerHTML = `<span class="v17-wx-icon">${w.icon}</span><span class="v17-wx-label">${w.label}</span>` +
+        `<span class="v17-wx-hint">${this._v17WeatherModText(st)}</span>`;
+    }
+    // ---- 地形标注（战场边缘） ----
+    const tEl = document.getElementById('bt-v17-terrain');
+    if (tEl) {
+      const t = (st.terrain) || 'plain';
+      const tName = (TERRAIN && TERRAIN[t] && TERRAIN[t].name) ? TERRAIN[t].name : (t === 'plain' ? '平原' : t);
+      tEl.innerHTML = `⛰ ${tName}${st.siege ? ' · 攻城战' : ''}${st.cityName ? ' · ' + st.cityName : ''}`;
+    }
+    // ---- 双方士气条 ----
+    this._v17UpdateMoraleBar('bt-v17-morale-att', this._v17MoraleOf(st, 'att'));
+    this._v17UpdateMoraleBar('bt-v17-morale-def', this._v17MoraleOf(st, 'def'));
+    // ---- 连胜/连败提示 ----
+    this._v17RenderStreakHint(st);
+    // ---- 阵型栏 ----
+    this._v17RenderFormationBar(st);
+    // ---- 技能冷却栏 ----
+    this._v17RenderSkillBar(st);
+    // 新手指引：首次战斗阵型引导 / 首次天气提示 / 首次士气气泡
+    if (isFirst) this._v17FirstBattleGuides(st);
+  }
+
+  _v17UpdateMoraleBar(barId, morale) {
+    const track = document.getElementById(barId);
+    if (!track) return;
+    const fill = track.querySelector('.v17-morale-fill');
+    const txt = track.querySelector('.v17-morale-text');
+    if (fill) fill.style.width = Math.max(0, Math.min(100, morale)) + '%';
+    // 绿→黄→红渐变：通过类名切换色相
+    track.classList.remove('v17-morale-high', 'v17-morale-mid', 'v17-morale-low');
+    track.classList.add(morale >= 66 ? 'v17-morale-high' : (morale >= 33 ? 'v17-morale-mid' : 'v17-morale-low'));
+    if (txt) txt.textContent = '军心 ' + Math.round(morale);
+  }
+
+  _v17WeatherModText(st) {
+    const t = (st && st.terrain) || 'plain';
+    const mods = { plain: '野战·无修正', river: '水军/弓兵+，骑兵-', mountain: '弓兵+，重骑-',
+      forest: '伏兵+，骑兵-', desert: '补给消耗+' };
+    return mods[t] || '地形无修正';
+  }
+
+  // 连胜/连败士气影响提示
+  _v17RenderStreakHint(st) {
+    const el = document.getElementById('bt-v17-streak');
+    if (!el) return;
+    const stats = (this.game && this.game.stats) || {};
+    const ws = stats.winStreak || 0;
+    let html = '', cls = '';
+    if (ws >= 3) { html = `🔥 我方连胜 ${ws} 场！全军士气高昂，攻防+${Math.min(ws, 10)}%`; cls = 'v17-streak-win'; }
+    else if (ws <= -2 || (stats.lossStreak && stats.lossStreak >= 2)) {
+      const ls = Math.abs(stats.lossStreak || 2);
+      html = `💀 我方连败 ${ls} 场…士气低落，需稳扎稳打`; cls = 'v17-streak-lose';
+    }
+    if (!html) { el.style.display = 'none'; return; }
+    el.className = 'v17-streak-hint ' + cls;
+    el.innerHTML = html;
+    el.style.display = 'block';
+  }
+
+  // 当前阵型 + 可切换阵型按钮
+  _v17RenderFormationBar(st) {
+    const el = document.getElementById('bt-v17-formation');
+    if (!el) return;
+    // 尝试从战斗方/当前选中军队读取当前阵型
+    let curFid = null;
+    const att = this._v17Att(st);
+    if (att && att.formation) curFid = att.formation;
+    if (!curFid && this.game) {
+      const army = this.game.selectedArmy ? this.game.armies.find(a => a.id === this.game.selectedArmy) : null;
+      if (army) curFid = army.formation;
+    }
+    const curName = (curFid && FORMATIONS[curFid] && FORMATIONS[curFid].name) ? FORMATIONS[curFid].name : (curFid || '雁行');
+    // 可用阵型（带守卫）
+    let avail = [];
+    try {
+      const techs = (this.game && this.game.techs) || {};
+      avail = availableFormations(techs) || Object.keys(FORMATIONS);
+    } catch (e) { avail = Object.keys(FORMATIONS); }
+    let html = `<span class="v17-fm-label">阵法</span>`;
+    html += `<span class="v17-fm-cur">${curName}</span>`;
+    html += `<span class="v17-fm-sep">→</span>`;
+    html += avail.map(fid => {
+      const f = FORMATIONS[fid] || {};
+      const active = fid === curFid ? ' on' : '';
+      return `<button class="btn-small v17-fm-btn${active}" onclick="__ui_.v17SwitchFormation('${fid}')">${f.name || fid}</button>`;
+    }).join('');
+    el.innerHTML = html;
+  }
+
+  // 切换阵型（带 typeof 守卫；战斗中仅记录偏好，由军团/军队系统实际生效）
+  v17SwitchFormation(fid) {
+    if (!this.game) return;
+    try {
+      const army = this.game.selectedArmy ? this.game.armies.find(a => a.id === this.game.selectedArmy) : null;
+      if (army && typeof this.game.setArmyFormation === 'function') {
+        const r = this.game.setArmyFormation(army.id, fid);
+        this.toast(r && r.msg ? r.msg : `阵型切换为 ${(FORMATIONS[fid]||{}).name||fid}`);
+      } else if (army) {
+        army.formation = fid;
+        this.toast(`阵型切换为 ${(FORMATIONS[fid]||{}).name||fid}`);
+      } else {
+        this.toast(`预备阵型：${(FORMATIONS[fid]||{}).name||fid}`);
+      }
+      this.audio && this.audio.playClick && this.audio.playClick();
+      // 刷新战斗阵型栏
+      const st = (typeof this.game.getBattleState === 'function') ? this.game.getBattleState() : null;
+      this._v17RenderFormationBar(st);
+    } catch (e) { this.toast('阵型切换失败'); }
+  }
+
+  // 技能按钮栏：可用技能 + 冷却进度
+  _v17RenderSkillBar(st) {
+    const el = document.getElementById('bt-v17-skills');
+    if (!el) return;
+    const skills = (st && st.attackerActiveSkills) || [];
+    if (!skills.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<span class="v17-skill-label">绝技</span>' + skills.map(s => {
+      const cd = s.cooldown || 0;
+      const ready = cd <= 0;
+      // 冷却进度条（假定单技能最大冷却 3 回合做相对宽度）
+      const pct = ready ? 100 : Math.max(10, Math.round((1 - cd / 3) * 100));
+      return `<button class="btn-small v17-skill-chip ${ready ? 'ready' : 'cd'}"
+        title="${s.description || ''}" ${ready ? '' : 'disabled'}
+        onclick="__ui_.v17UseBattleSkill('${s.id}')">
+        <span class="v17-skill-name">✦ ${s.name}</span>
+        ${ready ? '' : `<span class="v17-skill-cd">冷却 ${cd} 回合</span><span class="v17-skill-cdbar"><i style="width:${pct}%"></i></span>`}
+      </button>`;
+    }).join('');
+  }
+
+  v17UseBattleSkill(sid) {
+    if (!this.game) return;
+    try {
+      if (typeof this.game.useSkill !== 'function') { this.toast('技能系统暂不可用'); return; }
+      const army = this.game.selectedArmy ? this.game.armies.find(a => a.id === this.game.selectedArmy) : null;
+      if (!army) { this.toast('未选中我方军队'); return; }
+      const r = this.game.useSkill(army.id, sid);
+      this.toast(r && r.msg ? r.msg : '绝技已蓄势');
+      const st = this.game.getBattleState && this.game.getBattleState();
+      if (st) this._renderBattleState(st, false);
+    } catch (e) { this.toast('绝技施放失败'); }
   }
 
   _renderBattleState(st, isFirst) {
@@ -2158,6 +2371,9 @@ export class UI {
       logEl.scrollTop = logEl.scrollHeight;
     }
 
+    // V17.0：每回合刷新战斗增强层（士气/技能冷却/连胜）
+    if (!st.over && !st.result) this._v17RenderBattleExtras(st, isFirst);
+
     // 动作按钮
     const actionsEl = document.getElementById('bt-actions');
     if (actionsEl) {
@@ -2204,6 +2420,16 @@ export class UI {
     const titleTxt = win ? '★ 胜利 ★' : (result.draw || st.draw) ? '平局' : '败退';
     if (win) this.audio.playVictory();
     else if (titleCls === 'lose') this.audio.playDefeat();
+
+    // V17.0：战斗通知增强
+    try {
+      if (win) {
+        const ws = (this.game && this.game.stats && this.game.stats.winStreak) || 0;
+        this._v17BattleNotify('win', `大捷！攻破 ${st.cityName || '敌军'}${ws >= 2 ? ' · 连胜' + ws + '场' : ''}`);
+      } else if (titleCls === 'lose') {
+        this._v17BattleNotify('lose', `我军败退于 ${st.cityName || '战场'}，望重整旗鼓`);
+      }
+    } catch (e) {}
 
     // 动画：胜方胜利姿势，败方倒地
     if (this._battleAnim && !this._battleAnim.resultShown) {
@@ -5978,5 +6204,437 @@ export class UI {
     if (cont) cont.onclick = () => { modal.remove(); this.showNGPlusV16(); };
     const vt = modal.querySelector('#v16-view-tree');
     if (vt) vt.onclick = () => { modal.remove(); this.showNGPlusSelectV16(true); };
+  }
+
+  // ============================================================
+  // ============== V17.0「血战沙场版」UI 精修 ===================
+  //  约定：新类名一律 v17- 前缀；模型 API 调用带 typeof 守卫；
+  //        粒子/小地图渲染带性能保护；全程中文。
+  // ============================================================
+
+  // ---------- 二、地图交互优化 ----------
+  // 注入缩放控件 / 搜索框 / 小地图 / 双击选中 / 右键快速菜单
+  _v17InitMapExtras(canvas) {
+    const container = document.getElementById('map-container');
+    if (!container || !this.map) return;
+    // 避免重复注入
+    if (document.getElementById('v17-map-controls')) return;
+
+    // 控件骨架
+    const ctrl = document.createElement('div');
+    ctrl.id = 'v17-map-controls';
+    ctrl.className = 'v17-map-controls';
+    ctrl.innerHTML = `
+      <button class="v17-map-btn" id="v17-zoom-in" title="放大">＋</button>
+      <button class="v17-map-btn" id="v17-zoom-out" title="缩小">－</button>
+      <button class="v17-map-btn" id="v17-zoom-reset" title="复位视野">⌂</button>
+      <span class="v17-zoom-label" id="v17-zoom-label">100%</span>`;
+    container.appendChild(ctrl);
+
+    // 搜索框
+    const search = document.createElement('input');
+    search.id = 'v17-map-search';
+    search.className = 'v17-map-search';
+    search.type = 'text';
+    search.placeholder = '🔍 搜索城市/武将…';
+    search.autocomplete = 'off';
+    container.appendChild(search);
+    search.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { this._v17LocateQuery(search.value); search.blur(); }
+    });
+
+    // 小地图
+    const mm = document.createElement('canvas');
+    mm.id = 'v17-minimap';
+    mm.className = 'v17-minimap';
+    mm.width = 180; mm.height = 120;
+    container.appendChild(mm);
+    mm.addEventListener('click', (e) => this._v17MinimapJump(e));
+
+    // 右键快速菜单容器
+    const ctx = document.createElement('div');
+    ctx.id = 'v17-ctx-menu';
+    ctx.className = 'v17-ctx-menu';
+    ctx.style.display = 'none';
+    document.body.appendChild(ctx);
+
+    // 缩放按钮
+    const bindZoom = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = () => { fn(); this._v17UpdateZoomLabel(); }; };
+    bindZoom('v17-zoom-in', () => { if (this.map && typeof this.map.setZoom === 'function') this.map.setZoom(this.map.getZoom() * 1.25); });
+    bindZoom('v17-zoom-out', () => { if (this.map && typeof this.map.setZoom === 'function') this.map.setZoom(this.map.getZoom() * 0.8); });
+    bindZoom('v17-zoom-reset', () => { if (this.map && typeof this.map.setZoom === 'function') this.map.setZoom(1.0); });
+    this._v17UpdateZoomLabel();
+
+    // 双击城市快速选中
+    if (canvas) {
+      canvas.addEventListener('dblclick', (e) => this._v17DblClickSelect(e));
+      // 右键军队快速操作菜单
+      canvas.addEventListener('contextmenu', (e) => { e.preventDefault(); this._v17ContextMenu(e); });
+      // 点击空白处关闭右键菜单
+      canvas.addEventListener('mousedown', () => this._v17HideCtxMenu());
+    }
+    // 小地图首绘
+    this._v17RenderMinimap();
+  }
+
+  _v17UpdateZoomLabel() {
+    const el = document.getElementById('v17-zoom-label');
+    if (el && this.map && typeof this.map.getZoom === 'function') {
+      el.textContent = Math.round(this.map.getZoom() * 100) + '%';
+    }
+  }
+
+  // 命中检测：复用 map 的坐标换算，返回 {city, army}
+  _v17PickAt(clientX, clientY) {
+    if (!this.map || !this.game) return { city: null, army: null };
+    const rect = this.map.canvas.getBoundingClientRect();
+    const mx = clientX - rect.left, my = clientY - rect.top;
+    let city = null, army = null;
+    for (const c of this.game.cities.values()) {
+      if (typeof this.game.isCityExplored === 'function' && !this.game.isCityExplored(c.id)) continue;
+      const pos = this.map.isoToScreen(c.isoX, c.isoY);
+      const r = (18 + (c.size || 1) * 6) * this.map.scale;
+      const dx = mx - pos.x, dy = my - pos.y;
+      if (dx * dx + dy * dy < r * r) { city = c; break; }
+    }
+    for (const a of this.game.armies) {
+      const c = this.game.cities.get(a.cityId);
+      if (!c) continue;
+      const pos = this.map.isoToScreen(c.isoX, c.isoY);
+      const r = 14 * this.map.scale;
+      const dx = mx - pos.x, dy = my - (pos.y - 20 * this.map.scale);
+      if (dx * dx + dy * dy < r * r) { army = a; break; }
+    }
+    return { city, army };
+  }
+
+  // 双击城市快速选中
+  _v17DblClickSelect(e) {
+    const { city, army } = this._v17PickAt(e.clientX, e.clientY);
+    if (army && army.faction === (this.game && this.game.playerFaction)) {
+      this.game.selectedArmy = army.id; this.game.selectedCity = null;
+      this.showArmyPanel(army); this.toast('已选中：' + (this._genName(army.generalId) || '军队'));
+    } else if (city) {
+      this.game.selectedCity = city.id; this.game.selectedArmy = null;
+      this.showCityPanel(city); this.toast('已定位：' + city.name);
+    }
+    this.map && this.map.render && this.map.render();
+    this._updateMapMarker();
+  }
+
+  // 右键军队快速操作菜单
+  _v17ContextMenu(e) {
+    const { city, army } = this._v17PickAt(e.clientX, e.clientY);
+    const menu = document.getElementById('v17-ctx-menu');
+    if (!menu) return;
+    if (!army && !city) { this._v17HideCtxMenu(); return; }
+    let items = [];
+    if (army) {
+      const mine = this.game && army.faction === this.game.playerFaction;
+      items.push({ label: '📋 查看详情', fn: () => { this.game.selectedArmy = army.id; this.showArmyPanel(army); } });
+      if (mine) {
+        items.push({ label: '⚔ 军团详情', fn: () => { if (army.legionId) this.showLegionDetail(army.legionId); else this.toast('此军未编入军团'); } });
+        items.push({ label: '🎒 武将详情', fn: () => this.showGeneralDetail(army.generalId || '') });
+      }
+    } else if (city) {
+      items.push({ label: '📋 查看城池', fn: () => { this.game.selectedCity = city.id; this.showCityPanel(city); } });
+      items.push({ label: '📐 聚焦此处', fn: () => this._v17FocusCity(city) });
+    }
+    if (!items.length) { this._v17HideCtxMenu(); return; }
+    menu.innerHTML = items.map((it, i) => `<div class="v17-ctx-item" data-i="${i}">${it.label}</div>`).join('');
+    menu.querySelectorAll('.v17-ctx-item').forEach(el => {
+      el.onclick = () => { const it = items[Number(el.dataset.i)]; this._v17HideCtxMenu(); it.fn && it.fn(); };
+    });
+    menu.style.display = 'block';
+    // 边界防溢出
+    const mw = menu.offsetWidth, mh = menu.offsetHeight;
+    menu.style.left = Math.min(e.clientX, window.innerWidth - mw - 8) + 'px';
+    menu.style.top = Math.min(e.clientY, window.innerHeight - mh - 8) + 'px';
+  }
+  _v17HideCtxMenu() { const m = document.getElementById('v17-ctx-menu'); if (m) m.style.display = 'none'; }
+
+  // 聚焦某城市到屏幕中心
+  _v17FocusCity(city) {
+    if (!this.map || !city) return;
+    try {
+      // isoToScreen: x = (isoX + offsetX) * scale → 反解 offset 使城市居中
+      const cx = this.map.canvas.width / 2, cy = this.map.canvas.height / 2;
+      this.map.offsetX = cx / this.map.scale - city.isoX;
+      this.map.offsetY = cy / this.map.scale - city.isoY;
+      this.map.dirty = true; this.map.render && this.map.render();
+      this._updateMapMarker(); this._v17RenderMinimap();
+    } catch (e) {}
+  }
+
+  // 搜索定位（城市 / 武将名）
+  _v17LocateQuery(q) {
+    if (!q || !q.trim() || !this.game) return;
+    const kw = q.trim();
+    // 1) 匹配城市
+    for (const c of this.game.cities.values()) {
+      if (c.name && c.name.indexOf(kw) >= 0) {
+        if (typeof this.game.isCityExplored === 'function' && !this.game.isCityExplored(c.id)) { this.toast('该城尚未探明'); continue; }
+        this.game.selectedCity = c.id; this.game.selectedArmy = null;
+        this._v17FocusCity(c); this.showCityPanel(c);
+        this.toast('已定位：' + c.name);
+        return;
+      }
+    }
+    // 2) 匹配武将（找其所在军队/城池）
+    for (const g of this.game.generals.values()) {
+      if (g.name && g.name.indexOf(kw) >= 0) {
+        const army = this.game.armies.find(a => a.generalId === g.id);
+        if (army) {
+          const c = this.game.cities.get(army.cityId);
+          if (c) { this.game.selectedArmy = army.id; this._v17FocusCity(c); this.showArmyPanel(army); this.toast('已定位武将：' + g.name); return; }
+        }
+        this.toast('武将【' + g.name + '】在野/未在地图'); return;
+      }
+    }
+    this.toast('未找到「' + kw + '」');
+  }
+
+  // 小地图：战争迷雾 + 视口框 + 可点击跳转（节流保护）
+  _v17RenderMinimap() {
+    const mm = document.getElementById('v17-minimap');
+    if (!mm || !this.map || !this.game) return;
+    // 性能保护：16ms 内不重绘
+    const now = performance.now();
+    if (this._v17mmLast && now - this._v17mmLast < 60) return;
+    this._v17mmLast = now;
+    const ctx = mm.getContext('2d');
+    const W = mm.width, H = mm.height;
+    ctx.clearRect(0, 0, W, H);
+    // 计算整张地图 iso 范围
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    const cities = Array.from(this.game.cities.values());
+    if (!cities.length) return;
+    for (const c of cities) {
+      minX = Math.min(minX, c.isoX); maxX = Math.max(maxX, c.isoX);
+      minY = Math.min(minY, c.isoY); maxY = Math.max(maxY, c.isoY);
+    }
+    const pad = 4;
+    const gw = Math.max(1, maxX - minX), gh = Math.max(1, maxY - minY);
+    const sx = (W - pad * 2) / gw, sy = (H - pad * 2) / gh;
+    const k = Math.min(sx, sy);
+    const px = (isoX, isoY) => [pad + (isoX - minX) * k, pad + (isoY - minY) * k];
+    // 底
+    ctx.fillStyle = 'rgba(20,30,24,0.9)';
+    ctx.fillRect(0, 0, W, H);
+    // 城市点（迷雾：未探索画灰，已探索按势力色）
+    for (const c of cities) {
+      const [x, y] = px(c.isoX, c.isoY);
+      const explored = typeof this.game.isCityExplored !== 'function' || this.game.isCityExplored(c.id);
+      ctx.beginPath();
+      ctx.arc(x, y, c.size >= 3 ? 2.6 : 1.8, 0, Math.PI * 2);
+      if (!explored) { ctx.fillStyle = 'rgba(90,90,90,0.5)'; }
+      else if (c.owner && FACTIONS[c.owner]) { ctx.fillStyle = FACTIONS[c.owner].color; }
+      else { ctx.fillStyle = '#cfc090'; }
+      ctx.fill();
+    }
+    // 当前选中城高亮
+    if (this.game.selectedCity) {
+      const sc = this.game.cities.get(this.game.selectedCity);
+      if (sc) { const [x, y] = px(sc.isoX, sc.isoY); ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.4; ctx.stroke(); }
+    }
+    // 视口框：主画布四角对应的 iso 坐标
+    try {
+      const tl = this.map.screenToIso(0, 0), br = this.map.screenToIso(this.map.canvas.width, this.map.canvas.height);
+      const [x1, y1] = px(tl.x, tl.y), [x2, y2] = px(br.x, br.y);
+      ctx.strokeStyle = 'rgba(255,215,0,0.85)'; ctx.lineWidth = 1;
+      ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+    } catch (e) {}
+  }
+
+  // 点击小地图跳转
+  _v17MinimapJump(e) {
+    if (!this.map || !this.game) return;
+    const mm = e.currentTarget;
+    const rect = mm.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    // 反算 iso 坐标：找最近城市
+    let best = null, bd = Infinity;
+    for (const c of this.game.cities.values()) {
+      // 与 _v17RenderMinimap 相同的投影
+      // 直接用屏幕差近似：跳过，改用点击位置找最近已探索城
+      if (typeof this.game.isCityExplored === 'function' && !this.game.isCityExplored(c.id)) continue;
+      // 把 iso 转小地图坐标需范围；简化：遍历求最近（数据量小可接受）
+      best = best || c; bd = bd; // no-op
+    }
+    // 复用：把小地图点击 -> 屏幕坐标 -> 找最近城市
+    // 直接调用主画布命中：将小地图点击换算为主画布中心缩放
+    // 简化实现：找距离小地图点击最近的已探索城市
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const c of this.game.cities.values()) {
+      minX = Math.min(minX, c.isoX); maxX = Math.max(maxX, c.isoX);
+      minY = Math.min(minY, c.isoY); maxY = Math.max(maxY, c.isoY);
+    }
+    const pad = 4, gw = Math.max(1, maxX - minX), gh = Math.max(1, maxY - minY);
+    const k = Math.min((mm.width - pad * 2) / gw, (mm.height - pad * 2) / gh);
+    const clickIsoX = (mx - pad) / k + minX, clickIsoY = (my - pad) / k + minY;
+    let near = null, nd = Infinity;
+    for (const c of this.game.cities.values()) {
+      if (typeof this.game.isCityExplored === 'function' && !this.game.isCityExplored(c.id)) continue;
+      const d = (c.isoX - clickIsoX) ** 2 + (c.isoY - clickIsoY) ** 2;
+      if (d < nd) { nd = d; near = c; }
+    }
+    if (near) {
+      this.game.selectedCity = near.id; this.game.selectedArmy = null;
+      this._v17FocusCity(near); this.showCityPanel(near);
+      this.toast('跳转：' + near.name);
+    }
+  }
+
+  // ---------- 四、新手指引（阵型/天气/士气） ----------
+  _v17GuideFlag(key) {
+    try { return localStorage.getItem('nanchao_v17_' + key) === '1'; } catch (e) { return false; }
+  }
+  _v17MarkGuide(key) { try { localStorage.setItem('nanchao_v17_' + key, '1'); } catch (e) {} }
+
+  // 通用气泡提示
+  _v17Bubble(html, anchorSelector, key) {
+    if (key && this._v17GuideFlag(key)) return;
+    const anchor = anchorSelector ? document.querySelector(anchorSelector) : document.body;
+    if (!anchor) return;
+    const bub = document.createElement('div');
+    bub.className = 'v17-guide-bubble';
+    bub.innerHTML = html + `<div class="v17-guide-close">知道了 ✕</div>`;
+    anchor.style.position = anchor.style.position || 'relative';
+    anchor.appendChild(bub);
+    const close = () => { bub.remove(); if (key) this._v17MarkGuide(key); };
+    bub.querySelector('.v17-guide-close').onclick = close;
+    setTimeout(close, 8000); // 8 秒自动消失
+  }
+
+  // 首次战斗时的引导集合（本次会话内去重，避免 shell/state 重复触发）
+  _v17FirstBattleGuides(st) {
+    if (this._v17Guided) return;
+    this._v17Guided = true;
+    // 阵型选择引导（首次战斗）
+    this._v17Bubble(
+      '<b>⚔ 阵法可切换</b><br>战斗下方「阵法」栏可即时切换阵型：雁行善包抄、方圆善守、锋矢善突击。不同阵型克制不同兵种。',
+      '#bt-v17-formation', 'fm_guide');
+    // 天气效果提示（首次遇到天气）
+    this._v17Bubble(
+      '<b>🌤 战场天气</b><br>顶部天气图标随季节/地形变化：水泽利水军、山地利弓兵、荒漠耗补给。善用地形可事半功倍。',
+      '#bt-v17-weather', 'wx_guide');
+    // 士气系统首次说明
+    this._v17Bubble(
+      '<b>❤ 军心士气</b><br>军队下方绿→黄→红即军心：绿（高昂）攻防加成，红（崩溃）可能溃退。连胜涨士气，连败则低落。',
+      '#bt-v17-morale-att', 'morale_guide');
+  }
+
+  // ---------- 三、军队信息面板深化 ----------
+  // 生成军队深化区块 HTML（士气/阵型/兵种/补给/天气修正/武将详情/战斗预览）
+  _v17ArmyDeepHTML(army, gen, city) {
+    if (!army) return '';
+    const parts = [];
+    // 1) 士气条：以武将忠诚派生（无独立士气字段时），绿黄红渐变
+    const morale = Math.max(0, Math.min(100, Math.round((gen && typeof gen.loyalty === 'number') ? gen.loyalty : 60)));
+    const mCls = morale >= 66 ? 'v17-morale-high' : (morale >= 33 ? 'v17-morale-mid' : 'v17-morale-low');
+    parts.push(`
+      <div class="v17-army-block">
+        <div class="v17-army-row"><span class="v17-army-k">军心</span>
+          <span class="v17-morale-track ${mCls}" style="width:120px"><span class="v17-morale-fill" style="width:${morale}%"></span></span>
+          <b>${morale}</b>
+        </div>`);
+    // 2) 阵型
+    const fmName = (FORMATIONS[army.formation] && FORMATIONS[army.formation].name) || army.formation || '—';
+    parts.push(`<div class="v17-army-row"><span class="v17-army-k">阵法</span><b>${fmName}</b></div>`);
+    // 3) 兵种构成（unitMix 按占比横条）
+    if (army.unitMix && typeof army.unitMix === 'object') {
+      const mix = army.unitMix;
+      const total = Object.values(mix).reduce((s, v) => s + (Number(v) || 0), 0) || 1;
+      const order = ['infantry', 'cavalry', 'archer'];
+      const labels = { infantry: '步', cavalry: '骑', archer: '弓' };
+      const segs = order.filter(t => mix[t]).map(t => {
+        const pct = Math.round((Number(mix[t]) || 0) / total * 100);
+        return `<span class="v17-mix-seg" style="flex:${Number(mix[t]) || 0}">${labels[t] || t}${pct}%</span>`;
+      }).join('');
+      parts.push(`<div class="v17-army-row"><span class="v17-army-k">兵种</span><span class="v17-mix-bar">${segs}</span></div>`);
+    }
+    // 4) 补给状态（带守卫）
+    let supplyTxt = '未知', supplyCls = '';
+    try {
+      if (typeof computeSupplyStatus === 'function') {
+        const st = computeSupplyStatus(this.game, army);
+        if (st.cut) { supplyTxt = '✖ 补给线被切断！战力-30%'; supplyCls = 'v17-bad'; }
+        else if (st.long) { supplyTxt = '⚠ 补给线过长，粮草消耗+50%'; supplyCls = 'v17-warn'; }
+        else { supplyTxt = '✓ 补给畅通'; supplyCls = 'v17-good'; }
+      }
+    } catch (e) { supplyTxt = '补给未知'; }
+    parts.push(`<div class="v17-army-row"><span class="v17-army-k">补给</span><b class="${supplyCls}">${supplyTxt}</b></div>`);
+    // 5) 天气/地形修正
+    const season = (this.game && typeof this.game.getSeason === 'function') ? this.game.getSeason() : '';
+    const terr = (city && city.terrain) || 'plain';
+    const tName = (TERRAIN && TERRAIN[terr] && TERRAIN[terr].name) ? TERRAIN[terr].name : terr;
+    parts.push(`<div class="v17-army-row"><span class="v17-army-k">地形/季节</span><b>${tName} · ${season || ''}季</b></div>`);
+    parts.push(`</div>`);
+
+    // 6) 武将详情：等级/忠诚/装备/技能
+    if (gen) {
+      const eq = gen.equipment || {};
+      const eqNames = ['weapon', 'armor', 'mount', 'treasure'].map(s => eq[s]).filter(Boolean).join('、') || '无';
+      const skills = (Array.isArray(gen.skills) ? gen.skills : []).map(s => typeof s === 'string' ? s : (s.name || '?')).join('、') || '无';
+      parts.push(`
+        <div class="v17-army-block">
+          <div class="v17-army-row"><span class="v17-army-k">等级</span><b>Lv.${gen.level || 1}</b>
+            <span class="v17-army-k">忠诚</span><b class="${(gen.loyalty || 0) < 30 ? 'v17-bad' : ''}">${Math.round(gen.loyalty || 0)}</b></div>
+          <div class="v17-army-row"><span class="v17-army-k">装备</span><b>${eqNames}</b></div>
+          <div class="v17-army-row"><span class="v17-army-k">绝技</span><b>${skills}</b></div>
+        </div>`);
+    }
+
+    // 7) 战斗预览：相邻可攻击目标，估算胜率/预计伤亡
+    const preview = this._v17BattlePreview(army);
+    if (preview) parts.push(preview);
+    return parts.join('');
+  }
+
+  // 战斗预览：基于兵力/统帅的简易胜率估计
+  _v17BattlePreview(army) {
+    if (!army || army.faction !== (this.game && this.game.playerFaction)) return '';
+    const links = CITY_LINKS[army.cityId] || [];
+    const myGen = this.game.getGeneral(army.generalId);
+    const myPow = (army.troops || 0) * (1 + ((myGen && myGen.command) || 50) / 200);
+    let html = '<div class="v17-army-block v17-preview"><div class="v17-army-title">⚔ 接敌预览</div>';
+    let has = false;
+    for (const tid of links) {
+      const tc = this.game.cities.get(tid);
+      if (!tc || tc.owner === army.faction) continue; // 仅演示敌对/中立目标
+      const enemyTroops = tc.garrison || 0;
+      if (enemyTroops <= 0) continue;
+      has = true;
+      const enemyPow = enemyTroops * 1.0;
+      const winRate = Math.max(5, Math.min(95, Math.round(myPow / (myPow + enemyPow) * 100)));
+      const estLoss = Math.round(enemyPow / (myPow + enemyPow) * (army.troops || 0) * 0.4);
+      const rateCls = winRate >= 60 ? 'v17-good' : (winRate >= 40 ? 'v17-warn' : 'v17-bad');
+      html += `<div class="v17-army-row"><span class="v17-army-k">${tc.name}</span>
+        <b class="${rateCls}">胜率约 ${winRate}%</b>
+        <span class="v17-army-k">预估自损</span><b class="v17-bad">~${estLoss}</b></div>`;
+    }
+    if (!has) html += `<div class="v17-army-row"><span class="v17-army-k">接敌</span><b>邻近无敌对驻军</b></div>`;
+    html += '</div>';
+    return html;
+  }
+
+  // ---------- 五、通知系统增强（战斗相关） ----------
+  // type: 'win' | 'lose' | 'streak' | 'skill' | 'supply' | 'info'
+  _v17BattleNotify(type, msg) {
+    let box = document.getElementById('v17-battle-notify');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'v17-battle-notify';
+      box.className = 'v17-battle-notify';
+      document.body.appendChild(box);
+    }
+    const item = document.createElement('div');
+    const icon = { win: '★', lose: '✖', streak: '🔥', skill: '✦', supply: '🎒', info: 'ℹ' }[type] || 'ℹ';
+    item.className = 'v17-notify-item ' + (type || 'info');
+    item.innerHTML = `<span class="v17-notify-icon">${icon}</span><span class="v17-notify-text">${msg}</span>`;
+    box.appendChild(item);
+    // 性能保护：通知最多保留 4 条
+    while (box.children.length > 4) box.removeChild(box.firstChild);
+    setTimeout(() => { item.classList.add('out'); setTimeout(() => item.remove(), 400); }, 3200);
   }
 }

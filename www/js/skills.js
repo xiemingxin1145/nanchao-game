@@ -388,3 +388,181 @@ export function unlockSkill(general, skillId) {
 export function getRecommendedSkills(generalType) {
   return (V14_TREE_POOL[generalType] || V14_TREE_POOL.warrior).slice();
 }
+
+// ============================================================
+// ============================================================
+// V17.0「战斗系统深化」：武将技能战斗集成
+//  - 每个主动技能在战斗中有明确效果（伤害/治疗/增益/减益）
+//  - 技能效果受智力 / 等级影响
+//  - 技能有冷却回合数（写入 general.v17_skillCooldowns）
+// ============================================================
+
+// 技能战斗效果类型枚举
+export const V17_SKILL_EFFECT_TYPE = {
+  DAMAGE: 'damage',       // 直接伤害
+  HEAL: 'heal',           // 治疗/恢复兵力
+  BUFF: 'buff',           // 自身增益
+  DEBUFF: 'debuff'        // 敌方减益
+};
+
+// 各类主动技能的基础战斗效果模板（按 effect 字段推断）
+// 返回 { type, baseValue, desc }
+function _inferSkillCombatTemplate(skill) {
+  const e = skill.effect || {};
+  // 武力翻倍 / 猛攻类 → 伤害型
+  if (e.doubleForce || e.chargeMult || e.forceBoostMult) {
+    return { type: V17_SKILL_EFFECT_TYPE.DAMAGE, baseValue: 0.50, desc: '爆发伤害' };
+  }
+  // 吸血 / 连击 / 暴击 → 伤害型
+  if (e.lifesteal || e.comboChance || e.critChance || e.attackMult) {
+    return { type: V17_SKILL_EFFECT_TYPE.DAMAGE, baseValue: 0.30, desc: '攻击强化' };
+  }
+  // 防御 / 铁壁 / 嘲讽 → 增益
+  if (e.defenseMult || e.garrisonMult) {
+    return { type: V17_SKILL_EFFECT_TYPE.BUFF, baseValue: e.defenseMult || 0.30, desc: '防御增益' };
+  }
+  // 奇袭 / 首轮伏击 → 减益敌方
+  if (e.firstRoutAmbush || e.ambushBonus) {
+    return { type: V17_SKILL_EFFECT_TYPE.DEBUFF, baseValue: 0.25, desc: '伏击挫敌' };
+  }
+  // 弓兵强化 → 伤害型
+  if (e.archerMult) {
+    return { type: V17_SKILL_EFFECT_TYPE.DAMAGE, baseValue: e.archerMult, desc: '齐射伤害' };
+  }
+  // 全军强化 → 增益
+  if (e.allUnitMult || e.cavalryMult || e.infantryMult) {
+    return { type: V17_SKILL_EFFECT_TYPE.BUFF, baseValue: e.allUnitMult || e.cavalryMult || e.infantryMult || 0.15, desc: '全军增益' };
+  }
+  // 默认：小伤害
+  return { type: V17_SKILL_EFFECT_TYPE.DAMAGE, baseValue: 0.15, desc: '战术打击' };
+}
+
+/**
+ * 计算某技能对目标的战斗效果（不真正释放，仅预览/计算）
+ * @param {string} skillId - 技能 id
+ * @param {object} general - 释放武将（需含 intel / level / effIntel）
+ * @param {object} target - 目标武将/军队（需含 troops）
+ * @returns {{type, value, turns, successChance, damage, heal, buff, debuff, log}}
+ */
+export function getSkillBattleEffect(skillId, general, target) {
+  const skill = SKILLS[skillId];
+  if (!skill) return { ok: false, msg: '技能不存在' };
+  if (skill.type !== 'active') return { ok: false, msg: '被动技能无需主动释放' };
+
+  const intel = general.effIntel || general.intel || 50;
+  const level = general.level || 1;
+  const template = _inferSkillCombatTemplate(skill);
+
+  // 智力影响：每 25 点智力 +10% 效果；等级影响：每级 +2%
+  const intelFactor = 1 + (intel - 50) / 250;       // 0.8 ~ 1.2
+  const levelFactor = 1 + (level - 1) * 0.02;        // 每级 +2%
+  const effectValue = template.baseValue * intelFactor * levelFactor;
+
+  // 计谋成功率：0.5 + 智力/200（0.75 ~ 1.0）
+  const successChance = Math.min(1.0, 0.5 + intel / 200);
+
+  // 持续回合：2 + floor(intel/30)
+  const turns = 2 + Math.floor(intel / 30);
+
+  const result = {
+    ok: true,
+    type: template.type,
+    skillId,
+    skillName: skill.name,
+    caster: general.name,
+    target: target?.name || '敌军',
+    value: Math.round(effectValue * 100) / 100,
+    turns,
+    successChance: Math.round(successChance * 100) / 100,
+    damage: 0,
+    heal: 0,
+    buff: null,
+    debuff: null,
+    log: []
+  };
+
+  // 按类型填充具体数值
+  if (template.type === V17_SKILL_EFFECT_TYPE.DAMAGE) {
+    const targetTroops = target?.troops || 1000;
+    result.damage = Math.round(targetTroops * effectValue * (0.8 + Math.random() * 0.4));
+    result.log.push(`【${skill.name}】${general.name}对${result.target}造成 ${result.damage} 点伤害（成功率 ${Math.round(successChance * 100)}%）`);
+  } else if (template.type === V17_SKILL_EFFECT_TYPE.HEAL) {
+    const selfTroops = general.troops || 1000;
+    result.heal = Math.round(selfTroops * effectValue);
+    result.log.push(`【${skill.name}】${general.name}恢复 ${result.heal} 点兵力`);
+  } else if (template.type === V17_SKILL_EFFECT_TYPE.BUFF) {
+    result.buff = { attackMult: effectValue, defMult: effectValue, turns };
+    result.log.push(`【${skill.name}】${general.name}全军强化 ${turns} 回合（攻防+${Math.round(effectValue * 100)}%）`);
+  } else if (template.type === V17_SKILL_EFFECT_TYPE.DEBUFF) {
+    result.debuff = { defDown: effectValue, turns };
+    result.log.push(`【${skill.name}】${general.name}削弱${result.target}防御 ${turns} 回合（-${Math.round(effectValue * 100)}%）`);
+  }
+  return result;
+}
+
+/**
+ * 判断武将当前是否可释放某主动技能（冷却检查）
+ * @param {object} general - 武将对象
+ * @param {string} skillId - 技能 id
+ * @param {number} currentTurn - 当前回合数（可选，预留）
+ * @returns {{ok:boolean, msg:string, cooldown:number}}
+ */
+export function canUseSkill(general, skillId, currentTurn = 0) {
+  const skill = SKILLS[skillId];
+  if (!skill) return { ok: false, msg: '技能不存在' };
+  if (skill.type !== 'active') return { ok: false, msg: '被动技能无法主动释放' };
+  // 武将是否拥有该技能
+  const owned = general.skills || [];
+  if (!owned.includes(skillId)) return { ok: false, msg: `${general.name}未习得【${skill.name}】` };
+  // 冷却检查
+  if (!general.v17_skillCooldowns) general.v17_skillCooldowns = {};
+  const cd = general.v17_skillCooldowns[skillId] || 0;
+  if (cd > 0) return { ok: false, msg: `【${skill.name}】冷却中（剩余 ${cd} 回合）`, cooldown: cd };
+  return { ok: true, msg: '可释放', cooldown: 0 };
+}
+
+/**
+ * 释放技能：计算效果、写入冷却
+ * @param {object} general - 释放武将
+ * @param {string} skillId - 技能 id
+ * @param {object} target - 目标
+ * @returns {{ok, msg, effect}}
+ */
+export function useSkill(general, skillId, target) {
+  const chk = canUseSkill(general, skillId);
+  if (!chk.ok) return { ok: false, msg: chk.msg };
+  const effect = getSkillBattleEffect(skillId, general, target);
+  if (!effect.ok) return effect;
+
+  // 计谋判定：按 successChance 决定是否命中
+  const hit = Math.random() < effect.successChance;
+  effect.hit = hit;
+  if (!hit) {
+    effect.log.push(`【${skill.name}】被${effect.target}识破！技能落空。`);
+    effect.damage = 0;
+    effect.buff = null;
+    effect.debuff = null;
+    effect.heal = 0;
+  }
+
+  // 写入冷却（skill.cooldown 为基础冷却，智力高时 -1 回合，最低 1）
+  const skill = SKILLS[skillId];
+  const intel = general.effIntel || general.intel || 50;
+  let cd = Math.max(1, (skill.cooldown || 2) - Math.floor((intel - 50) / 50));
+  general.v17_skillCooldowns = general.v17_skillCooldowns || {};
+  general.v17_skillCooldowns[skillId] = cd;
+  effect.cooldownSet = cd;
+  return { ok: true, msg: effect.log.join('；'), effect };
+}
+
+/**
+ * 回合结束时递减所有技能冷却（由 game 层每回合调用）
+ */
+export function tickSkillCooldowns(general) {
+  if (!general.v17_skillCooldowns) return general;
+  for (const k of Object.keys(general.v17_skillCooldowns)) {
+    general.v17_skillCooldowns[k]--;
+    if (general.v17_skillCooldowns[k] <= 0) delete general.v17_skillCooldowns[k];
+  }
+  return general;
+}

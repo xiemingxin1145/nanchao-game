@@ -239,3 +239,209 @@ export function upgradeFormation(army, researchedTechs = []) {
   army.formationLevel = curLv + 1;
   return { ok: true, msg: `阵型升至 ${army.formationLevel} 级`, level: army.formationLevel };
 }
+
+// ============================================================
+// ============================================================
+// V17.0「战斗系统深化」：阵型实战化
+//  - 五大战术阵型（v17_ 前缀）：方阵/锋矢/雁行/长蛇/方圆
+//  - 阵型在战斗中通过 getFormationCombatBonus 实际影响兵种攻防
+//  - 阵型切换有冷却时间（默认 3 回合）
+//  - 阵型相克：锋矢→雁行 / 雁行→长蛇 / 长蛇→锋矢；方圆被全克
+//  - 地形适配：山地适合方圆 / 平原适合锋矢 / 森林适合雁行
+// ============================================================
+
+// 阵型切换冷却回合数
+export const V17_SWITCH_COOLDOWN = 3;
+
+// 五大战术阵型定义（v17_ 前缀，避免与 V9 的 12 阵冲突）
+// 字段说明：
+//   atkMult / defMult / moveMult / rangeMult：对全军的攻防/移动/射程修正
+//   infantryMult / cavalryMult / archerMult：对特定兵种的修正
+//   counter：本阵型克制的阵型 id
+//   terrainBonus：地形适配加成（地形 id -> 加成倍率）
+export const V17_FORMATIONS = {
+  v17_fangzhen: {
+    id: 'v17_fangzhen', name: '方阵',
+    description: '步兵结阵如山，步兵防御+30%，骑兵移动-20%。',
+    infantryMult: 0.30, cavalryMovePenalty: -0.20,
+    counter: null,
+    terrainBonus: {}
+  },
+  v17_fengshi: {
+    id: 'v17_fengshi', name: '锋矢阵',
+    description: '前锋如矢，骑兵攻击+30%，步兵防御-10%。克制雁行阵。',
+    cavalryMult: 0.30, infantryDefPenalty: -0.10,
+    counter: 'v17_yanxing',
+    terrainBonus: { plain: 0.10 }   // 平原适合锋矢
+  },
+  v17_yanxing: {
+    id: 'v17_yanxing', name: '雁行阵',
+    description: '雁翎展开，弓兵射程+20%，近战防御-15%。克制长蛇阵。',
+    archerRangeMult: 0.20, meleeDefPenalty: -0.15,
+    counter: 'v17_changshe',
+    terrainBonus: { forest: 0.10 }  // 森林适合雁行
+  },
+  v17_changshe: {
+    id: 'v17_changshe', name: '长蛇阵',
+    description: '首尾相应，全军移动+25%，攻击-10%。克制锋矢阵。',
+    moveMult: 0.25, atkMult: -0.10,
+    counter: 'v17_fengshi',
+    terrainBonus: {}
+  },
+  v17_fangyuan: {
+    id: 'v17_fangyuan', name: '方圆阵',
+    description: '圆如城垒，全军防御+20%，移动-15%。被所有阵型克制。',
+    defMult: 0.20, moveMult: -0.15,
+    counter: null,  // 方圆被全克（在相克计算中特殊处理）
+    terrainBonus: { mountain: 0.10 } // 山地适合方圆
+  }
+};
+
+// 方圆阵被所有阵型克制（特殊规则）
+const FANGYUAN_VULNERABLE = true;
+
+/**
+ * 获取 V17 阵型定义
+ */
+export function getV17Formation(formationId) {
+  return V17_FORMATIONS[formationId] || null;
+}
+
+/**
+ * 阵型相克判定：返回攻击方对阵型方的克制倍率
+ * @param {string} myFormationId - 攻击方阵型
+ * @param {string} enemyFormationId - 防守方阵型
+ * @returns {number} 1.0 = 无克制；1.15 = 克制 +15%；0.9 = 被克 -10%
+ */
+export function v17CounterMult(myFormationId, enemyFormationId) {
+  const mine = V17_FORMATIONS[myFormationId];
+  const enemy = V17_FORMATIONS[enemyFormationId];
+  if (!mine || !enemy) return 1.0;
+  // 我克敌：+15%
+  if (mine.counter && mine.counter === enemyFormationId) return 1.15;
+  // 敌克我：-10%
+  if (enemy.counter && enemy.counter === myFormationId) return 0.90;
+  // 方圆被全克：任何阵型打方圆 +10%
+  if (enemyFormationId === 'v17_fangyuan' && myFormationId !== 'v17_fangyuan') return 1.10;
+  return 1.0;
+}
+
+/**
+ * 计算阵型对某兵种的实战加成袋
+ * @param {string} formationId - 阵型 id（v17_ 前缀或兼容旧阵）
+ * @param {string} terrain - 地形 id（plain/mountain/forest/river/desert）
+ * @param {string} unitType - 兵种 id（infantry/cavalry/archer）
+ * @returns {{atkMult:number, defMult:number, moveMult:number, rangeMult:number, notes:string[]}}
+ */
+export function getFormationCombatBonus(formationId, terrain, unitType) {
+  const bag = { atkMult: 0, defMult: 0, moveMult: 0, rangeMult: 0, notes: [] };
+  const f = V17_FORMATIONS[formationId];
+  if (!f) {
+    // 旧 V9 阵：走原有 effect 袋（轻量映射，不重做平衡）
+    const legacy = getFormation(formationId);
+    if (legacy && legacy.effect) {
+      bag.atkMult = legacy.effect.allUnitMult || 0;
+      if (unitType === 'infantry') bag.atkMult += (legacy.effect.infantryMult || 0);
+      if (unitType === 'cavalry') bag.atkMult += (legacy.effect.cavalryMult || 0);
+      if (unitType === 'archer') bag.atkMult += (legacy.effect.archerMult || 0);
+    }
+    return bag;
+  }
+
+  // 方阵：步兵防御+30%，骑兵移动-20%
+  if (formationId === 'v17_fangzhen') {
+    if (unitType === 'infantry') {
+      bag.defMult += 0.30;
+      bag.notes.push('方阵：步兵防御+30%');
+    }
+    if (unitType === 'cavalry') {
+      bag.moveMult += -0.20;
+      bag.notes.push('方阵：骑兵移动-20%');
+    }
+  }
+  // 锋矢：骑兵攻击+30%，步兵防御-10%
+  else if (formationId === 'v17_fengshi') {
+    if (unitType === 'cavalry') {
+      bag.atkMult += 0.30;
+      bag.notes.push('锋矢：骑兵攻击+30%');
+    }
+    if (unitType === 'infantry') {
+      bag.defMult += -0.10;
+      bag.notes.push('锋矢：步兵防御-10%');
+    }
+  }
+  // 雁行：弓兵射程+20%，近战防御-15%
+  else if (formationId === 'v17_yanxing') {
+    if (unitType === 'archer') {
+      bag.rangeMult += 0.20;
+      bag.notes.push('雁行：弓兵射程+20%');
+    }
+    if (unitType === 'infantry' || unitType === 'cavalry') {
+      bag.defMult += -0.15;
+      bag.notes.push('雁行：近战防御-15%');
+    }
+  }
+  // 长蛇：全军移动+25%，攻击-10%
+  else if (formationId === 'v17_changshe') {
+    bag.moveMult += 0.25;
+    bag.atkMult += -0.10;
+    bag.notes.push('长蛇：全军移动+25%，攻击-10%');
+  }
+  // 方圆：全军防御+20%，移动-15%
+  else if (formationId === 'v17_fangyuan') {
+    bag.defMult += 0.20;
+    bag.moveMult += -0.15;
+    bag.notes.push('方圆：全军防御+20%，移动-15%');
+  }
+
+  // 地形适配加成
+  if (f.terrainBonus && f.terrainBonus[terrain]) {
+    bag.atkMult += f.terrainBonus[terrain];
+    const terrName = (terrain === 'mountain' ? '山地' : terrain === 'plain' ? '平原' : terrain === 'forest' ? '森林' : terrain);
+    bag.notes.push(`地形适配（${terrName}）：攻击+${Math.round(f.terrainBonus[terrain] * 100)}%`);
+  }
+  return bag;
+}
+
+/**
+ * 判断军队当前是否可切换阵型（冷却检查）
+ * @param {object} army - 军队对象（需含 v17_formationCooldown 字段）
+ * @returns {boolean}
+ */
+export function canSwitchFormation(army) {
+  if (!army) return false;
+  const cd = army.v17_formationCooldown || 0;
+  return cd <= 0;
+}
+
+/**
+ * 切换军队阵型
+ * @param {object} army - 军队对象
+ * @param {string} newFormationId - 新阵型 id（v17_ 前缀或旧阵）
+ * @returns {{ok:boolean, msg:string}}
+ */
+export function switchFormation(army, newFormationId) {
+  if (!army) return { ok: false, msg: '军队不存在' };
+  // 校验阵型存在（兼容 v17_ 与旧阵）
+  const known = V17_FORMATIONS[newFormationId] || FORMATIONS[newFormationId];
+  if (!known) return { ok: false, msg: `阵型 ${newFormationId} 不存在` };
+  if (army.formation === newFormationId) {
+    return { ok: false, msg: `已是【${known.name}】，无需切换` };
+  }
+  if (!canSwitchFormation(army)) {
+    return { ok: false, msg: `阵型切换冷却中（剩余 ${army.v17_formationCooldown} 回合）` };
+  }
+  army.formation = newFormationId;
+  army.v17_formationCooldown = V17_SWITCH_COOLDOWN;
+  return { ok: true, msg: `阵型切换为【${known.name}】，冷却 ${V17_SWITCH_COOLDOWN} 回合` };
+}
+
+/**
+ * 回合结束时递减阵型切换冷却（由 game 层每回合调用）
+ */
+export function tickFormationCooldown(army) {
+  if (army && army.v17_formationCooldown > 0) {
+    army.v17_formationCooldown--;
+  }
+  return army;
+}

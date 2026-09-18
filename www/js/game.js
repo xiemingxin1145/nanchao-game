@@ -940,8 +940,17 @@ export class Game {
     if (!army) return { ok: false, msg: '军队不存在' };
     if (army.faction !== this.playerFaction) return { ok: false, msg: '非我方军队' };
     if (!getFormation(formationId)) return { ok: false, msg: '阵型不存在' };
+    // BUG修复（game.js #2a）：战斗系统边界——军队正在进行攻城战时不允许改阵，
+    //   否则战斗已按旧阵型结算，UI 却显示新阵型，导致阵型加成与实际不符。
+    if (this.activeBattle && this.activeBattle.armyId === armyId) {
+      return { ok: false, msg: '军队正在交战，无法变阵' };
+    }
     army.formation = formationId;
-    this.pushLog(`${army.generalId} 变阵为【${getFormation(formationId).name}】`);
+    // BUG修复（game.js #2b）：原日志直接打印 army.generalId（数字 id），玩家看到的是
+    //   一串无意义数字。改为查武将名；无武将时回退为「军队」。
+    const gen = this.generals.get(army.generalId);
+    const genName = gen ? gen.name : '军队';
+    this.pushLog(`${genName} 变阵为【${getFormation(formationId).name}】`);
     return { ok: true, msg: `变阵：${getFormation(formationId).name}` };
   }
 
@@ -1475,14 +1484,20 @@ export class Game {
   _buildDefenderSide(city) {
     const gen = this.findDefenderGeneral(city.id);
     const bags = [this.getTechBag(city.owner)];
-    let defense = city.getEffectiveDefense ? city.getEffectiveDefense() : city.defense;
+    // 性能优化（game.js #1 战斗计算）：
+    //   基准：getEffectiveDefense() 每次都会重新汇总城墙/建筑/太守加成，原代码在
+    //   循环内先调一次（line defense 初始化），羊侃被动命中时又调一次——同一回合同一城
+    //   防御值被重复计算 2 次。大型会战（30 轮×多守方 side）下累计明显。
+    //   优化：缓存 baseDefense，循环内复用，羊侃加成在缓存值上叠加。
+    const baseDefense = city.getEffectiveDefense ? city.getEffectiveDefense() : city.defense;
+    let defense = baseDefense;
     if (gen) {
       for (const sk of this._mergedGeneralSkills(gen.id)) {
         if (sk.type !== 'passive') continue;
         bags.push(sk.effect);
         // 羊侃「守城名将」：任太守时城市防御 +50%
         if (sk.effect.mayorDefenseMult && city.mayor === gen.id) {
-          defense += (city.getEffectiveDefense ? city.getEffectiveDefense() : city.defense) * sk.effect.mayorDefenseMult;
+          defense += baseDefense * sk.effect.mayorDefenseMult;
         }
       }
     }
@@ -1598,10 +1613,19 @@ export class Game {
     }
 
     // V3.5：全局战斗统计 + 武将个人战斗统计
+    // BUG修复（game.js #5 / stats.js）：原 recordBattle 调用未区分陆战/水战，
+    //   导致 this.stats.navyWins 仅在构造/读档时置 0，整场游戏永不递增（新系统统计覆盖缺失）。
+    //   修复：水军军队（army.isNavy）获胜时单独递增 navyWins，并把 battleType 透传给
+    //   recordBattle 以便 gameStats 细分陆战/水战胜场。
+    const isNaval = !!army.isNavy;
+    if (attackerWin && isNaval && this.stats && typeof this.stats.navyWins === 'number') {
+      this.stats.navyWins++;
+    }
     recordBattle(this, {
       win: attackerWin,
       kills: defenderLoss,
-      losses: attackerLoss
+      losses: attackerLoss,
+      battleType: isNaval ? 'naval' : 'land'   // V17.0：陆战/水战标记
     });
     if (atkGen) {
       const gs = this.generalStats[atkGen.id] = this.generalStats[atkGen.id] || {
@@ -1650,11 +1674,14 @@ export class Game {
     this.armies = this.armies.filter(a => !a.destroyed);
 
     // 兼容旧 UI 的战报结构
+    // BUG修复（game.js #6）：异常战斗（旧存档/热 seat 中断）下 b.log 可能 undefined，
+    //   直接 b.log.slice() 会抛 TypeError 阻断结算。修复：兜底为空数组。
+    const battleLogArr = Array.isArray(b.log) ? b.log : [];
     const result = {
       attackerWin, draw: false, conquered,
       attackerLoss, defenderLoss,
-      battleLog: b.log.slice(),
-      tactics: b.log.filter(l => l.includes('奇袭') || l.includes('破城') || l.includes('★') || l.includes('绝技')),
+      battleLog: battleLogArr.slice(),
+      tactics: battleLogArr.filter(l => l.includes('奇袭') || l.includes('破城') || l.includes('★') || l.includes('绝技')),
       attackerName: b.attackerName, defenderName: b.defenderName,
       attackerFaction: b.attackerFaction, defenderFaction: b.defenderFaction,
       targetCityId: targetCity.id, targetCityName: targetCity.name,

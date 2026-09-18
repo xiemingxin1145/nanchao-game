@@ -18,6 +18,8 @@ export function defaultGameStats() {
     // 战斗
     battles: 0,             // 战斗次数
     victories: 0,          // 胜利次数
+    landWins: 0,           // V17.0：陆战胜场
+    navalWins: 0,          // V17.0：水战胜场（新系统统计覆盖）
     kills: 0,               // 总杀敌数
     losses: 0,              // 总损兵数
     // 城市
@@ -75,9 +77,15 @@ export function recordBattle(game, opts) {
   const s = game.gameStats;
   if (!s) return;
   s.battles++;
-  if (opts.win) s.victories++;
   s.kills += opts.kills || 0;
   s.losses += opts.losses || 0;
+  if (opts.win) {
+    s.victories++;
+    // V17.0：按战斗类型细分陆战/水战胜场，补齐新系统统计覆盖。
+    //   旧存档调用未传 battleType，缺省视为 'land'，不影响历史数据。
+    if (opts.battleType === 'naval') s.navalWins = (s.navalWins || 0) + 1;
+    else s.landWins = (s.landWins || 0) + 1;
+  }
 }
 
 // 资源记录

@@ -5,8 +5,9 @@
 //    最多 5 回合的逐步战斗（玩家交互 + AI 自动共用）
 // ============================================================
 import { UNIT_TYPES, COUNTER_RELATION, COUNTER_BONUS, TERRAIN, CITY_LINKS, ADVANCEMENT_TREE } from './data.js';
-import { getFormation } from './formation.js';
+import { getFormation, getFormationCombatBonus, v17CounterMult } from './formation.js';
 import { isNavalBattle, applyWaterTerrainMod, checkFireAttack, FIRE_ATTACK_PENALTY, NAVY_UNIT_KEYS } from './navy.js';
+import { getMoraleCombatMod, moraleSystem } from './morale.js';
 
 let armyIdCounter = 0;
 
@@ -147,6 +148,100 @@ function sumBag(bags, key) {
 }
 
 // ============================================================
+// V17.0「战斗系统深化」：天气 / 地形 / 阵型 / 士气 / 相克 / 连胜 修正层
+//  - 保持 computeBattle / startMultiBattle 等现有 API 签名不变
+//  - 在原战力计算之后叠加 V17 深度修正
+// ============================================================
+
+// 天气修正表
+//   rain(雨天)  : 水军 +25%
+//   snow(雪天)  : 移动 -40%（攻击 -10% 模拟机动性下降）
+//   fog(雾天)   : 远程/弓兵 -30%
+export const V17_WEATHER_MODS = {
+  rain: { navyMult: 1.25, allMult: 1.0, archerMult: 1.0 },
+  snow: { navyMult: 1.0, allMult: 0.90, archerMult: 1.0 },
+  fog:  { navyMult: 1.0, allMult: 1.0, archerMult: 0.70 },
+  normal: { navyMult: 1.0, allMult: 1.0, archerMult: 1.0 }
+};
+
+// V17 兵种相克深化表（覆盖旧 COUNTER_RELATION 的三基础兵种）
+//   步兵克弓兵 / 弓兵克骑兵 / 骑兵克步兵，加成 30%
+export const V17_DEEP_COUNTER = {
+  infantry: 'archer',
+  archer: 'cavalry',
+  cavalry: 'infantry'
+};
+export const V17_DEEP_COUNTER_BONUS = 0.30; // +30%
+
+// 连胜/连败加成：每连胜/连败 1 场 ±3% 攻击，封顶 ±15%
+export const V17_STREAK_PER_STAGE = 0.03;
+export const V17_STREAK_CAP = 0.15;
+
+/**
+ * V17 天气修正
+ * @param {string} weather - normal/rain/snow/fog
+ * @param {string} unitType - 兵种
+ * @returns {{mult:number, note:string}}
+ */
+export function v17WeatherMod(weather, unitType) {
+  const w = V17_WEATHER_MODS[weather] || V17_WEATHER_MODS.normal;
+  let mult = w.allMult;
+  let note = '';
+  if (NAVY_UNIT_KEYS.includes(unitType)) {
+    mult *= w.navyMult;
+    if (w.navyMult !== 1.0) note = `雨天水军加成 ×${w.navyMult.toFixed(2)}`;
+  } else if (unitType === 'archer' && w.archerMult !== 1.0) {
+    mult *= w.archerMult;
+    note = `雾天远程受限 ×${w.archerMult.toFixed(2)}`;
+  } else if (weather === 'snow' && w.allMult !== 1.0) {
+    note = `雪天机动受限 ×${w.allMult.toFixed(2)}`;
+  }
+  return { mult, note };
+}
+
+/**
+ * V17 地形修正深化
+ *   山地防守 +30% / 平原骑兵 +20% / 森林伏兵 +25%
+ * @param {string} terrain
+ * @param {boolean} isAttacker
+ * @param {string} unitType
+ * @returns {{mult:number, note:string}}
+ */
+export function v17TerrainMod(terrain, isAttacker, unitType) {
+  let mult = 1.0;
+  let note = '';
+  if (terrain === 'mountain' && !isAttacker) {
+    mult *= 1.30;
+    note = '山地防守加成 ×1.30';
+  } else if (terrain === 'plain' && unitType === 'cavalry') {
+    // 与原有 1.30 叠加时封顶由 clampTotalPower 兜底
+    mult *= 1.20;
+    note = '平原骑兵驰骋 ×1.20';
+  } else if (terrain === 'forest' && isAttacker) {
+    mult *= 1.25;
+    note = '森林伏兵突袭 ×1.25';
+  }
+  return { mult, note };
+}
+
+/**
+ * V17 连胜/连败修正
+ * @param {number} streak - 正连胜 / 负连败
+ * @returns {{mult:number, note:string}}
+ */
+export function v17StreakMod(streak) {
+  if (!streak) return { mult: 1.0, note: '' };
+  const sign = streak > 0 ? 1 : -1;
+  const stages = Math.min(Math.abs(streak), 5); // 最多 5 档
+  const delta = sign * stages * V17_STREAK_PER_STAGE;
+  const capped = Math.max(-V17_STREAK_CAP, Math.min(V17_STREAK_CAP, delta));
+  return {
+    mult: 1 + capped,
+    note: capped > 0 ? `连战连捷 ×${(1 + capped).toFixed(2)}` : capped < 0 ? `屡战屡败 ×${(1 + capped).toFixed(2)}` : ''
+  };
+}
+
+// ============================================================
 // 快速单回合结算（AI 战斗用，保留）
 // side 可携带 bags: [effectObj]（被动技能 + 科技），自动乘算
 // ============================================================
@@ -201,7 +296,13 @@ export function computeBattle(attacker, defender, attackerTerrain, defenderTerra
       }
     }
 
-    if (COUNTER_RELATION[side.unitType] === side._enemyType) {
+    // ---- V17.0 兵种相克深化：步兵克弓兵 / 弓兵克骑兵 / 骑兵克步兵，+30% ----
+    const v17Countered = V17_DEEP_COUNTER[side.unitType] === side._enemyType;
+    if (v17Countered) {
+      p *= (1 + V17_DEEP_COUNTER_BONUS);
+      result.tactics.push(`${UNIT_TYPES[side.unitType].name}克制${UNIT_TYPES[side._enemyType].name}，战力+30%`);
+    } else if (COUNTER_RELATION[side.unitType] === side._enemyType) {
+      // 旧表兼容（水军等特殊兵种）
       p *= (1 + COUNTER_BONUS);
       result.tactics.push(`${UNIT_TYPES[side.unitType].name}克制${UNIT_TYPES[side._enemyType].name}，战力+25%`);
     }
@@ -212,6 +313,47 @@ export function computeBattle(attacker, defender, attackerTerrain, defenderTerra
     if (isAttacker) p *= (1 + clampBonus(sumBag(side.bags, 'siegeMult')));
     else p *= (1 + clampBonus(sumBag(side.bags, 'garrisonMult')));
 
+    // ---- V17.0 深度修正层 ----
+    // (1) 天气修正
+    const wMod = v17WeatherMod(side.weather || 'normal', side.unitType);
+    if (wMod.mult !== 1.0) {
+      p *= wMod.mult;
+      if (wMod.note) result.tactics.push(wMod.note);
+    }
+    // (2) 地形修正深化（山地防守/平原骑兵/森林伏兵）
+    const tMod = v17TerrainMod(terrain, isAttacker, side.unitType);
+    if (tMod.mult !== 1.0) {
+      p *= tMod.mult;
+      if (tMod.note) result.tactics.push(tMod.note);
+    }
+    // (3) 阵型实战加成（V17 五阵 / 旧阵兼容）
+    if (side.formation) {
+      const fBag = getFormationCombatBonus(side.formation, terrain, side.unitType);
+      if (fBag.atkMult) p *= (1 + fBag.atkMult);
+      if (fBag.defMult) p *= (1 + fBag.defMult * (isAttacker ? 0.5 : 1.0)); // 防御加成防守方全额
+      for (const n of fBag.notes || []) result.tactics.push(`阵型【${getFormation(side.formation).name}】：${n}`);
+      // 阵型相克
+      const counterMult = v17CounterMult(side.formation, side._enemyFormation);
+      if (counterMult !== 1.0) {
+        p *= counterMult;
+        result.tactics.push(`阵型相克 ×${counterMult.toFixed(2)}`);
+      }
+    }
+    // (4) 士气修正
+    if (side.armyId) {
+      const mMod = getMoraleCombatMod(side.armyId, moraleSystem);
+      if (mMod.atkMult) p *= (1 + mMod.atkMult);
+      if (mMod.note) result.tactics.push(`士气${mMod.label}（${mMod.morale}）：攻击${mMod.atkMult > 0 ? '+' : ''}${Math.round(mMod.atkMult * 100)}%`);
+    }
+    // (5) 连胜/连败加成
+    if (side.streak) {
+      const sMod = v17StreakMod(side.streak);
+      if (sMod.mult !== 1.0) {
+        p *= sMod.mult;
+        if (sMod.note) result.tactics.push(sMod.note);
+      }
+    }
+
     // V4.0: 总倍率硬封顶
     p = clampTotalPower(p / side.troops) * side.troops;
     return p;
@@ -219,6 +361,10 @@ export function computeBattle(attacker, defender, attackerTerrain, defenderTerra
 
   attacker._enemyType = defender.unitType;
   defender._enemyType = attacker.unitType;
+  attacker._enemyFormation = defender.formation;
+  defender._enemyFormation = attacker.formation;
+  attacker.armyId = attacker.armyId || attacker.id;
+  defender.armyId = defender.armyId || defender.id;
 
   let atkPower = power(attacker, defenderTerrain || 'plain', true);
   let defPower = power(defender, defenderTerrain || 'plain', false);
@@ -367,8 +513,14 @@ function calcPower(side, enemyType, battle, action) {
     p *= waterMod;
   }
 
-  // 兵种克制
-  if (COUNTER_RELATION[side.unitType] === enemyType) p *= (1 + COUNTER_BONUS);
+  // 兵种克制（V17.0 深化：步兵克弓兵/弓兵克骑兵/骑兵克步兵，+30%）
+  const v17Countered = V17_DEEP_COUNTER[side.unitType] === enemyType;
+  if (v17Countered) {
+    p *= (1 + V17_DEEP_COUNTER_BONUS);
+    battle.log.push(`${UNIT_TYPES[side.unitType].name}克制${(UNIT_TYPES[enemyType] || {}).name || enemyType}，战力+30%`);
+  } else if (COUNTER_RELATION[side.unitType] === enemyType) {
+    p *= (1 + COUNTER_BONUS);
+  }
 
   // 攻城/守城（未破城前生效）
   const isAttacker = side === battle.attacker;
@@ -395,6 +547,41 @@ function calcPower(side, enemyType, battle, action) {
 
   // 智力士气
   p *= (0.8 + gen.intel / 250);
+
+  // ---- V17.0 深度修正层（多回合战斗）----
+  const isAtk = side === battle.attacker;
+  const enemySide = isAtk ? battle.defender : battle.attacker;
+  // (1) 天气
+  const wMod = v17WeatherMod(battle.weather || side.weather || 'normal', side.unitType);
+  if (wMod.mult !== 1.0) {
+    p *= wMod.mult;
+    if (wMod.note) battle.log.push(wMod.note);
+  }
+  // (2) 地形深化
+  const tMod = v17TerrainMod(terr, isAtk, side.unitType);
+  if (tMod.mult !== 1.0) {
+    p *= tMod.mult;
+    if (tMod.note) battle.log.push(tMod.note);
+  }
+  // (3) 阵型实战加成 + 相克
+  if (side.formation) {
+    const fBag = getFormationCombatBonus(side.formation, terr, side.unitType);
+    if (fBag.atkMult) p *= (1 + fBag.atkMult);
+    if (fBag.defMult) p *= (1 + fBag.defMult * (isAtk ? 0.5 : 1.0));
+    const cMult = v17CounterMult(side.formation, enemySide.formation);
+    if (cMult !== 1.0) p *= cMult;
+  }
+  // (4) 士气修正
+  if (side.armyId) {
+    const mMod = getMoraleCombatMod(side.armyId, moraleSystem);
+    if (mMod.atkMult) p *= (1 + mMod.atkMult);
+  }
+  // (5) 连胜/连败
+  if (side.streak) {
+    const sMod = v17StreakMod(side.streak);
+    if (sMod.mult !== 1.0) p *= sMod.mult;
+  }
+
   // V4.0: 总倍率硬封顶 3.0（与 computeBattle 一致，防止叠加失衡）
   p = clampTotalPower(p / Math.max(1, side.troops)) * Math.max(1, side.troops);
   return p;
@@ -614,6 +801,18 @@ export function applyDuelResult(battle, duelResult) {
   battle.duelResult = duelResult;
   battle.log = battle.log || [];
   battle.log.push(...duelResult.log);
+
+  // ---- V17.0：武将单挑影响全军士气（对接 moraleSystem）----
+  const winnerSide = duelResult.winner === battle.attacker.general ? battle.attacker : battle.defender;
+  const loserSide = duelResult.winner === battle.attacker.general ? battle.defender : battle.attacker;
+  if (winnerSide.armyId) {
+    moraleSystem.updateMorale(winnerSide.armyId, 8, { general: winnerSide.general });
+    battle.log.push(`【士气】${winnerSide.general.name}获胜，全军士气+8`);
+  }
+  if (loserSide.armyId) {
+    moraleSystem.updateMorale(loserSide.armyId, -8, { general: loserSide.general });
+    battle.log.push(`【士气】${loserSide.general.name}败阵，全军士气-8`);
+  }
   return battle;
 }
 

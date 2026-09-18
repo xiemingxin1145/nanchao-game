@@ -363,3 +363,76 @@ export function getLoyaltyLevel(general) {
 export function checkDefection(general) {
   return general.checkDefection ? general.checkDefection() : { defected: false, reason: null };
 }
+
+// ============================================================
+// ============================================================
+// V17.0「战斗系统深化」：武将属性战斗影响
+//  - 统率：影响防御与士气
+//  - 武力：影响物理伤害
+//  - 智力：影响技能效果与计谋成功率
+//  - 政治：影响战后招降概率
+// ============================================================
+
+/**
+ * 获取武将战斗属性综合修正袋
+ *  - 攻击倍率：由武力决定（武力 50 → 1.0；100 → 1.5；0 → 0.5）
+ *  - 防御倍率：由统率决定（统率 50 → 1.0；100 → 1.4；0 → 0.6）
+ *  - 计谋成功率：由智力决定（0.5 + intel/200）
+ *  - 技能效果倍率：由智力决定（1 + (intel-50)/250）
+ *  - 招降概率：由政治决定（0.05 + politics/1000）
+ * @param {object} general - General 实例或纯属性对象
+ * @returns {{atkMult, defMult, stratagemChance, skillEffectMult, recruitChance, moraleBonus}}
+ */
+export function getGeneralCombatStats(general) {
+  const cmd = general.effCommand != null ? general.effCommand : (general.command || 50);
+  const frc = general.effForce != null ? general.effForce : (general.force || 50);
+  const itl = general.effIntel != null ? general.effIntel : (general.intel || 50);
+  const pol = general.effPolitics != null ? general.effPolitics : (general.politics || 50);
+
+  return {
+    // 武力 → 物理伤害（50→1.0，每 10 点武力 ±0.1）
+    atkMult: 1 + (frc - 50) / 100,
+    // 统率 → 防御（50→1.0，每 10 点统率 ±0.08）
+    defMult: 1 + (cmd - 50) / 125,
+    // 智力 → 计谋成功率（0.75 ~ 1.0）
+    stratagemChance: Math.min(1.0, 0.5 + itl / 200),
+    // 智力 → 技能效果倍率（0.8 ~ 1.2）
+    skillEffectMult: 1 + (itl - 50) / 250,
+    // 政治 → 战后招降概率（0.05 ~ 0.15）
+    recruitChance: 0.05 + pol / 1000,
+    // 统率 → 士气加成（-0.2 ~ +0.2）
+    moraleBonus: (cmd - 50) / 250
+  };
+}
+
+/**
+ * 获取武将对军队士气的加成（主要由统率决定，忠诚高者额外加成）
+ * @param {object} general
+ * @returns {number} 士气加成值（0~10 的修正量）
+ */
+export function getGeneralMoraleBonus(general) {
+  const cmd = general.effCommand != null ? general.effCommand : (general.command || 50);
+  const loy = general.loyalty != null ? general.loyalty : 50;
+  // 统率 50 → 0；100 → +10；0 → -10
+  let bonus = (cmd - 50) / 5;
+  // 忠诚 ≥ 80 额外 +3
+  if (loy >= 80) bonus += 3;
+  // 负伤时 -3
+  if (general.wounded && general.wounded > 0) bonus -= 3;
+  return Math.round(bonus);
+}
+
+/**
+ * 判断战后招降某败将是否成功（政治越高概率越大）
+ * @param {object} victor - 胜方武将
+ * @param {object} defeated - 败方武将
+ * @returns {{success:boolean, chance:number}}
+ */
+export function tryRecruitDefeated(victor, defeated) {
+  const stats = getGeneralCombatStats(victor);
+  // 败将忠诚越低越容易被招降
+  const loyFactor = 1 - ((defeated.loyalty || 50) / 100) * 0.5;
+  const chance = Math.min(0.8, stats.recruitChance * loyFactor * 2);
+  const success = Math.random() < chance;
+  return { success, chance: Math.round(chance * 100) / 100 };
+}
