@@ -1,16 +1,19 @@
 // ============================================================
-// tutorial.js — 教程系统（V9.5 深化版：20 步 / 分章节 / 模式）
+// tutorial.js — 教程系统（V16.0 深化版：30 步 / 7 章 / 上下文教程）
 // ------------------------------------------------------------
-// V9.5：从 8 步扩充到 20 步，分 6 章（基础/内政/武将/战斗/外交/高级）。
-//   - 每步带 chapter 章节标记，气泡顶部显示「第 X 章 · n/20」进度。
-//   - 模式：new（首次自动）/ chapter（指定章节）/ all（全教程）。
-//   - 高亮遮罩 + 文字说明 + 跳过按钮 + 上一步/下一步。
-//   - 游戏指南（GameGuide）为独立静态说明，由 ui.js 调用 openGameGuide()。
-// 技术参考：onboarding 通用模式 —— spotlight 高亮（裁洞）+ toolip 气泡 +
-//   箭头指示；步骤用数据驱动数组渲染，便于扩展。
+// V9.5：20 步 / 6 章（基础/内政/武将/战斗/外交/高级）。
+// V16.0：扩充到 30 步 / 7 章，新增第七章「高级系统（V16）」：
+//   成就/外交深谈/谍报/科举/贸易/宗教/天气/多周目/战役/图鉴。
+//   新增上下文教程（contextual tutorial）：玩家首次触发新系统时
+//   自动弹出对应提示，进度持久化到 localStorage。
+//   新 API：getContextualTutorial(hintType) / markTutorialViewed(hintType)
+//           / getUnviewedTutorials()
+// 技术参考：onboarding 通用模式 —— spotlight 高亮 + tooltip 气泡 +
+//   上下文触发（trigger-based coach marks）；步骤用数据驱动数组渲染。
 // ============================================================
 
 const DONE_KEY = 'nanchao_tutorial_done';
+const VIEWED_KEY = 'nanchao_tutorial_viewed_v16';
 
 // 章节元数据
 export const TUTORIAL_CHAPTERS = [
@@ -19,7 +22,8 @@ export const TUTORIAL_CHAPTERS = [
   { id: 'general', name: '武将之道' },
   { id: 'battle',  name: '战斗兵法' },
   { id: 'diplo',   name: '外交纵横' },
-  { id: 'advanced',name: '王霸之业' }
+  { id: 'advanced',name: '王霸之业' },
+  { id: 'deep',    name: '高级系统（V16）' }
 ];
 
 export class Tutorial {
@@ -126,6 +130,48 @@ export class Tutorial {
       { chapter: 'advanced',
         title: '一统天下',
         text: '当城市数达到 16 座或消灭所有敌对势力，便可统一天下！此外还有文化胜利、宗教、海战等多条王霸之路。祝你武运昌隆！',
+        targetSelector: '.top-bar', position: 'bottom' },
+
+      // ===== 第七章：高级系统（V16） =====
+      { chapter: 'deep',
+        title: '成就系统',
+        text: 'V16 新增成就簿：军事、政治、经济、人物、特殊五类共 60+ 项成就。解锁成就可获得金钱、粮草、称号与专属 BGM。累计成就点决定段位（青铜→传奇）。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '外交深谈',
+        text: '外交不止同盟停战：联姻可稳固宗室关系并加成经济，贸易协定互通有无。背盟会大幅降低关系并招致报复，远交近攻方为长策。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '谍报纵横',
+        text: '派遣细作潜入敌国：刺探军情、散布流言、策反敌将。谍报等级越高，获取情报越准、策反成功率越高。善用谍报，可兵不血刃而屈人之兵。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '科举取士',
+        text: '太学建成后可开科举，三年一举。状元门生治国，文治大兴，可提升城市政治与人才质量。多开科举，名臣自来。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '贸易商路',
+        text: '与他国签订贸易协定后自动开辟商路，按回合产出金钱。控制陆上丝路（长安/洛阳/姑臧）与海上丝路（广州）可获双倍商利。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '宗教信仰',
+        text: '佛道二教影响民心与文化。建佛寺道观可提升民心与文化值，但过多宗教建筑会侵蚀国用。宗教繁荣可达成宗教胜利，亦可能酿成「宗教治国」结局。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '天气与季节',
+        text: '四季流转影响农业产出与行军速度；雨雪天气会迟滞骑兵、减弱弓箭射程。出征前观天象、察地利，方可百战不殆。',
+        targetSelector: '#game-canvas', position: 'top' },
+      { chapter: 'deep',
+        title: '多周目传承',
+        text: '通关后开启 New Game+：周目数越高，AI 越强但奖励越丰厚。每通关一次可解锁新的周目奖励槽位（初始金钱/武将/科技/装备），并解锁图鉴中的特殊武将与剧本。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '战役模式',
+        text: 'V16 新增战役模式：独立于自由剧本的关卡制挑战。每关有特定胜利/失败条件，通关发放专属奖励（武将/装备/成就）。分支战役根据上一关表现解锁不同下一关。',
+        targetSelector: '.top-bar', position: 'bottom' },
+      { chapter: 'deep',
+        title: '图鉴与收集',
+        text: '图鉴系统记录你见过的武将、装备、结局与势力。通过多周目与成就解锁特殊立绘、皮肤与隐藏剧情。收集率越高，meta 奖励越丰厚。',
         targetSelector: '.top-bar', position: 'bottom' }
     ];
   }
@@ -137,7 +183,7 @@ export class Tutorial {
     try { localStorage.setItem(DONE_KEY, 'true'); } catch (e) {}
   }
   static reset() {
-    try { localStorage.removeItem(DONE_KEY); } catch (e) {}
+    try { localStorage.removeItem(DONE_KEY); localStorage.removeItem(VIEWED_KEY); } catch (e) {}
   }
 
   // 启动教程
@@ -331,3 +377,70 @@ export const GAME_GUIDE = [
   { title: '新手建议', body: '① 先稳住经济，再图扩张；② 注意兵种克制，勿以步兵硬撼骑兵；③ 善待武将，保持忠诚；④ 多结盟少树敌；⑤ 善用科技与建筑提升国力。' },
   { title: '常见问题', body: 'Q: 没钱征兵？A: 提升商业与税率、开辟商路。Q: 武将忠诚低？A: 封赏、联姻、减少败仗。Q: 如何统一？A: 控制16城或消灭所有敌对势力，亦可走文化胜利。' }
 ];
+
+// ============================================================
+// V16.0 上下文教程（Contextual Tutorial）
+// ------------------------------------------------------------
+// 玩家首次触发新系统时，由 game.js / ui.js 调用：
+//   const tip = getContextualTutorial('espionage');
+//   if (tip) showToast(tip.title, tip.text); markTutorialViewed('espionage');
+// 进度持久化到 localStorage（VIEWED_KEY），跨周目不重复弹出。
+// ============================================================
+
+// 上下文教程注册表：hintType → { title, text }
+export const CONTEXTUAL_TUTORIALS = {
+  achievement:    { title: '成就系统', text: '成就簿已解锁！点击顶栏成就图标查看进度，解锁成就可获金钱、粮草与称号奖励。' },
+  diplomacy_deep: { title: '外交深谈', text: '新外交选项：联姻可稳固宗室关系并加成经济，善用远交近攻。' },
+  espionage:      { title: '谍报纵横', text: '谍报系统开启！派遣细作可刺探军情、散布流言、策反敌将。' },
+  exam:          { title: '科举取士', text: '太学建成，可开科举取士！三年一举，状元门生治国兴邦。' },
+  trade:         { title: '贸易商路', text: '贸易协定生效！商路按回合产出金钱，控制丝路节点可获双倍收益。' },
+  religion:      { title: '宗教信仰', text: '宗教系统开启！建佛寺道观可提升民心文化，但过多会侵蚀国用。' },
+  weather:       { title: '天气季节', text: '天气系统生效！雨雪天气迟滞骑兵、减弱弓箭射程，出征前察天观地。' },
+  ngplus:        { title: '多周目传承', text: '通关后可开启 New Game+！周目越高奖励越丰厚，解锁新槽位与图鉴。' },
+  campaign:      { title: '战役模式', text: '战役模式已解锁！独立关卡制挑战，通关发放专属武将与装备奖励。' },
+  gallery:       { title: '图鉴收集', text: '图鉴系统开启！记录你见过的武将、装备与结局，多周目解锁隐藏内容。' },
+  tech_line:     { title: '科技研究', text: '科技线开启！研究军事/经济/政治/阵法四线，解锁进阶兵种与制度。' },
+  legion:        { title: '军团编制', text: '军团系统开启！集结多支军队协同作战，形成决定性打击。' }
+};
+
+// 读取已查看的上下文教程集合
+function _readViewed() {
+  try {
+    const raw = localStorage.getItem(VIEWED_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (e) { return new Set(); }
+}
+function _writeViewed(set) {
+  try { localStorage.setItem(VIEWED_KEY, JSON.stringify([...set])); } catch (e) {}
+}
+
+// 返回某 hintType 的上下文教程；若未注册或已看过则返回 null
+export function getContextualTutorial(hintType) {
+  const tip = CONTEXTUAL_TUTORIALS[hintType];
+  if (!tip) return null;
+  const viewed = _readViewed();
+  if (viewed.has(hintType)) return null;
+  return { hintType, title: tip.title, text: tip.text };
+}
+
+// 标记某 hintType 已查看（不再弹出）
+export function markTutorialViewed(hintType) {
+  const viewed = _readViewed();
+  viewed.add(hintType);
+  _writeViewed(viewed);
+}
+
+// 返回所有尚未查看的上下文教程列表
+export function getUnviewedTutorials() {
+  const viewed = _readViewed();
+  return Object.keys(CONTEXTUAL_TUTORIALS)
+    .filter(k => !viewed.has(k))
+    .map(k => ({ hintType: k, ...CONTEXTUAL_TUTORIALS[k] }));
+}
+
+// 重置所有上下文教程查看记录（供「重新教学」使用）
+export function resetContextualTutorials() {
+  try { localStorage.removeItem(VIEWED_KEY); } catch (e) {}
+}

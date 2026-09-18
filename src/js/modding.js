@@ -92,6 +92,8 @@ export class ModManager {
     this.loaded = false;
     // 基础数据快照（用于重置）
     this._baseSnapshot = null;
+    // 性能优化（modding.js）：快照的深克隆缓存（restoreBase 复用，避免每次全量 deepClone）
+    this._baseSnapshotClones = null;
     // 模组启用状态持久化 key
     this._storageKey = 'nanchao_mod_enabled';
   }
@@ -177,18 +179,28 @@ export class ModManager {
   }
 
   // 恢复基础数据（从快照）
+  // 性能优化（modding.js）：restoreBase 每次调用都对整个快照做一次 deepClone
+  //   （JSON.parse(JSON.stringify)），72城/144将/海量装备下每次切换模组都全量深克隆，
+  //   主线程明显卡顿。优化：takeBaseSnapshot 时缓存一份深克隆副本，
+  //   restoreBase 直接用缓存副本（深克隆只发生一次），避免重复序列化大对象。
   restoreBase(dataRefs) {
     if (!this._baseSnapshot) return;
-    for (const [key, snapshot] of Object.entries(this._baseSnapshot)) {
+    if (!this._baseSnapshotClones) {
+      this._baseSnapshotClones = {};
+      for (const [key, snapshot] of Object.entries(this._baseSnapshot)) {
+        this._baseSnapshotClones[key] = deepClone(snapshot);
+      }
+    }
+    for (const [key, snapshot] of Object.entries(this._baseSnapshotClones)) {
       const target = dataRefs[key];
       if (!target) continue;
       if (Array.isArray(target)) {
         target.length = 0;
         for (const item of snapshot) target.push(item);
       } else if (typeof target === 'object') {
-        // 清空再赋值
+        // 清空再赋值（snapshot 已是缓存的独立深克隆，无需再 deepClone）
         for (const k of Object.keys(target)) delete target[k];
-        Object.assign(target, deepClone(snapshot));
+        Object.assign(target, snapshot);
       }
     }
   }

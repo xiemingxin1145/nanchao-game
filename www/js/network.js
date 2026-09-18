@@ -196,6 +196,11 @@ export class LANManager {
   }
 
   _startHeartbeat() {
+    // BUG修复（network.js #1）：重复调用 host()/join() 时若不先停旧定时器，
+    //   会叠加多个 setInterval 心跳——每个 interval 都 send 一次 ping，
+    //   导致 _lastRecv 被错误刷新、超时判定失灵，且网络帧冗余。
+    //   修复：启动新心跳前先清理旧定时器。
+    this._stopHeartbeat();
     this._lastRecv = Date.now();
     this._heartbeatTimer = setInterval(() => {
       // 超时检测
@@ -213,9 +218,13 @@ export class LANManager {
 
   // 发送任意消息（自动加时间戳）
   send(msg) {
-    if (!this.isAvailable() || !this.connected && !this.listening) {
-      // 主机在 listening 阶段也可发送（此时可能还没有客户端，写入会失败但不抛错）
-    }
+    // BUG修复（network.js #2）：原实现此处为一个空 if 块——
+    //   `if (!this.isAvailable() || !this.connected && !this.listening) { /* 空 */ }`
+    //   本意是「不可用/未连接时早退」，但漏掉了 return，导致继续执行 window.lan.send()，
+    //   在非 Electron 浏览器环境下 window.lan 为 undefined，必然抛错（仅靠 try/catch 静默）。
+    //   修复：改为真正的早退——桥不存在或既未连接也未监听时直接返回，不抛错。
+    if (!this.isAvailable()) return;
+    if (!this.connected && !this.listening) return;
     try {
       msg.timestamp = Date.now();
       window.lan.send(msg);

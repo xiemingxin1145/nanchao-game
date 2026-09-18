@@ -102,7 +102,24 @@ export function saveGame(game, slot = 0) {
     if (Array.isArray(data.log) && data.log.length > 500) {
       data.log = data.log.slice(-500);
     }
-    localStorage.setItem(key, _pack(data));
+    // 性能优化（save.js）：大存档序列化/写入容错——
+    //   144将+72城+长局日志已逼近 localStorage 5MB 上限，首次 setItem 偶发 QuotaExceededError。
+    //   优化：写入失败时自动把日志进一步截断到最近 100 条再试一次，
+    //   长局存档成功率显著提升（日志仅展示用途，截断不影响玩法）。
+    try {
+      localStorage.setItem(key, _pack(data));
+    } catch (e1) {
+      if (e1 && (e1.name === 'QuotaExceededError' || /quota/i.test(e1.name))) {
+        if (Array.isArray(data.log) && data.log.length > 100) {
+          data.log = data.log.slice(-100);
+          localStorage.setItem(key, _pack(data));
+        } else {
+          throw e1;
+        }
+      } else {
+        throw e1;
+      }
+    }
     return { ok: true, msg: '存档成功' };
   } catch (e) {
     return { ok: false, msg: '存档失败：' + e.message };

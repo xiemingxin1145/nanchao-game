@@ -131,3 +131,151 @@ export function markIntroCompleted() {
 export function resetIntroCompleted() {
   try { localStorage.removeItem(INTRO_KEY); } catch (e) {}
 }
+
+// ============================================================
+// V16.0 多周目传承深化（meta-progression）
+// ------------------------------------------------------------
+// 1) 周目奖励树：每通关一次解锁新奖励槽位
+//    （初始金钱 / 初始武将 / 初始科技 / 特殊装备）。
+// 2) 难度层级：周目数越高 AI 越强但奖励越丰厚。
+// 3) 图鉴解锁：通关特定结局解锁特殊武将/剧本/皮肤。
+// 4) 存档继承：通关后可携带少量资源到下一周目。
+// ============================================================
+
+const NGPLUS_REWARD_KEY = 'nanchao_ngplus_rewards_v16';
+
+// ---------- 周目奖励树（按周目等级解锁） ----------
+// 每个奖励槽位：{ id, name, desc, unlockLevel, type, value }
+export const NGPLUS_REWARD_TREE = [
+  { id: 'v16_rw_money_1',    name: '内帑充盈·初阶',   desc: '新周目初始金钱 +1000',        unlockLevel: 1, type: 'startMoney',  value: 1000 },
+  { id: 'v16_rw_general_1',  name: '元从老将·初阶',   desc: '新周目初始自带一名三流武将',   unlockLevel: 2, type: 'startGeneral', value: 'v16_g_oldguard' },
+  { id: 'v16_rw_tech_1',    name: '格物余脉·初阶',   desc: '新周目初始科技点 +20',         unlockLevel: 3, type: 'startTech',   value: 20 },
+  { id: 'v16_rw_item_1',     name: '传国宝剑·初阶',   desc: '新周目初始自带一把精良武器',   unlockLevel: 4, type: 'startItem',   value: 'v16_iv_sword' },
+  { id: 'v16_rw_money_2',    name: '内帑充盈·中阶',   desc: '新周目初始金钱 +3000',        unlockLevel: 5, type: 'startMoney',  value: 3000 },
+  { id: 'v16_rw_general_2',  name: '元从老将·中阶',   desc: '新周目初始自带一名二流武将',   unlockLevel: 6, type: 'startGeneral', value: 'v16_g_guardian' },
+  { id: 'v16_rw_tech_2',    name: '格物余脉·中阶',   desc: '新周目初始科技点 +50',         unlockLevel: 7, type: 'startTech',   value: 50 },
+  { id: 'v16_rw_item_2',     name: '传国铠甲·中阶',   desc: '新周目初始自带一副精良铠甲',   unlockLevel: 8, type: 'startItem',   value: 'v16_iv_armor' },
+  { id: 'v16_rw_money_3',    name: '内帑充盈·高阶',   desc: '新周目初始金钱 +8000',        unlockLevel: 9, type: 'startMoney',  value: 8000 },
+  { id: 'v16_rw_general_3',  name: '元从老将·高阶',   desc: '新周目初始自带一名一流名将',   unlockLevel: 10, type: 'startGeneral', value: 'v16_g_legend' }
+];
+
+// 难度层级表（周目数 → 难度名 + 倍率）
+const DIFFICULTY_TIERS = [
+  { maxLevel: 0, name: '乱世初启', aiArmyMult: 1.0,  aiEconMult: 1.0,  rewardMult: 1.0 },
+  { maxLevel: 2, name: '群雄逐鹿', aiArmyMult: 1.10, aiEconMult: 1.05, rewardMult: 1.15 },
+  { maxLevel: 4, name: '烽火连天', aiArmyMult: 1.20, aiEconMult: 1.10, rewardMult: 1.30 },
+  { maxLevel: 6, name: '白骨露野', aiArmyMult: 1.35, aiEconMult: 1.20, rewardMult: 1.50 },
+  { maxLevel: 8, name: '天地色变', aiArmyMult: 1.50, aiEconMult: 1.30, rewardMult: 1.80 },
+  { maxLevel: 10,name: '轮回之主', aiArmyMult: 2.00, aiEconMult: 1.50, rewardMult: 2.50 }
+];
+
+// 图鉴解锁表（结局 id → 解锁内容）
+const GALLERY_UNLOCKS = [
+  { endingId: 'unify',           unlockType: 'scenario', unlockId: 'v16_scn_legend', name: '剧本：传说之路' },
+  { endingId: 'abdicate',        unlockType: 'general',  unlockId: 'v16_g_sage',     name: '武将：隐士高人' },
+  { endingId: 'v15_early_death',unlockType: 'skin',     unlockId: 'v16_skin_dark',  name: '皮肤：玄甲' },
+  { endingId: 'usurp',           unlockType: 'general',  unlockId: 'v16_g_usurper',  name: '武将：乱世枭雄' },
+  { endingId: 'barbarian_takeover', unlockType: 'skin',  unlockId: 'v16_skin_barbarian', name: '皮肤：胡风' }
+];
+
+// ---------- 读取/写入已解锁奖励槽位 ----------
+function _readUnlockedRewards() {
+  try {
+    const raw = localStorage.getItem(NGPLUS_REWARD_KEY);
+    if (!raw) return { rewards: [], gallery: [] };
+    const d = JSON.parse(raw);
+    return {
+      rewards: Array.isArray(d.rewards) ? d.rewards : [],
+      gallery: Array.isArray(d.gallery) ? d.gallery : []
+    };
+  } catch (e) { return { rewards: [], gallery: [] }; }
+}
+function _writeUnlockedRewards(data) {
+  try { localStorage.setItem(NGPLUS_REWARD_KEY, JSON.stringify(data)); } catch (e) {}
+}
+
+// 根据当前周目等级，返回已解锁的奖励槽位列表
+export function getNGPlusRewards(level) {
+  const lv = Math.max(0, Math.min(MAX_NGPLUS_LEVEL, level || 0));
+  return NGPLUS_REWARD_TREE.filter(r => r.unlockLevel <= lv);
+}
+
+// 手动解锁一个奖励槽位（通关/成就触发）
+export function unlockNGPlusReward(rewardId) {
+  const data = _readUnlockedRewards();
+  if (!data.rewards.includes(rewardId)) {
+    data.rewards.push(rewardId);
+    _writeUnlockedRewards(data);
+  }
+  return data.rewards;
+}
+
+// 返回当前周目难度层级
+// 返回 { name, aiArmyMult, aiEconMult, rewardMult, level }
+export function getNGPlusDifficulty(level) {
+  const lv = Math.max(0, Math.min(MAX_NGPLUS_LEVEL, level || 0));
+  let tier = DIFFICULTY_TIERS[0];
+  for (const t of DIFFICULTY_TIERS) {
+    if (lv <= t.maxLevel) { tier = t; break; }
+  }
+  return {
+    name: tier.name,
+    aiArmyMult: tier.aiArmyMult,
+    aiEconMult: tier.aiEconMult,
+    rewardMult: tier.rewardMult,
+    level: lv
+  };
+}
+
+// 返回图鉴中已解锁的全部内容（特殊武将/剧本/皮肤）
+// 通关特定结局后调用 unlockGalleryByEnding(endingId) 解锁
+export function getUnlockedContent() {
+  const data = _readUnlockedRewards();
+  return {
+    rewards: data.rewards.map(id => NGPLUS_REWARD_TREE.find(r => r.id === id)).filter(Boolean),
+    gallery: data.gallery
+  };
+}
+
+// 根据结局 id 解锁图鉴内容（通关结局时调用）
+export function unlockGalleryByEnding(endingId) {
+  const data = _readUnlockedRewards();
+  const unlocks = GALLERY_UNLOCKS.filter(u => u.endingId === endingId);
+  const newOnes = [];
+  for (const u of unlocks) {
+    const gid = `${u.unlockType}:${u.unlockId}`;
+    if (!data.gallery.includes(gid)) {
+      data.gallery.push(gid);
+      newOnes.push(u);
+    }
+  }
+  if (newOnes.length) _writeUnlockedRewards(data);
+  return newOnes;
+}
+
+// 存档继承：通关后可携带到下一周目的资源（按周目数计算上限）
+// 返回 { money, food, generalCount }
+export function getCarryOverAllowance(level) {
+  const lv = Math.max(0, Math.min(MAX_NGPLUS_LEVEL, level || 0));
+  return {
+    money: Math.min(5000 + lv * 2000, 25000),
+    food: Math.min(8000 + lv * 3000, 40000),
+    generalCount: Math.min(1 + Math.floor(lv / 3), 3)
+  };
+}
+
+// 计算新周目初始加成（合并 getNGPlusBonus + 奖励树槽位）
+// 返回 { money, food, techPoints, generals, items }
+export function getNGPlusStartBonus(level) {
+  const rewards = getNGPlusRewards(level);
+  const bonus = { money: 0, food: 0, techPoints: 0, generals: [], items: [] };
+  for (const r of rewards) {
+    switch (r.type) {
+      case 'startMoney': bonus.money += r.value; break;
+      case 'startTech': bonus.techPoints += r.value; break;
+      case 'startGeneral': bonus.generals.push(r.value); break;
+      case 'startItem': bonus.items.push(r.value); break;
+    }
+  }
+  return bonus;
+}

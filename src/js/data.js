@@ -679,6 +679,36 @@ export const SCENARIOS = {
     cityMorale: { nanchao: 62, dongwei: 58 },
     generalLoyalty: { nanchao: 75, dongwei: 72 },
     garrisonMult: { nanchao: 1.05, dongwei: 1.15 }
+  },
+
+  // ============================================================
+  // V16.0 新增剧本（1个，27→28）
+  // ---- 剧本28：尉迟迥之乱（580年）----
+  // 历史背景：北周大象二年（580），周宣帝崩，静帝幼冲，外戚杨坚假黄钺总己以政。
+  //   相州总管尉迟迥（宇文泰甥）以宗室重臣，自以受遗寄，不平杨坚专权，遂起兵相州，
+  //   赵、魏之士，从者如归，众至数十万。鄴城、青州、赵州皆应之。
+  //   杨坚遣韦孝宽、高颎东讨，隔河而阵。孝�为土狗以遏迥船，又焚迥桥以挫其气。
+  //   两军战于鄴南，迥军小却，孝宽乘之，迥走保鄴城，城陷，迥登楼射杀数人，
+  //   遂被追逼，自刎而死。关中之柄遂专于杨氏，禅代之形已成。
+  // 此时南陈宣帝太建十二年，吴明彻已没于周，淮南初失；南陈惟守江而已。
+  // 历史考证：《周书·尉迟迥传》《隋书·高祖纪》。
+  // ============================================================
+  '580': {
+    id: '580', name: '尉迟迥之乱', year: 580,
+    description: '周宣帝崩，静帝幼冲，外戚杨坚入总朝政。相州总管尉迟迥以周室懿亲，据邺举义，赵魏数十州应之，众数十万。杨坚命韦孝宽东讨，高颎监其军。孝宽临阵，为土狗以遏迥船，又焚桥以挫其气。两军合战，迥军大溃，退保邺城。城陷，迥登楼格杀数人，乃自刎。关东再定，杨氏之业成矣。南陈宣帝闻乱，复谋进取，然吴明彻已没，不复能振。',
+    factions: ['xiwei', 'dongwei', 'nanchao'],
+    factionNameOverride: {
+      xiwei: '北周（杨坚）', dongwei: '相州（尉迟迥）', nanchao: '南陈'
+    },
+    // 特殊规则：杨坚挟幼主以令百官，关中府兵精悍；尉迟迥义旗一举，山东响应，新附未固；南陈乘虚北窥
+    resources: {
+      xiwei: { money: 3200, food: 4200 },
+      dongwei: { money: 2400, food: 3200 },
+      nanchao: { money: 2200, food: 3000 }
+    },
+    cityMorale: { xiwei: 60, dongwei: 55, nanchao: 55 },
+    generalLoyalty: { xiwei: 78, dongwei: 65, nanchao: 68 },
+    garrisonMult: { xiwei: 1.25, dongwei: 1.1, nanchao: 1.0 }
   }
 };
 export const DEFAULT_SCENARIO = '550';
@@ -1647,7 +1677,98 @@ export const GENERALS = [
     command: 45, force: 50, intel: 40, politics: 45, loyalty: 45, portrait: 'v15_xiao_yuanming',
     age: 45, skills: ['xiaoxiong'],
     bonds: ['xiao_yan', 'gao_huan'],
-    description: '字靖通，长沙王萧懿子，梁武帝侄。嗣封。寒山之役，武帝使率军应寒山，兵败为东魏所俘。贞阳侯。后齐人送之南归，王僧辩立之为帝，未几陈霸先废之，立敬帝。' }
+    description: '字靖通，长沙王萧懿子，梁武帝侄。嗣封。寒山之役，武帝使率军应寒山，兵败为东魏所俘。贞阳侯。后齐人送之南归，王僧辩立之为帝，未几陈霸先废之，立敬帝。' },
+
+  // ------------------------------------------------------------
+  // V16.0 新增武将（15位，v16_ 前缀）—— 隋初·北周·后梁·陈末未收录人物
+  // 覆盖：隋室文臣(6) · 隋室武将(6) · 隋宗室(1) · 后梁(1) · 陈佞臣(1)
+  // 历史参考：《隋书》《陈书》《南史》《北史》
+  // ------------------------------------------------------------
+
+  // ---- 隋室文臣（6） ----
+  { id: 'v16_niu_hong', name: '牛弘', faction: 'xiwei', role: '隋初大史官',
+    command: 25, force: 20, intel: 88, politics: 90, loyalty: 82, portrait: 'v16_niu_hong',
+    age: 55, skills: ['rujiang', 'mouliao_baichu'],
+    bonds: ['yang_jian', 'su_chuo'],
+    description: '字里仁，安定鹑觚人。本姓寮，父允仕魏，赐姓牛氏。好学博闻，隋初任秘书监，表请分遣使人，搜访异本，天下图书，稍更披览。修《五礼》，定律令，牛弘身为外戚，而恭俭自居，杨素甚推服之。' },
+  { id: 'v16_xue_daoheng', name: '薛道衡', faction: 'xiwei', role: '隋内史侍郎',
+    command: 20, force: 15, intel: 86, politics: 72, loyalty: 65, portrait: 'v16_xue_daoheng',
+    age: 58, skills: ['rujiang'],
+    bonds: ['yang_jian', 'yu_shiji'],
+    description: '字玄卿，河东汾阴人。少有才名，十岁讲《左氏春秋》。历仕北齐、北周。隋内史侍郎，每致文帝书，南北称善。《昔昔盐》"空梁落燕泥"之句，为时所诵。炀帝以宿旧忌之，竟坐自尽。' },
+  { id: 'v16_xu_shanshen', name: '许善心', faction: 'xiwei', role: '隋秘书丞',
+    command: 15, force: 10, intel: 82, politics: 78, loyalty: 80, portrait: 'v16_xu_shanshen',
+    age: 50, skills: ['rujiang'],
+    bonds: ['yang_jian', 'pei_ju'],
+    description: '字务本，高阳北新城人。幼有神童之号。陈使隋，留不遣。隋秘书丞，仿阮孝绪《七录》，更制《七林》，搜籍校书。宇文化及弑炀帝于江都，善心以隋室旧臣，不屈而死。' },
+  { id: 'v16_yu_shiji', name: '虞世基', faction: 'xiwei', role: '隋内史合人',
+    command: 30, force: 25, intel: 80, politics: 75, loyalty: 55, portrait: 'v16_yu_shiji',
+    age: 55, skills: ['mouliao_baichu'],
+    bonds: ['yang_guang', 'pei_ju'],
+    description: '字茂世，会稽余姚人。博学有高才，兼善草隶。陈亡入隋，炀帝重其才，专典机密。然从容不断，知天下危乱而不敢言，又受赂公行，朝野共疾之。江都之变，为宇文化及所诛。' },
+  { id: 'v16_pei_ju', name: '裴矩', faction: 'xiwei', role: '隋黄门郎·外交地理',
+    command: 40, force: 30, intel: 88, politics: 84, loyalty: 70, portrait: 'v16_pei_ju',
+    age: 60, skills: ['mouliao_baichu', 'rujiang'],
+    bonds: ['yang_jian', 'yang_guang'],
+    description: '字弘大，河东闻喜人。好学，有文智。隋文帝时，使于张掖，掌诸蕃交易，访探西域山川风俗，撰《西域图记》三卷，入朝奏之。炀帝于张掖引见西域数十国，矩之力也。后入唐，民部尚书。' },
+  { id: 'v16_cui_zhongfang', name: '崔仲方', faction: 'xiwei', role: '隋内史令',
+    command: 45, force: 40, intel: 82, politics: 84, loyalty: 75, portrait: 'v16_cui_zhongfang',
+    age: 58, skills: ['mouliao_baichu'],
+    bonds: ['yang_jian', 'gao_jiong'],
+    description: '字不周，博陵安平人。少好奇略，览兵书。周武帝时，为宫尹端，与杨坚少同学。及杨坚辅政，仲方劝之受命，又上《受命论》。开皇初，坐事免。后迁虢州刺史，论伐陈之势，甚有宏略。' },
+
+  // ---- 隋室武将（6） ----
+  { id: 'v16_yuwen_kai', name: '宇文恺', faction: 'xiwei', role: '隋将作大匠',
+    command: 55, force: 45, intel: 86, politics: 78, loyalty: 72, portrait: 'v16_yuwen_kai',
+    age: 50, skills: ['mouliao_baichu'],
+    bonds: ['yang_jian', 'yang_guang'],
+    description: '字安乐，杞公忻弟。少有大志，好学博览，号为名公子。隋文帝营新都，以恺为营建副监，新城制度，多出于恺。后炀帝幸江都，恺造龙舟、大帐，穷极宏丽。又撰《东都图记》《明堂图议》。' },
+  { id: 'v16_yang_yichen', name: '杨义臣', faction: 'xiwei', role: '隋末名将',
+    command: 82, force: 80, intel: 70, politics: 60, loyalty: 80, portrait: 'v16_yang_yichen',
+    age: 45, skills: ['dudu_zhongwai', 'mengjiang'],
+    bonds: ['yang_jian', 'yuwen_shu'],
+    description: '本姓尉迟，父崇战死，幼养宫中，赐姓杨氏。性谨厚，善骑射，有将略。从征突厥、吐谷浑，数有战功。大业中，破高士达、斩张金称，河北群盗为之丧气。炀帝忌其威名，追入朝，拜礼部尚书，卒于官。' },
+  { id: 'v16_zhang_xutuo', name: '张须陀', faction: null, role: '隋末名将',
+    command: 84, force: 85, intel: 68, politics: 55, loyalty: 70, portrait: 'v16_zhang_xutuo',
+    age: 45, skills: ['mengjiang', 'dudu_zhongwai'],
+    bonds: ['yang_yichen', 'luo_shixin'],
+    description: '弘农阌乡人。性刚烈，有勇略。从史万岁讨西爨，以功授仪同。大业中，齐郡通守，领河南道十二郡黜陟讨捕大使。屡破王薄、裴长才、郭方预诸盗，号为名将。后与李密战于荥阳海神庙，兵败，战死。' },
+  { id: 'v16_chen_leng', name: '陈稜', faction: 'xiwei', role: '隋朝请大夫',
+    command: 76, force: 74, intel: 65, politics: 55, loyalty: 72, portrait: 'v16_chen_leng',
+    age: 48, skills: ['hanshan_yanji', 'mengjiang'],
+    bonds: ['yang_su', 'yang_guang'],
+    description: '庐江襄安人。以将军子，炀帝大业三年，拜武贲郎将。与朝请大夫张镇周发东阳兵万余人，自义安泛海击流求国，月余而至，虏其王渴刺兜，胜还。后宇文化及引之，为李子通所杀。' },
+  { id: 'v16_zhou_fashang', name: '周法尚', faction: 'xiwei', role: '隋武卫将军',
+    command: 80, force: 76, intel: 70, politics: 60, loyalty: 78, portrait: 'v16_zhou_fashang',
+    age: 55, skills: ['dudu_zhongwai', 'mengjiang'],
+    bonds: ['yang_jian', 'yang_su'],
+    description: '字德迈，汝南安成人。少果劲，有将帅气。本陈将，后奔周。隋初，拜巴州刺史。平陈之役，以功迁永州总管。后从杨素击突厥，又从讨吐谷浑。大业末，卒于军。' },
+  { id: 'v16_xue_shixiong', name: '薛世雄', faction: 'xiwei', role: '隋左御卫大将军',
+    command: 78, force: 78, intel: 62, politics: 55, loyalty: 75, portrait: 'v16_xue_shixiong',
+    age: 55, skills: ['mengjiang', 'dudu_zhongwai'],
+    bonds: ['yang_jian', 'yang_guang'],
+    description: '字世英，河东汾阴人。年十七，从周武帝平齐。隋初，以数行军总管，数有战功。大业中，为左御卫大将军，领涿郡留守。李密逼东都，炀帝命世雄率幽蓟劲兵讨之，为窦建德所袭，败归，惭恚发病卒。' },
+
+  // ---- 隋宗室（1） ----
+  { id: 'v16_yang_shuang', name: '杨爽', faction: 'xiwei', role: '隋卫王',
+    command: 82, force: 78, intel: 72, politics: 75, loyalty: 90, portrait: 'v16_yang_shuang',
+    age: 30, skills: ['wangzhe_qiqi', 'dudu_zhongwai'],
+    bonds: ['yang_jian', 'dou_ruding'],
+    description: '字师仁，杨坚异母弟。幼为献皇后所鞠，教以书计。开皇初，立为卫王。以行军元帅步骑七万，出平凉以备胡，突厥引退。复为元帅，步骑十五万出合川，突厥遁逃。早卒，年二十五。' },
+
+  // ---- 后梁（1） ----
+  { id: 'v16_xiao_cong', name: '萧琮', faction: 'hou_liang', role: '后梁莒公',
+    command: 40, force: 35, intel: 78, politics: 70, loyalty: 60, portrait: 'v16_xiao_cong',
+    age: 35, skills: ['rujiang'],
+    bonds: ['xiao_kui', 'yang_jian'],
+    description: '字温文，萧岿太子。博学好文，尤善音律。岿卒，嗣位。开皇七年，隋文帝征琮入朝，遂废后梁，拜莒国公。其叔萧岩等据江陵奔陈。炀帝以萧皇后故，甚见亲重，改封梁公。' },
+
+  // ---- 陈佞臣（1） ----
+  { id: 'v16_kong_fan', name: '孔范', faction: 'nanchao', role: '陈都官尚书',
+    command: 20, force: 15, intel: 65, politics: 55, loyalty: 40, portrait: 'v16_kong_fan',
+    age: 50, skills: ['mouliao_baichu'],
+    bonds: ['chen_shubao', 'zhang_lihua'],
+    description: '字法言，会稽山阴人。容止都雅，文章赡丽。后主即位，与江总等并为狎客。善为媚，恶闻人过，群臣有违之者，皆被诋毁。又自谓文武略，举朝莫及。隋师渡江，范请出战，未阵而北，与后主俱入井。' }
 ];
 
 // ---------- V3.0 新武将技能映射 ----------
@@ -1853,6 +1974,28 @@ export const V150_NEW_GENERAL_SKILLS = {
   v15_xiao_yuanming: ['xiaoxiong']                         // 萧渊明：贞阳入嗣
 };
 Object.assign(NEW_GENERAL_SKILLS, V150_NEW_GENERAL_SKILLS);
+
+// ============================================================
+// V16.0 新武将技能映射（15位，v16_ 前缀）
+// ============================================================
+export const V160_NEW_GENERAL_SKILLS = {
+  v16_niu_hong:       ['rujiang', 'mouliao_baichu'],       // 牛弘：搜籍修礼
+  v16_xue_daoheng:    ['rujiang'],                          // 薛道衡：昔昔盐
+  v16_xu_shanshen:    ['rujiang'],                          // 许善心：七林校书
+  v16_yu_shiji:       ['mouliao_baichu'],                   // 虞世基：专典机密
+  v16_pei_ju:         ['mouliao_baichu', 'rujiang'],       // 裴矩：西域图记
+  v16_cui_zhongfang:  ['mouliao_baichu'],                   // 崔仲方：受命论
+  v16_yuwen_kai:      ['mouliao_baichu'],                   // 宇文恺：营新都
+  v16_yang_yichen:    ['dudu_zhongwai', 'mengjiang'],       // 杨义臣：破河北贼
+  v16_zhang_xutuo:    ['mengjiang', 'dudu_zhongwai'],       // 张须陀：齐郡悍将
+  v16_chen_leng:      ['hanshan_yanji', 'mengjiang'],       // 陈稜：泛海击流求
+  v16_zhou_fashang:   ['dudu_zhongwai', 'mengjiang'],       // 周法尚：平陈旧将
+  v16_xue_shixiong:   ['mengjiang', 'dudu_zhongwai'],       // 薛世雄：涿郡留守
+  v16_yang_shuang:    ['wangzhe_qiqi', 'dudu_zhongwai'],    // 杨爽：卫王北略
+  v16_xiao_cong:      ['rujiang'],                          // 萧琮：后梁末主
+  v16_kong_fan:       ['mouliao_baichu']                    // 孔范：狎客佞臣
+};
+Object.assign(NEW_GENERAL_SKILLS, V160_NEW_GENERAL_SKILLS);
 
 // ---------- 事件表 ----------
 export const EVENTS = [
@@ -4511,6 +4654,182 @@ export const EVENTS = [
       { text: '厚加馆待，赐而遣之（金+1000，蛮族关系+15）', effect: { money: 1000, barbarianRel: 15 } },
       { text: '不受其献，却还使者（蛮族关系-8）', effect: { barbarianRel: -8 } }
     ]
+  },
+
+  // ============================================================
+  // V16.0 新增随机事件（20个，v16_ 前缀）
+  // 分类：军事(5) / 政治(4) / 经济(4) / 文化(4) / 特殊(3)
+  // effect 键均复用 events.js applyEvent 已支持的键。
+  // ============================================================
+
+  // ---- 军事（5） ----
+  {
+    id: 'v16_bianfeng_baojing', name: '边烽报警', illustration: 'barbarian_invasion',
+    description: '北边堠骑驰至：突厥数千骑入塞，掠武威、陇西，驱羊马而去。边将请举兵追之，或曰当清野固守，俟其归而击之。',
+    options: [
+      { text: '出塞追蹑，邀其归路（自动大战，损兵1200，金+1200）', effect: { massBattle: true, armyLoss: 1200, money: 1200 } },
+      { text: '清野固守，俟其自退（守城buff两回合，金-300）', effect: { garrisonBuff: true, money: -300 } }
+    ]
+  },
+  {
+    id: 'v16_qingqi_zhanyao', name: '轻骑截道', illustration: 'cavalry_charge',
+    description: '谍者言：敌之粮道自蒲坂赴蒲津，所过无备。诸将请选精骑三千，间道绝其转输，以困其师。',
+    options: [
+      { text: '轻骑夜出，烧其积聚（损兵800，粮+1500）', effect: { armyLoss: 800, food: 1500 } },
+      { text: '恐其有伏，不许（无变化）', effect: {} }
+    ]
+  },
+  {
+    id: 'v16_louchuan_xiajiang', name: '楼船下濑', illustration: 'river_battle',
+    description: '蜀帅杨素造大舰于永安，名曰五牙，起楼五层，高百余尺，左右六柏竿，皆高五十尺，可容战士八百人。今东下之势已成，当乘流以临金陵。',
+    options: [
+      { text: '楼船顺流，直趣建康（自动大战，金+1800）', effect: { massBattle: true, money: 1800 } },
+      { text: '先营巴蜀，徐图东下（金-600，守城buff两回合）', effect: { money: -600, garrisonBuff: true } }
+    ]
+  },
+  {
+    id: 'v16_junzhong_caoze', name: '军中草泽', illustration: 'mutiny',
+    description: '久戍之卒，谋逃归乡里。夜聚草泽，约以举火为号。主将微闻之，左右请按兵无动，或请亟收首谋者。',
+    options: [
+      { text: '亟收首谋，斩以徇（军心+7，忠诚-5）', effect: { armyMorale: 7, generalLoyalty: { amt: -5 } } },
+      { text: '劳遣之，分隶诸营（军心-3，忠诚+5）', effect: { armyMorale: -3, generalLoyalty: { amt: 5 } } }
+    ]
+  },
+  {
+    id: 'v16_chengxi_lei_gong', name: '城西累攻', illustration: 'city_siege',
+    description: '敌悉众攻我城西，云梯地道，昼夜不息。城中矢石俱尽，将士皆有惧色。或议退保子城，或议开门突击。',
+    options: [
+      { text: '婴城死战，俟其疲敝（守城buff两回合，军心+9）', effect: { garrisonBuff: true, armyMorale: 9 } },
+      { text: '开门突击，决一死战（自动大战，损兵1800）', effect: { massBattle: true, armyLoss: 1800 } }
+    ]
+  },
+
+  // ---- 政治（4） ----
+  {
+    id: 'v16_shengui_liuzhi', name: '三省留直', illustration: 'court',
+    description: '尚书省奏：军国多务，须令朝臣更日直宿，以决万机。或曰宜用旧德，或曰宜择明习文法者。',
+    options: [
+      { text: '选明习者直宿，庶务立决（金+800，忠诚+3）', effect: { money: 800, generalLoyalty: { amt: 3 } } },
+      { text: '用旧德宿望，从容议政（文化+4，金-200）', effect: { culture: 4, money: -200 } }
+    ]
+  },
+  {
+    id: 'v16_yushi_fengwen', name: '御史风闻', illustration: 'court',
+    description: '御史台上封事，言大臣交通宾客、货赂公行。天子以风闻言事，本欲广开言路，然所弹奏多不实。',
+    options: [
+      { text: '付有司核实，虚实皆行（忠诚+5，金-300）', effect: { generalLoyalty: { amt: 5 }, money: -300 } },
+      { text: '以风闻为渎奏，切责之（忠诚-5，金+400）', effect: { generalLoyalty: { amt: -5 }, money: 400 } }
+    ]
+  },
+  {
+    id: 'v16_zongshi_ruwei', name: '宗室入卫', illustration: 'court',
+    description: '宗正奏：宗室子弟入仕者少，多居散地。或请令高年宗室入直殿省，以彰亲亲；或请授实任，试其能否。',
+    options: [
+      { text: '令入直殿省，以为屏藩（忠诚+6，金-400）', effect: { generalLoyalty: { amt: 6 }, money: -400 } },
+      { text: '量才授任，不专用亲（招募一将，文化+3）', effect: { recruitRandom: true, culture: 3 } }
+    ]
+  },
+  {
+    id: 'v16_mensheng_jianju', name: '门生荐举', illustration: 'taixue_lecture',
+    description: '有下土贫士，负笈远至，献《新论》十篇，言历代兴亡之验。宰相览而异之，欲以名闻。',
+    options: [
+      { text: '召对称旨，授馆职（招募一将，文化+5）', effect: { recruitRandom: true, culture: 5 } },
+      { text: '但赐束帛，遣归乡里（民心+2，金+200）', effect: { morale: 2, money: 200 } }
+    ]
+  },
+
+  // ---- 经济（4） ----
+  {
+    id: 'v16_juntun_kaitian', name: '屯田开田', illustration: 'harvest',
+    description: '边郡奏：营户旧屯田，久废不治。若发卒耕于塞上，且田且守，可省漕运之半。',
+    options: [
+      { text: '大兴屯田，且田且守（金-600，粮+1600，农业+5）', effect: { money: -600, food: 1600, agri: 5 } },
+      { text: '但下诏书劝农（粮+500）', effect: { food: 500 } }
+    ]
+  },
+  {
+    id: 'v16_yunchao_zhili', name: '运漕治利', illustration: 'maritime_trade',
+    description: '河漕不通，关中谷贵。户部请开渭水渠，引渭达河，以通关东之粟。功费不赀，然可久利。',
+    options: [
+      { text: '开漕渠，以通关中（金-900，粮+2000，科技+4）', effect: { money: -900, food: 2000, tech: 4 } },
+      { text: '陆运而已，不烦民力（粮+600，民心-2）', effect: { food: 600, morale: -2 } }
+    ]
+  },
+  {
+    id: 'v16_guanshi_zhiju', name: '关市置邸', illustration: 'bazaar',
+    description: '边州胡商辐辏，多以马市易缯絮。有司请置邸舍，专掌交易，岁入可观。',
+    options: [
+      { text: '置邸专掌，岁入官库（金+1800，商业+6）', effect: { money: 1800, comm: 6 } },
+      { text: '与民共市，不专其利（民心+3，金+600）', effect: { morale: 3, money: 600 } }
+    ]
+  },
+  {
+    id: 'v16_yantie_shiguan', name: '盐铁市官', illustration: 'ancient_ruins',
+    description: '河东池盐、蜀中铁山，民私采者众。或请置盐铁官，禁民私铸；或曰纵民为之，而收其税。',
+    options: [
+      { text: '置官专卖，以专其利（金+1500，民心-4）', effect: { money: 1500, morale: -4 } },
+      { text: '弛禁收税，与民共之（金+800，民心+3）', effect: { money: 800, morale: 3 } }
+    ]
+  },
+
+  // ---- 文化（4） ----
+  {
+    id: 'v16_mingtang_yashi', name: '明堂雅什', illustration: 'taixue_lecture',
+    description: '有司奏：明堂新成，宜定雅乐，以郊祀上帝。太常请召诸生议声律，或曰当用周之旧曲，或曰当改换新声。',
+    options: [
+      { text: '改换新声，以彰王业（文化+10，金-500）', effect: { culture: 10, money: -500 } },
+      { text: '仍用周旧，以存古意（文化+4）', effect: { culture: 4 } }
+    ]
+  },
+  {
+    id: 'v16_dazang_jinglou', name: '大藏经楼', illustration: 'buddhist_temple',
+    description: '佛寺新成藏经楼，凡一万余卷。沙门请王临幸，设斋讲经，以结众缘。',
+    options: [
+      { text: '临幸设斋，听民瞻礼（文化+7，金-400）', effect: { culture: 7, money: -400 } },
+      { text: '以其糜费，罢之（文化+2，民心+2）', effect: { culture: 2, morale: 2 } }
+    ]
+  },
+  {
+    id: 'v16_yinshi_jiangxue', name: '隐士讲学', illustration: 'daoist_temple',
+    description: '有隐士结庐山中，聚徒数百人，讲《礼》《传》。州郡以闻，或请征之，或恐其聚徒生变。',
+    options: [
+      { text: '征入京师，拜为博士（招募一将，文化+6）', effect: { recruitRandom: true, culture: 6 } },
+      { text: '听其在山，勿加征命（文化+3，民心+2）', effect: { culture: 3, morale: 2 } }
+    ]
+  },
+  {
+    id: 'v16_lezhi_dingzhang', name: '乐制定章', illustration: 'musician',
+    description: '太常奏：江左旧乐，多所阙遗。今四海一家，宜集南北之工，考定钟律，勒为一代之典。',
+    options: [
+      { text: '诏集工官，考定钟律（文化+12，金-600）', effect: { culture: 12, money: -600 } },
+      { text: '且仍旧，不烦改作（文化+3）', effect: { culture: 3 } }
+    ]
+  },
+
+  // ---- 特殊（3） ----
+  {
+    id: 'v16_jingxing_chutu', name: '景星出', illustration: 'harvest',
+    description: '太史奏：景星见于东北，状如半月，光明润泽。占者以为德星，主王朝有福，当赦天下。',
+    options: [
+      { text: '大赦天下，告庙受贺（民心+10，金-500）', effect: { factionMorale: 10, money: -500 } },
+      { text: '付史官，不形喜惧（民心+2）', effect: { morale: 2 } }
+    ]
+  },
+  {
+    id: 'v16_renhe_xianqing', name: '仁和献庆', illustration: 'harvest',
+    description: '梓州献瑞禾，一茎九穗。太守表称陛下德政所致，宜以闻。或曰此乃常事，不足示人。',
+    options: [
+      { text: '受贺，班行天下（民心+8，金-300）', effect: { factionMorale: 8, money: -300 } },
+      { text: '却瑞不贺，戒饬郡县（民心+3，金+200）', effect: { morale: 3, money: 200 } }
+    ]
+  },
+  {
+    id: 'v16_jiquan_baoma', name: '骑进宝马', illustration: 'nomad_market',
+    description: '突厥献马千匹，曰此汗之良马也，日行千里。请和亲以修旧好。',
+    options: [
+      { text: '受马许和，厚赐使者（金+800，蛮族关系+20）', effect: { money: 800, barbarianRel: 20 } },
+      { text: '却其马，不与和亲（蛮族关系-10）', effect: { barbarianRel: -10 } }
+    ]
   }
 ];
 
@@ -5748,6 +6067,61 @@ export const HISTORICAL_EVENTS = [
       { text: '出师塞外，耀兵河朔（自动大战，损兵1500，金+1000）', effect: { massBattle: true, armyLoss: 1500, money: 1000 } },
       { text: '修塞上城堡，坚壁清野（守城buff两回合，金-500）', effect: { garrisonBuff: true, money: -500 } }
     ]
+  },
+
+  // ============================================================
+  // V16.0 新增历史事件（5个，v16_ 前缀）—— 隋末大乱群雄并起
+  // ============================================================
+
+  // ---- 1) 王薄长白山首义（611年）----
+  {
+    id: 'v16_wangbo_shouyi', name: '王薄首义', illustration: 'peasant_revolt',
+    minTurn: 15, factions: ['xiwei'],
+    description: '大业七年，炀帝征高丽，天下骚动。齐人王薄聚众长白山，自称知世郎，作《无向辽东浪死歌》，避征役者多往归之。山东郡县不能制，天下遂乱。',
+    options: [
+      { text: '发兵讨捕，以靖东土（自动大战，损兵1200，金+800）', effect: { massBattle: true, armyLoss: 1200, money: 800 } },
+      { text: '下诏停征，安抚流民（民心+8，金-400）', effect: { factionMorale: 8, money: -400 } }
+    ]
+  },
+  // ---- 2) 杨玄感黎阳之叛（613年）----
+  {
+    id: 'v16_yangxuangan_zhiluan', name: '玄感黎阳', illustration: 'rebellion',
+    minTurn: 17, factions: ['xiwei'],
+    description: '大业九年，炀帝再征高丽。礼部尚书杨玄感于黎阳督运，遂与蒲山公李密谋，叛于河北，进逼东都。从者十万，天下响应。炀帝惧，密召诸军还。',
+    options: [
+      { text: '召诸军还，急击叛者（自动大战，损兵2000，金-800）', effect: { massBattle: true, armyLoss: 2000, money: -800 } },
+      { text: '下诏赦其诖误，以散其党（忠诚+5，民心+5）', effect: { generalLoyalty: { amt: 5 }, factionMorale: 5 } }
+    ]
+  },
+  // ---- 3) 李密瓦岗据洛口（617年）----
+  {
+    id: 'v16_limi_wagang', name: '李密瓦岗', illustration: 'peasant_revolt',
+    minTurn: 21, factions: ['xiwei'],
+    description: '大业十三年，李密说瓦岗翟让，袭破金堤关，荥阳太守死之。密又设伏击斩张须陀于大海寺，河南郡县震恐。让乃推密为主，号魏公，开洛口仓，散米以赈贫民，徒众数十万。',
+    options: [
+      { text: '大发关东兵，讨李密（自动大战，损兵2500，金-1000）', effect: { massBattle: true, armyLoss: 2500, money: -1000 } },
+      { text: '内修政事，外遣间离（忠诚+6，金+500）', effect: { generalLoyalty: { amt: 6 }, money: 500 } }
+    ]
+  },
+  // ---- 4) 窦建德河北称夏（618年）----
+  {
+    id: 'v16_jiande_hebei', name: '建德夏王', illustration: 'rebellion',
+    minTurn: 22, factions: ['xiwei', 'dongwei'],
+    description: '大业十四年，窦建德据河北，建都乐寿，自称长乐王，国号夏。化及弑炀帝于江都，建德为隋帝发丧，改元五凤。其署置百官，颇有文帝遗风，河北州县多陷。',
+    options: [
+      { text: '出师河北，讨平僭伪（自动大战，损兵2000，金+1500）', effect: { massBattle: true, armyLoss: 2000, money: 1500 } },
+      { text: '遣使招抚，许以王爵（蛮族关系-5，金+800）', effect: { barbarianRel: -5, money: 800 } }
+    ]
+  },
+  // ---- 5) 杜伏威江淮纵横（613年）----
+  {
+    id: 'v16_fuwei_jianghuai', name: '伏威江淮', illustration: 'rebellion',
+    minTurn: 17, factions: ['nanchao'],
+    description: '大业九年，章丘杜伏威与辅公祏亡命，聚众为盗，转掠淮南。伏威敢出敢死，每战辄冠，众推为帅。隋遣宋颢讨之，反为所败。遂破高邮，据历阳，江淮间群盗争附之。',
+    options: [
+      { text: '发兵渡江，讨平群盗（自动大战，损兵1500，金+1000）', effect: { massBattle: true, armyLoss: 1500, money: 1000 } },
+      { text: '招抚之，署为总管（招募一将，金-300）', effect: { recruitRandom: true, money: -300 } }
+    ]
   }
 ];
 
@@ -6258,4 +6632,189 @@ export const V15_BALANCE = {
   recruitCostDiscount: 0.15,
   // 城市维护费系数（维持 V14=0.95）
   cityUpkeepFactor: 0.95
+};
+
+// ============================================================
+// V16.0 — 战役模式（CAMPAIGN_SCENARIOS）
+// ============================================================
+// 5 个独立战役关卡，每关为线性小沙盘：
+//   - id / name / description / year
+//   - objective: 胜利条件描述
+//   - defeatCondition: 失败条件描述
+//   - startingState: { troops, money, food, generals: [ids] }
+//   - reward: 通关奖励 { money, food, generalId? }
+//   - mapSetup: 城市配置 [{ id, owner, garrison, isObjective? }]
+// illustration: 战役主插画（assets/campaigns/<id>.png）
+// 历史参考：《宋书》《梁书》《周书》《隋书》
+// ------------------------------------------------------------
+export const CAMPAIGN_SCENARIOS = [
+  // ---- 战役1：刘裕北伐（409年）—— 灭南燕 ----
+  {
+    id: 'v16_liuyu_beifa',
+    name: '刘裕北伐',
+    description: '东晋义熙五年（409），刘裕抗表北伐南燕。大军自淮入泗，越大岘。燕主慕容超不据大岘之险，纵敌入平地。刘裕以车四千乘为两翼，徐行而进，临朐以南，燕骑大至。裕命檀韶潜师克临朐，超单骑走。遂围广固，明年正月，克之，斩慕容超，尽复青齐之地。',
+    year: 409,
+    illustration: 'v16_liuyu_beifa',
+    objective: '在 20 回合内攻克广固（南燕都城），俘获慕容超。',
+    defeatCondition: '我方主力被歼灭，或广固城外粮草耗尽（food < 0）。',
+    startingState: {
+      troops: 24000,
+      money: 3000,
+      food: 6000,
+      generals: ['tan_daoji', 'zhu_lingshi', 'shen_linzi', 'shen_tianzi']
+    },
+    reward: { money: 5000, food: 8000 },
+    mapSetup: [
+      { id: 'pengcheng',  owner: 'player', garrison: 8000,  isBase: true,  name: '彭城（我军基地）' },
+      { id: 'xuzhou',     owner: 'player', garrison: 4000,  name: '徐州（后路）' },
+      { id: 'qingzhou',   owner: 'enemy',  garrison: 6000,  name: '青州' },
+      { id: 'guanggu',     owner: 'enemy',  garrison: 12000, isObjective: true, name: '广固（南燕都城）' }
+    ]
+  },
+  // ---- 战役2：钟离大捷（507年）—— 梁军保卫钟离 ----
+  {
+    id: 'v16_zhongli_dajie',
+    name: '钟离大捷',
+    description: '梁天监六年（507），魏中山王元英、平东将军杨大眼率数十万众围钟离。梁将昌义之守城，众才三千。梁武帝命韦睿、曹景宗赴救。睿自合肥径道阴陵，旬日至邵阳，夜筑城于城上，魏军大惊。景宗募勇士潜岸，置邵阳洲。睿以火舰焚魏桥，风猛火烈，魏兵大溃，魏军趋水死者十余万，斩首亦如之。',
+    year: 507,
+    illustration: 'v16_zhongli_dajie',
+    objective: '守住钟离 15 回合，并烧毁魏军邵阳桥砦，击退元英主力。',
+    defeatCondition: '钟离被攻破（昌义之战死），或援军被全歼。',
+    startingState: {
+      troops: 18000,
+      money: 2000,
+      food: 4000,
+      generals: ['wei_rui', 'cao_jingzong', 'v14_chang_yizhi']
+    },
+    reward: { money: 4000, food: 6000 },
+    mapSetup: [
+      { id: 'zhongli',     owner: 'player', garrison: 3000,  isBase: true,  name: '钟离（昌义之固守）' },
+      { id: 'shaoyang_zhou', owner: 'enemy', garrison: 15000, isObjective: true, name: '邵阳洲（魏军桥砦）' },
+      { id: 'hefei',       owner: 'player', garrison: 5000,  name: '合肥（韦睿进军处）' },
+      { id: 'shouyang',    owner: 'enemy',  garrison: 8000,  name: '寿阳（魏军后军）' }
+    ]
+  },
+  // ---- 战役3：玉璧保卫战（546年）—— 韦孝宽守玉璧 ----
+  {
+    id: 'v16_yubi_baowei',
+    name: '玉璧保卫战',
+    description: '西魏大统十二年（546），东魏高欢倾山东之众，志以西魏玉璧一戍。西魏韦孝宽随机拒守，城外尽攻凿之术，城中尽御备之方。欢乃于城南凿十道，又于城北筑山，昼夜攻围六旬。城中死伤十四五，孝宽意气自若。城中无水，汲于汾，欢使移汾水，一夕而毕。又攻以冲车，孝宽以布幔随向分之，车不能坏。欢智力俱困，因而发疾，次年正月卒于邺。玉璧之守，遂为南北守城战之冠。',
+    year: 546,
+    illustration: 'v16_yubi_baowei',
+    objective: '在玉璧坚守 30 回合，使高欢攻城失败。',
+    defeatCondition: '玉璧城被攻破，或韦孝宽被俘。',
+    startingState: {
+      troops: 8000,
+      money: 1500,
+      food: 3000,
+      generals: ['wei_xiaokuan']
+    },
+    reward: { money: 3000, food: 4000 },
+    mapSetup: [
+      { id: 'yubi',        owner: 'player', garrison: 8000, isBase: true, isObjective: true, name: '玉璧城（韦孝宽坚守）' },
+      { id: 'jinyang',     owner: 'enemy',  garrison: 25000, name: '晋阳方向（高欢主力）' },
+      { id: 'puban',       owner: 'player', garrison: 3000,  name: '蒲坂（西魏后援）' }
+    ]
+  },
+  // ---- 战役4：沙苑伏击（537年）—— 宇文泰伏击高欢 ----
+  {
+    id: 'v16_shayuan_fuji',
+    name: '沙苑伏击',
+    description: '西魏大统三年（537），东魏高欢将二十万讨西魏，屯许原西。宇文泰率轻骑渡渭，至沙苑，距东魏军六十里。诸将以众寡不敌，请待。泰曰：欢若至咸阳，人心惧矣。今及其远来新至，可击。乃命李弼、赵贵等伏兵于渭曲苇中，闻鼓而起。李弼横击之，东魏兵乱，丧甲士八万，弃铠仗十八万。高欢夜遁，虏至河上，复多散亡。关中之围遂解。',
+    year: 537,
+    illustration: 'v16_shayuan_fuji',
+    objective: '在渭曲设伏，于 10 回合内击溃高欢主力（歼敌 10 万）。',
+    defeatCondition: '宇文泰主力被击溃（我方损失超过 70%）。',
+    startingState: {
+      troops: 10000,
+      money: 1000,
+      food: 2000,
+      generals: ['yuwen_tai', 'li_bi', 'yu_jin']
+    },
+    reward: { money: 3500, food: 5000 },
+    mapSetup: [
+      { id: 'weiqu',       owner: 'player', garrison: 3000,  isBase: true,  name: '渭曲（设伏之地）' },
+      { id: 'shayuan',     owner: 'enemy',  garrison: 20000, isObjective: true, name: '沙苑（高欢主力）' },
+      { id: 'tongguan',    owner: 'player', garrison: 2000,  name: '潼关（退路）' }
+    ]
+  },
+  // ---- 战役5：隋灭南陈（589年）—— 杨素水军顺江而下 ----
+  {
+    id: 'v16_suimie_chen',
+    name: '隋灭南陈',
+    description: '隋开皇八年（588），文帝以晋王广为元帅，杨素出永安，秦王俊出襄阳，清河公杨素率水军东下，舟舻被江，旌甲曜日。素坐大船，名曰五牙，帅东下。陈将戚欣以青龙百余艘，屯狼尾滩以遏之。素夜引舟师掩之，水陆俱发，欣众大败。素东下，舟舻千里，滨江镇戍，皆望风请降。九年正月，韩擒虎入建业，擒后主陈叔宝，陈亡。',
+    year: 589,
+    illustration: 'v16_suimie_chen',
+    objective: '顺江而下，在 25 回合内攻克建康，俘获陈叔宝。',
+    defeatCondition: '水军主力被全歼，或杨素战死。',
+    startingState: {
+      troops: 30000,
+      money: 4000,
+      food: 8000,
+      generals: ['yang_su', 'v15_lai_huer', 'he_ruobi']
+    },
+    reward: { money: 6000, food: 10000, generalId: 'chen_shubao' },
+    mapSetup: [
+      { id: 'yongan',      owner: 'player', garrison: 6000,  isBase: true,  name: '永安（杨素水军基地）' },
+      { id: 'jiangling',   owner: 'player', garrison: 4000,  name: '江陵（秦王俊陆军）' },
+      { id: 'jiangxia',   owner: 'enemy',  garrison: 6000,  name: '江夏（陈江防）' },
+      { id: 'jiankang',   owner: 'enemy',  garrison: 10000, isObjective: true, name: '建康（陈都）' }
+    ]
+  }
+];
+
+// ============================================================
+// V16.0 — 平衡性调优常量
+// ============================================================
+// 说明：V16.0 新增 15 位武将、20 个随机事件、5 个历史事件、1 个剧本、5 个战役关卡。
+//   内容量再扩后，对数值做以下微调：
+//   1) 兵种克制加成维持 V15=0.27，名将密度继续上升，不再增强克制；
+//   2) AI 进攻阈值 V15=0.35 → V16=0.36，战役模式 AI 略趋激进；
+//   3) 随机事件基础触发概率 V15=0.16 → V16=0.17，事件池扩大后略升触达；
+//   4) 忠诚自然衰减维持 V15=0.22；
+//   5) 新招募武将初始忠诚下限 V15=68 → V16=70，在野将池继续扩大；
+//   6) 战役模式胜利奖励倍率新增 campaignRewardMult=1.0，作为外部调参入口；
+//   7) 战役模式敌军难度倍率新增 campaignEnemyMult=1.0；
+//   8) 税率上限维持 V15=45%。
+// 注意：本常量仅作为数值配置集中声明，实际读取由 game.js/ai.js/tax.js 决定。
+// ------------------------------------------------------------
+export const V16_BALANCE = {
+  // 兵种克制加成（维持 V15=0.27）
+  counterBonus: 0.27,
+  // 阵型克制加成（维持 V15=0.22）
+  formationCounterBonus: 0.22,
+  // AI 进攻阈值（V15=0.35 → V16=0.36，战役内容新增后 AI 略趋激进）
+  aiAttackThreshold: 0.36,
+  // AI 防御权重（维持 V15=0.60）
+  aiDefenseWeight: 0.60,
+  // 随机事件基础触发概率（V15=0.16 → V16=0.17，事件池再扩后略升触达）
+  eventBaseProbability: 0.17,
+  // 忠诚自然衰减速率（维持 V15=0.22）
+  loyaltyDecayRate: 0.22,
+  // 新招募武将初始忠诚下限（V15=68 → V16=70，在野将池继续扩大）
+  recruitInitialLoyalty: 70,
+  // 基础税率上限（维持 V15=45%）
+  maxTaxRate: 45,
+  // 税率超过 35% 后每 1% 的民心衰减（维持 V15=0.08）
+  taxOverThresholdMoraleDecay: 0.08,
+  // 税率低于 20% 时每 1% 的民心增益（维持 V15=0.05）
+  taxUnderThresholdMoraleBonus: 0.05,
+  // 城市收入人口系数（维持 V15=0.075）
+  incomePopFactor: 0.075,
+  // 冬季粮草消耗系数（维持 V15=0.05）
+  winterFoodWaste: 0.05,
+  // 科技研究费用系数（维持 V15=0.9）
+  techCostMult: 0.9,
+  // 困难模式 AI 资源倍率（维持 V15=1.4）
+  hardModeResourceMult: 1.4,
+  // 简单模式 AI 资源倍率（维持 V15=0.68）
+  easyModeResourceMult: 0.68,
+  // 新将招募费用折扣（维持 V15=0.15）
+  recruitCostDiscount: 0.15,
+  // 城市维护费系数（维持 V15=0.95）
+  cityUpkeepFactor: 0.95,
+  // 战役模式：胜利奖励倍率（新增）
+  campaignRewardMult: 1.0,
+  // 战役模式：敌军兵力难度倍率（新增）
+  campaignEnemyMult: 1.0
 };

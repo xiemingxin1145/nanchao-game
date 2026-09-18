@@ -14,11 +14,11 @@ import { AudioManager } from './audio.js';
 import { Tutorial } from './tutorial.js';
 import { Animator } from './animation.js';
 import { IntroPlayer } from './intro.js';
-import { isIntroCompleted } from './ngplus.js';
+import { isIntroCompleted, markIntroCompleted, loadNGPlusData } from './ngplus.js';
 import { TITLES, MAX_ACTIVE_TITLES } from './titles.js';
 import { ACH_CATEGORIES, getAchievementPoints, getAchievementTier } from './achievements.js';
 import { BGM_INFO } from './audio.js';
-import { GAME_GUIDE } from './tutorial.js';
+import { GAME_GUIDE, TUTORIAL_CHAPTERS } from './tutorial.js';
 import { OFFICES, TITLES as RANKS, getOffice } from './office.js'; // V7.0 官职爵位
 import { FORMATIONS, availableFormations, maxFormationLevel } from './formation.js'; // V9.0 阵法
 import { formatPlayTime } from './stats.js';
@@ -73,8 +73,9 @@ export class UI {
     if (ls) setTimeout(() => ls.classList.add('hide'), 500);
   }
 
-  // V3.5：播放开场演出
+  // V3.5：播放开场演出（V16.0：委托给史诗长卷版开场演出）
   _playIntro() {
+    if (typeof this._playIntroV16 === 'function') { this._playIntroV16(); return; }
     const intro = new IntroPlayer({
       onComplete: () => this.showMainMenu(),
       onSkip: () => this.showMainMenu()
@@ -139,6 +140,8 @@ export class UI {
             ${ngLevel > 0 ? `<p class="ngplus-badge">当前周目：第 ${ngLevel} 周目</p>` : ''}
             <div class="menu-buttons v13-menu-buttons">
               <button class="btn-ancient v13-btn" id="btn-start">开始游戏</button>
+              <button class="btn-ancient v13-btn v16-menu-btn" id="btn-campaign">战役模式</button>
+              <button class="btn-ancient v13-btn v16-menu-btn" id="btn-ngplus">多周目</button>
               <button class="btn-ancient v13-btn" id="btn-load" ${hasSave() ? '' : 'disabled'}>读取存档</button>
               <button class="btn-ancient v13-btn" id="btn-mods">模组管理</button>
               <button class="btn-ancient v13-btn" id="btn-ach">成就</button>
@@ -150,7 +153,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge">V15.0 · 盛世华章版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge">V16.0 · 史诗长卷版</div>
         </div>
       </div>
     `;
@@ -161,7 +164,12 @@ export class UI {
     this._v13BindRipple();
 
     document.getElementById('btn-start').onclick = () => this.showModeSelect();
-    document.getElementById('btn-tutorial').onclick = () => this._replayTutorial();
+    // V16.0：战役模式 / 多周目 入口
+    const v16CampBtn = document.getElementById('btn-campaign');
+    if (v16CampBtn) v16CampBtn.onclick = () => this.showCampaignSelectV16();
+    const v16NgBtn = document.getElementById('btn-ngplus');
+    if (v16NgBtn) v16NgBtn.onclick = () => this.showNGPlusV16();
+    document.getElementById('btn-tutorial').onclick = () => this.showTutorialSettingsV16();
     document.getElementById('btn-guide').onclick = () => this.openGameGuide();
     document.getElementById('btn-replay-intro').onclick = () => this._replayIntro();
     document.getElementById('btn-stats').onclick = () => this.showStatsPanel();
@@ -5451,5 +5459,524 @@ export class UI {
         }
       } else if (dot) dot.remove();
     });
+  }
+
+  // ============================================================
+  // ============== V16.0「史诗长卷版」UI 精修 ==================
+  //  约定：新类名一律 v16- 前缀；模型 API 调用带 typeof 守卫；
+  //        粒子/动画均有性能保护（上限 + 页面隐藏暂停）。
+  // ============================================================
+
+  // ---------- 通用：v16 弹窗骨架 ----------
+  _v16ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v16-overlay';
+    modal.innerHTML = `
+      <div class="modal v16-modal v16-scroll ${extraCls}">
+        <div class="v16-corner tl"></div><div class="v16-corner tr"></div>
+        <div class="v16-corner bl"></div><div class="v16-corner br"></div>
+        <h2 class="modal-title v16-title">${titleHtml}</h2>
+        <div class="v16-body">${bodyHtml}</div>
+        <button class="btn-ancient v16-close" onclick="this.closest('.v16-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') try { this.audio.playPanelOpen(); } catch (e) {}
+    return modal;
+  }
+
+  // ---------- 战役模式：本地进度存取 ----------
+  _v16CampLoad() {
+    try { return JSON.parse(localStorage.getItem('nanchao_v16_campaign') || '{}'); }
+    catch (e) { return {}; }
+  }
+  _v16CampSave(data) {
+    try { localStorage.setItem('nanchao_v16_campaign', JSON.stringify(data)); } catch (e) {}
+  }
+
+  // 五个战役关卡（名称/年份/描述/难度/奖励/目标/失败条件/回合上限）
+  _v16CampaignDefs() {
+    return [
+      { id: 'camp_liuzhen', name: '六镇烽烟', year: 523, scenario: '523',
+        desc: '沃野镇民起义，六镇俱反。于乱军中立足，保全根本之地。',
+        difficulty: 2, objective: '据有 3 座城池并存活 20 回合', fail: '都城沦陷或城池数为 0', turns: 20,
+        reward: { gold: 2000, fame: 100, item: '精铁战甲' } },
+      { id: 'camp_houjing', name: '侯景乱梁', year: 548, scenario: '548',
+        desc: '侯景渡江，建康台城被困。于江南烽火中收复失土。',
+        difficulty: 3, objective: '攻克建康并据有 5 座城池', fail: '30 回合内未攻克建康', turns: 30,
+        reward: { gold: 4000, fame: 200, item: '楼船图纸' } },
+      { id: 'camp_zhouranqi', name: '北周伐齐', year: 575, scenario: '575',
+        desc: '周武帝御驾亲征，挥师东进。克平阳、下晋阳，一举灭齐。',
+        difficulty: 4, objective: '攻陷齐都邺城', fail: '40 回合内未灭北齐', turns: 40,
+        reward: { gold: 8000, fame: 350, item: '落雕弓' } },
+      { id: 'camp_suiwen', name: '隋文统一', year: 588, scenario: '588',
+        desc: '杨隋承周，旌旗南指。五路伐陈，饮马长江。',
+        difficulty: 4, objective: '渡江攻克建康，覆灭陈朝', fail: '35 回合内未渡江', turns: 35,
+        reward: { gold: 12000, fame: 500, item: '开皇律' } },
+      { id: 'camp_world', name: '天下一统', year: 589, scenario: '589',
+        desc: '四海纷争四百载，在此一战定乾坤。成就不世之功。',
+        difficulty: 5, objective: '统一天下，据有全部城池', fail: '60 回合内未完成统一', turns: 60,
+        reward: { gold: 20000, fame: 1000, item: '传国玉玺' } }
+    ];
+  }
+
+  // 战役选择界面：5 张关卡卡片
+  showCampaignSelectV16() {
+    this._v13StopMenuParticles();
+    const defs = this._v16CampaignDefs();
+    const prog = this._v16CampLoad();
+    const cards = defs.map((c, i) => {
+      const rec = prog[c.id];
+      const stars = rec ? (rec.stars || 0) : 0;
+      const cleared = !!rec && rec.cleared;
+      // 解锁：第一关默认解锁，其余需前一关通关
+      const locked = i > 0 ? !(prog[defs[i - 1].id] && prog[defs[i - 1].id].cleared) : false;
+      const starHtml = [1, 2, 3].map(n =>
+        `<span class="v16-star ${n <= stars ? 'on' : ''}">★</span>`).join('');
+      return `
+        <div class="v16-camp-card ${locked ? 'locked' : ''} ${cleared ? 'cleared' : ''}"
+             data-camp="${c.id}" data-idx="${i}">
+          <div class="v16-camp-year">${c.year} 年</div>
+          <h3 class="v16-camp-name">${c.name}</h3>
+          <p class="v16-camp-desc">${c.desc}</p>
+          <div class="v16-camp-stars">难度 ${'★'.repeat(c.difficulty)}<span class="star-dim">${'★'.repeat(5 - c.difficulty)}</span></div>
+          <div class="v16-camp-status">
+            ${locked ? '<span class="v16-lock">🔒 未解锁</span>'
+              : cleared ? `<span class="v16-clear">✔ 已通关</span> <span class="v16-camp-stars">${starHtml}</span>`
+              : '<span class="v16-todo">◈ 待征战</span>'}
+          </div>
+          <div class="v16-camp-reward">
+            <b>奖励预览</b>：金 ${c.reward.gold} · 望 ${c.reward.fame} · ${c.reward.item}
+          </div>
+        </div>`;
+    }).join('');
+    this.container.innerHTML = `
+      <div class="v16-page v16-camp-page">
+        <div class="v16-page-deco"></div>
+        <h2 class="v16-page-title">⚔ 战役模式 · 史诗长卷</h2>
+        <p class="v16-page-sub">选定一段历史，完成特定战役目标，三星通关可获丰厚奖励。</p>
+        <div class="v16-camp-grid">${cards}</div>
+        <button class="btn-ancient v16-back" id="v16-camp-back">返回主菜单</button>
+      </div>`;
+    const back = document.getElementById('v16-camp-back');
+    if (back) back.onclick = () => this.showMainMenu();
+    this.container.querySelectorAll('.v16-camp-card:not(.locked)').forEach(el => {
+      el.onclick = () => this._v16StartCampaign(el.dataset.camp);
+    });
+    if (this.audio && typeof this.audio.switchBGM === 'function') try { this.audio.switchBGM('menu'); } catch (e) {}
+  }
+
+  // 进入战役：以对应剧本开局（前端编排，后端接口带守卫）
+  _v16StartCampaign(campId) {
+    const def = this._v16CampaignDefs().find(c => c.id === campId);
+    if (!def) { this.toast('战役数据缺失'); return; }
+    this._v16ActiveCamp = { def, turnsLeft: def.turns, objective: def.objective };
+    // 进入剧本选人（复用势力选择流程，携带战役上下文）
+    this._v16PendingCamp = campId;
+    this.showFactionSelect({ hotSeat: false, scenario: def.scenario, camp: true });
+    this.toast(`战役「${def.name}」开启 · 目标：${def.objective}`);
+    // 战役进行中 HUD
+    setTimeout(() => this._v16ShowCampaignHud(), 800);
+  }
+
+  // 战役进行中：顶部目标/失败条件/剩余时间
+  _v16ShowCampaignHud() {
+    if (!this._v16ActiveCamp) return;
+    this._v16RemoveCampaignHud();
+    const d = this._v16ActiveCamp.def;
+    const hud = document.createElement('div');
+    hud.className = 'v16-camp-hud';
+    hud.id = 'v16-camp-hud';
+    hud.innerHTML = `
+      <div class="v16-camp-hud-body">
+        <span class="v16-camp-hud-tag">战役</span>
+        <b class="v16-camp-hud-name">${d.name}</b>
+        <span class="v16-camp-hud-obj">目标：${d.objective}</span>
+        <span class="v16-camp-hud-fail">败因：${d.fail}</span>
+        <span class="v16-camp-hud-turns">剩余 <b id="v16-camp-turns">${this._v16ActiveCamp.turnsLeft}</b> 回合</span>
+      </div>`;
+    document.body.appendChild(hud);
+    this._v16DrawMapFlags();
+  }
+  _v16RemoveCampaignHud() {
+    const old = document.getElementById('v16-camp-hud');
+    if (old) old.remove();
+    const of = document.getElementById('v16-map-flags');
+    if (of) of.remove();
+  }
+
+  // 战役地图：标记目标点（金色旗帜）
+  _v16DrawMapFlags() {
+    const wrap = document.getElementById('map-container');
+    if (!wrap) return;
+    this._v16RemoveMapFlagsOnly();
+    const layer = document.createElement('div');
+    layer.className = 'v16-map-flags';
+    layer.id = 'v16-map-flags';
+    // 目标点（示意位置，金色旗帜脉冲）
+    layer.innerHTML = `
+      <div class="v16-flag" style="left:62%;top:42%" title="战役目标">
+        <span class="v16-flag-pole"></span><span class="v16-flag-cloth">⚑</span>
+      </div>
+      <div class="v16-flag v16-flag-home" style="left:30%;top:58%" title="我方根本">
+        <span class="v16-flag-pole"></span><span class="v16-flag-cloth">⚑</span>
+      </div>`;
+    wrap.appendChild(layer);
+  }
+  _v16RemoveMapFlagsOnly() {
+    const of = document.getElementById('v16-map-flags');
+    if (of) of.remove();
+  }
+
+  // 推进战役回合计数（结束回合时可由外部调用，带守卫）
+  v16CampaignTick() {
+    if (!this._v16ActiveCamp) return;
+    this._v16ActiveCamp.turnsLeft = Math.max(0, this._v16ActiveCamp.turnsLeft - 1);
+    const el = document.getElementById('v16-camp-turns');
+    if (el) el.textContent = this._v16ActiveCamp.turnsLeft;
+    if (this._v16ActiveCamp.turnsLeft <= 0) {
+      this._v16FinishCampaign(false);
+    }
+  }
+
+  // 战役结算：胜利/失败/三星/奖励/下一战役
+  _v16FinishCampaign(win, stars = 0) {
+    if (!this._v16ActiveCamp) return;
+    const d = this._v16ActiveCamp.def;
+    if (win) {
+      const prog = this._v16CampLoad();
+      const prev = prog[d.id] || { stars: 0, cleared: false };
+      prog[d.id] = { cleared: true, stars: Math.max(prev.stars, stars || 1) };
+      this._v16CampSave(prog);
+    }
+    this._v16RemoveCampaignHud();
+    const defs = this._v16CampaignDefs();
+    const nextIdx = defs.findIndex(c => c.id === d.id) + 1;
+    const next = defs[nextIdx];
+    this._v16RenderCampaignResultV16(win, stars, d, next);
+    this._v16ActiveCamp = null;
+  }
+
+  v16CampaignWin(stars) { this._v16FinishCampaign(true, stars); }
+
+  _v16RenderCampaignResultV16(win, stars, def, next) {
+    const rewards = win ? [
+      { icon: '金', text: `${def.reward.gold} 金币` },
+      { icon: '望', text: `${def.reward.fame} 声望` },
+      { icon: '宝', text: `${def.reward.item}` }
+    ] : [];
+    const starHtml = [1, 2, 3].map(n =>
+      `<span class="v16-star-big ${n <= stars ? 'on' : ''}">★</span>`).join('');
+    const body = `
+      <div class="v16-result-banner ${win ? 'win' : 'lose'}">
+        <div class="v16-result-title">${win ? '大获全胜' : '功败垂成'}</div>
+        <div class="v16-result-stars">${win ? starHtml : ''}</div>
+      </div>
+      ${win ? `
+        <h3 class="v16-result-sub">获得奖励</h3>
+        <div class="v16-reward-list">
+          ${rewards.map(r => `<div class="v16-reward-item"><span class="v16-reward-icon">${r.icon}</span>${r.text}</div>`).join('')}
+        </div>
+        <div class="v16-result-actions">
+          ${next ? `<button class="btn-ancient" id="v16-next-camp">下一战役 · ${next.name}</button>` : '<p class="v16-hint">所有战役已通关，一统之业成矣！</p>'}
+          <button class="btn-ancient" id="v16-back-camp">返回战役列表</button>
+        </div>`
+      : `<div class="v16-result-actions">
+          <button class="btn-ancient" id="v16-retry-camp">再战一次</button>
+          <button class="btn-ancient" id="v16-back-camp">返回战役列表</button>
+        </div>`}`;
+    const modal = this._v16ModalShell('⚔ 战役结算 · ' + def.name, body);
+    const nxt = modal.querySelector('#v16-next-camp');
+    if (nxt) nxt.onclick = () => { modal.remove(); if (next) this._v16StartCampaign(next.id); };
+    const retry = modal.querySelector('#v16-retry-camp');
+    if (retry) retry.onclick = () => { modal.remove(); this._v16StartCampaign(def.id); };
+    const back = modal.querySelector('#v16-back-camp');
+    if (back) back.onclick = () => { modal.remove(); this.showCampaignSelectV16(); };
+    if (win && this.audio && typeof this.audio.playCoin === 'function') try { this.audio.playCoin(); } catch (e) {}
+  }
+
+  // ---------- 开场演出 V16：全屏覆盖打字机 + Ken Burns + 时间轴 + 势力旗帜 + 地图缩放 + 剪影 ----------
+  _playIntroV16() {
+    const root = document.createElement('div');
+    root.className = 'v16-intro';
+    root.innerHTML = `
+      <div class="v16-intro-bg kenburns"></div>
+      <div class="v16-intro-overlay"></div>
+      <div class="v16-intro-stage">
+        <div class="v16-intro-type" id="v16-itype"></div>
+        <div class="v16-intro-year" id="v16-iyear">534</div>
+        <div class="v16-intro-timeline" id="v16-itime">
+          <div class="v16-tl-track">
+            ${[534, 537, 548, 550, 557, 577, 581, 589].map(y =>
+              `<span class="v16-tl-node" data-y="${y}">${y}</span>`).join('')}
+          </div>
+        </div>
+        <div class="v16-intro-flags" id="v16-iflags"></div>
+        <div class="v16-intro-mapzoom" id="v16-imap"></div>
+        <div class="v16-intro-silhouette" id="v16-asilh">
+          <div class="v16-solider l"></div><div class="v16-solider r"></div>
+          <div class="v16-horse"></div>
+        </div>
+      </div>
+      <button class="v16-intro-skip" id="v16-iskip">跳过 »</button>`;
+    document.body.appendChild(root);
+    this._v16IntroRoot = root;
+    this._v16IntroTimers = [];
+    const after = (ms, fn) => this._v16IntroTimers.push(setTimeout(fn, ms));
+    const show = (sel) => { const el = root.querySelector(sel); if (el) el.classList.add('on'); };
+    const hide = (sel) => { const el = root.querySelector(sel); if (el) el.classList.remove('on'); };
+
+    // 跳过：右下角按钮 / 任意点击
+    const skipFn = () => this._v16FinishIntroV16();
+    const skipBtn = root.querySelector('#v16-iskip');
+    if (skipBtn) skipBtn.onclick = (e) => { e.stopPropagation(); skipFn(); };
+
+    // ① 打字机文本（黑屏后）
+    const typeEl = root.querySelector('#v16-itype');
+    const fullText = '公元534年，北魏分裂，东西对峙。江南江北，干戈不息四十余载。英雄并起，豪杰争锋——';
+    after(600, () => {
+      show('#v16-itype');
+      let i = 0;
+      const typer = setInterval(() => {
+        if (!this._v16IntroRoot) { clearInterval(typer); return; }
+        i++;
+        if (typeEl) typeEl.textContent = fullText.slice(0, i);
+        if (i >= fullText.length) clearInterval(typer);
+      }, 45);
+      this._v16IntroTimers.push(typer);
+    });
+    // ② 时代变迁时间轴（横向滚动，节点高亮）
+    after(4200, () => { hide('#v16-itype'); show('#v16-itime'); show('#v16-iyear'); });
+    // 年份滚动 + 节点高亮
+    after(4200, () => {
+      const nodes = root.querySelectorAll('.v16-tl-node');
+      const years = [534, 537, 548, 550, 557, 577, 581, 589];
+      let yi = 0;
+      const yscroll = setInterval(() => {
+        if (!this._v16IntroRoot) { clearInterval(yscroll); return; }
+        const y = years[yi];
+        const yr = root.querySelector('#v16-iyear'); if (yr) yr.textContent = y;
+        nodes.forEach(n => n.classList.toggle('active', Number(n.dataset.y) === y));
+        yi++;
+        if (yi >= years.length) clearInterval(yscroll);
+      }, 600);
+      this._v16IntroTimers.push(yscroll);
+    });
+    // ③ 势力旗帜依次闪现
+    after(9200, () => {
+      hide('#v16-itime'); hide('#v16-iyear');
+      const flagBox = root.querySelector('#v16-iflags');
+      const flags = ['魏', '齐', '周', '陈', '梁', '隋'];
+      show('#v16-iflags');
+      flags.forEach((f, idx) => {
+        this._v16IntroTimers.push(setTimeout(() => {
+          if (!flagBox) return;
+          const s = document.createElement('span');
+          s.className = 'v16-flag-flash';
+          s.textContent = f;
+          flagBox.appendChild(s);
+          setTimeout(() => s.classList.add('on'), 20);
+        }, idx * 350));
+      });
+    });
+    // ④ 地图缩放：全局 → 玩家势力
+    after(12200, () => {
+      hide('#v16-iflags'); show('#v16-imap');
+      const m = root.querySelector('#v16-imap'); if (m) m.classList.add('zoom');
+    });
+    // ⑤ 序幕战斗剪影
+    after(15200, () => {
+      hide('#v16-imap'); show('#v16-asilh');
+    });
+    // 自动结束
+    after(18200, () => this._v16FinishIntroV16());
+    if (this.audio && typeof this.audio.switchBGM === 'function') try { this.audio.switchBGM('menu'); } catch (e) {}
+  }
+  _v16FinishIntroV16() {
+    if (!this._v16IntroRoot) return;
+    if (this._v16IntroTimers) this._v16IntroTimers.forEach(t => clearTimeout(t));
+    this._v16IntroTimers = [];
+    const root = this._v16IntroRoot;
+    this._v16IntroRoot = null;
+    root.classList.add('fade-out');
+    setTimeout(() => root.remove(), 600);
+    try { if (typeof markIntroCompleted === 'function') markIntroCompleted(); } catch (e) {}
+    this.showMainMenu();
+  }
+
+  // ---------- 教程 UI 增强：设置面板（重看任意章节） ----------
+  showTutorialSettingsV16() {
+    let chapters = [];
+    try { chapters = TUTORIAL_CHAPTERS; } catch (e) {}
+    const items = (chapters || []).map((c, i) => `
+      <div class="v16-tut-row">
+        <span class="v16-tut-idx">第 ${i + 1} 章</span>
+        <b class="v16-tut-name">${c.name}</b>
+        <button class="btn-small" data-ch="${c.id}">重看本章</button>
+      </div>`).join('') || '<p class="v16-hint">暂无教程章节。</p>';
+    const body = `
+      <p class="v16-hint">选择任意章节重新进入教程。教程进行时，顶部显示章节进度条，气泡将以箭头指向对应 UI 元素。</p>
+      <div class="v16-tut-list">
+        <div class="v16-tut-row">
+          <span class="v16-tut-idx">全部</span>
+          <b class="v16-tut-name">完整教程</b>
+          <button class="btn-small" data-ch="__all">从头开始</button>
+        </div>
+        ${items}
+      </div>`;
+    const modal = this._v16ModalShell('📖 教程设置 · 章节重温', body);
+    modal.querySelectorAll('.btn-small').forEach(btn => {
+      btn.onclick = () => {
+        const ch = btn.dataset.ch;
+        modal.remove();
+        this._replayTutorialChapter(ch);
+      };
+    });
+  }
+  // 以指定章节重进教程（带守卫）
+  _replayTutorialChapter(ch) {
+    this.game = new Game();
+    try { this.game.initGame('nanchao'); } catch (e) {}
+    this.initGameUI();
+    if (this.tutorial && typeof this.tutorial.start === 'function') {
+      const opts = (ch && ch !== '__all') ? { mode: 'chapter', chapterId: ch } : { mode: 'all' };
+      this.tutorial.start(false, opts);
+      this._v16InjectTutorialProgress();
+    }
+  }
+  // 教程进度条：顶部章节进度（轻量轮询注入，页面隐藏不占资源）
+  _v16InjectTutorialProgress() {
+    this._v16RemoveTutorialProgress();
+    const bar = document.createElement('div');
+    bar.className = 'v16-tut-progress';
+    bar.id = 'v16-tut-progress';
+    bar.innerHTML = `<span class="v16-tut-pg-label">教程</span><div class="v16-tut-pg-track"><div class="v16-tut-pg-fill" id="v16-tut-pg-fill"></div></div><span class="v16-tut-pg-step" id="v16-tut-pg-step"></span>`;
+    document.body.appendChild(bar);
+    const poll = () => {
+      if (!document.getElementById('tut-bubble')) { this._v16RemoveTutorialProgress(); return; }
+      try {
+        const st = this.tutorial;
+        if (st && st._steps && st.step != null) {
+          const total = st._steps.length || 1;
+          const pct = Math.round(((st.step + 1) / total) * 100);
+          const fill = document.getElementById('v16-tut-pg-fill');
+          const step = document.getElementById('v16-tut-pg-step');
+          if (fill) fill.style.width = pct + '%';
+          if (step) step.textContent = `${st.step + 1}/${total}`;
+        }
+      } catch (e) {}
+      this._v16TutPoll = setTimeout(poll, 500);
+    };
+    poll();
+  }
+  _v16RemoveTutorialProgress() {
+    if (this._v16TutPoll) { clearTimeout(this._v16TutPoll); this._v16TutPoll = null; }
+    const bar = document.getElementById('v16-tut-progress');
+    if (bar) bar.remove();
+  }
+
+  // ---------- NG+ 界面：主入口 / 选择 / 奖励树 ----------
+  showNGPlusV16() {
+    let data = null, level = 0, totalRuns = 0;
+    try { data = (typeof loadNGPlusData === 'function') ? loadNGPlusData() : null; } catch (e) {}
+    level = data ? (data.level || 0) : 0;
+    totalRuns = data ? (data.totalRuns || 0) : 0;
+    const body = `
+      <div class="v16-ng-head">
+        <div class="v16-ng-level">当前周目：<b>第 ${level} 周目</b></div>
+        <div class="v16-ng-runs">累计通关：${totalRuns} 次</div>
+      </div>
+      <div class="v16-ng-tree">${this._v16RenderRewardTreeV16(data)}</div>
+      <div class="v16-result-actions">
+        <button class="btn-ancient" id="v16-ng-start">进入新周目（NG+）</button>
+        <button class="btn-ancient" id="v16-ng-tree-only">查看奖励树</button>
+      </div>`;
+    const modal = this._v16ModalShell('♾ 多周目 · 霸业轮回', body);
+    const go = modal.querySelector('#v16-ng-start');
+    if (go) go.onclick = () => { modal.remove(); this.showNGPlusSelectV16(); };
+    const tree = modal.querySelector('#v16-ng-tree-only');
+    if (tree) tree.onclick = () => { modal.remove(); this.showNGPlusSelectV16(true); };
+  }
+
+  // 奖励树可视化：节点连接图（已解锁/未解锁/可解锁）
+  _v16RenderRewardTreeV16(data) {
+    const level = data ? (data.level || 0) : 0;
+    const generals = data ? (data.generals || []).length : 0;
+    const items = data ? (data.items || []).length : 0;
+    const titles = data ? (data.titles || []).length : 0;
+    const nodes = [
+      { id: 'g', name: '传承武将', val: generals, req: 0 },
+      { id: 't', name: '传世称号', val: titles, req: 1 },
+      { id: 'i', name: '藏珍装备', val: items, req: 2 },
+      { id: 'a', name: '周目加成', val: level + '级', req: 3 },
+      { id: 's', name: '剧情补完', val: (data && data.stories || []).length, req: 4 }
+    ];
+    const html = nodes.map((n, i) => {
+      const unlocked = level >= n.req;
+      const ready = !unlocked && level >= Math.max(0, n.req - 1);
+      const cls = unlocked ? 'unlocked' : (ready ? 'ready' : 'locked');
+      return `<div class="v16-tree-node ${cls}">
+        <span class="v16-tree-dot"></span>
+        <b>${n.name}</b><small>${unlocked ? n.val : (ready ? '下周目可解' : '🔒')}</small>
+      </div>${i < nodes.length - 1 ? '<div class="v16-tree-link"></div>' : ''}`;
+    }).join('');
+    return `<div class="v16-tree">${html}</div>`;
+  }
+
+  // NG+ 选择画面：周目数 / 奖励树 / 难度选择
+  showNGPlusSelectV16(onlyTree = false) {
+    let data = null;
+    try { data = (typeof loadNGPlusData === 'function') ? loadNGPlusData() : null; } catch (e) {}
+    const level = data ? (data.level || 0) : 0;
+    const diffs = [
+      { id: 'inherit', name: '继承霸业', desc: '周目加成开启，AI 强化', on: level > 0 },
+      { id: 'fresh', name: '全新开局', desc: '重置传承，难度如初', on: true }
+    ];
+    const body = `
+      <div class="v16-ng-level">即将进入：<b>第 ${level + 1} 周目</b></div>
+      ${this._v16RenderRewardTreeV16(data)}
+      <h3 class="v16-result-sub">选择开局方式</h3>
+      <div class="v16-ng-diff">
+        ${diffs.map(d => `
+          <div class="v16-diff-card ${d.on ? '' : 'disabled'}" data-diff="${d.id}">
+            <b>${d.name}</b><p>${d.desc}</p>
+          </div>`).join('')}
+      </div>`;
+    const modal = this._v16ModalShell('♾ 新周目 · 难度与传承', body);
+    modal.querySelectorAll('.v16-diff-card:not(.disabled)').forEach(card => {
+      card.onclick = () => {
+        modal.remove();
+        if (onlyTree) { this.showNGPlusV16(); return; }
+        this.toast(`以「${card.querySelector('b').textContent}」开启第 ${level + 1} 周目`);
+        this.showModeSelect();
+      };
+    });
+  }
+
+  // 通关后结算：周目奖励 + 新解锁内容
+  v16PostClearSettlementV16(extraUnlocks = []) {
+    let data = null;
+    try { data = (typeof loadNGPlusData === 'function') ? loadNGPlusData() : null; } catch (e) {}
+    const level = data ? (data.level || 1) : 1;
+    const unlocks = (extraUnlocks || []).concat([
+      '周目加成 +1', 'AI 兵力/经济强化', '传承槽位扩展'
+    ]);
+    const body = `
+      <div class="v16-result-banner win">
+        <div class="v16-result-title">天下一统 · 新周目解锁</div>
+        <div class="v16-result-stars"><span class="v16-star-big on">★</span><span class="v16-star-big on">★</span><span class="v16-star-big on">★</span></div>
+      </div>
+      <h3 class="v16-result-sub">第 ${level} 周目奖励</h3>
+      <div class="v16-reward-list">
+        ${unlocks.map(u => `<div class="v16-reward-item"><span class="v16-reward-icon">✦</span>${u}</div>`).join('')}
+      </div>
+      <div class="v16-result-actions">
+        <button class="btn-ancient" id="v16-continue-ng">进入第 ${level + 1} 周目</button>
+        <button class="btn-ancient" id="v16-view-tree">查看奖励树</button>
+      </div>`;
+    const modal = this._v16ModalShell('♾ 霸业轮回 · 周目结算', body);
+    const cont = modal.querySelector('#v16-continue-ng');
+    if (cont) cont.onclick = () => { modal.remove(); this.showNGPlusV16(); };
+    const vt = modal.querySelector('#v16-view-tree');
+    if (vt) vt.onclick = () => { modal.remove(); this.showNGPlusSelectV16(true); };
   }
 }

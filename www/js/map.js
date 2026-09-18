@@ -119,6 +119,30 @@ export class IsometricMap {
     this._cicadaTimer = 0;            // 夏季蝉鸣闪光
     this._fxFrameSkip = 0;            // 非关键动画降帧计数
 
+    // ============================================================
+    // V16.0：战役模式地图标记 + 视觉增强
+    // ------------------------------------------------------------
+    // 战役标记：金色旗帜目标点 + 脉冲光环；虚线箭头路径；
+    //          势力色覆盖区域；胜利后彩带/烟花庆祝粒子。
+    // 视觉增强：水面波纹/反光/倒影；山体阴影；森林三层；
+    //          夜晚窗口亮灯 + 萤火虫；交战红色火花 + 武器碰撞光。
+    // 性能：战役标记对象池；视口外不渲染；昼夜平滑插值。
+    // ============================================================
+    this._campTarget = null;          // {isoX,isoY,resolved} 战役目标点
+    this._campPath = null;            // [{isoX,isoY},...] 战役路径节点
+    this._campArea = null;            // {isoPoints:[{isoX,isoY}],color} 战役势力区域
+    this._campWon = false;            // 战役胜利标记（目标点转庆祝粒子）
+    this._campParticlePool = [];      // 战役标记对象池（彩带/烟花/火花复用）
+    this._campParticles = [];         // 战役庆祝粒子
+    this._CAMP_PARTICLE_CAP = 120;    // 战役粒子上限
+    this._campWinTimer = 0;           // 胜利庆祝粒子发射计时
+    this._fireflyTimer = 0;           // 萤火虫发射计时（夜晚森林）
+    this._battleSparks = [];          // 交战红色火花 {x,y,vx,vy,life,maxLife}
+    this._battleFlash = [];           // 武器碰撞光 {x,y,t,maxLife}
+    this._battleSparkTimer = 0;
+    this._lightAngle = Math.PI / 4;   // 光源方向（用于山体阴影；右上 45°）
+    this._windowLightCache = new Map(); // 夜晚窗口亮灯离屏缓存 {cityId:canvas}
+
     this._bindEvents();
     this._initView();
   }
@@ -506,6 +530,9 @@ export class IsometricMap {
     this._emitSeasonFX(dt);
     // V15.0：宗教传播波纹更新
     this._updateReligionRipples(dt);
+
+    // V16.0：战役庆祝粒子 / 萤火虫 / 交战火花 更新
+    this._updateCampaignFX(dt);
   }
 
   // V8.1：城市炊烟（仅白天）
@@ -722,6 +749,19 @@ export class IsometricMap {
           ctx.globalAlpha = alpha;
           ctx.fillStyle = p.color || '#ffe066';
           ctx.shadowColor = '#ffe066'; ctx.shadowBlur = 8;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          break;
+        }
+        case 'firefly': {
+          // V16.0：夜晚萤火虫（绿光闪烁，缓慢漂浮）
+          const blink = 0.5 + 0.5 * Math.sin(this._animTime * 4 + (p.seed || 0));
+          ctx.globalAlpha = alpha * (0.3 + blink * 0.7);
+          ctx.fillStyle = p.color || '#aaff80';
+          ctx.shadowColor = p.color || '#aaff80';
+          ctx.shadowBlur = 6;
           ctx.beginPath();
           ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
           ctx.fill();
@@ -1310,6 +1350,12 @@ export class IsometricMap {
 
     // V8.1：动态地形叠加（河流波纹）
     this._drawRiverRipples(ctx);
+    // V16.0：水面增强（波纹+反光+倒影）
+    this._drawWaterEnhanced(ctx);
+    // V16.0：山地阴影（光源方向）
+    this._drawMountainShadows(ctx);
+    // V16.0：森林三层（近深/中/远浅）
+    this._drawForestLayers(ctx);
 
     this._drawCities();
     this._drawArmies();
@@ -1320,6 +1366,8 @@ export class IsometricMap {
 
     // V8.1：夜晚灯火（在色调之上，发光透出）
     this._drawNightLights(ctx);
+    // V16.0：夜晚城市窗口亮灯 + 萤火虫粒子
+    this._drawCityWindowLights(ctx);
 
     // V8.1：城市炊烟
     this._drawCitySmoke(ctx);
@@ -1355,6 +1403,10 @@ export class IsometricMap {
 
     // V15.0：天气指示器（小地图上方）
     this._drawWeatherIndicator(ctx, mmX, mmY, mmW, mmH);
+
+    // V16.0：战役模式地图标记（最上层，覆盖一切）
+    this._drawCampaignMarkers(ctx);
+    this._drawCampaignParticles(ctx);
   }
 
   // 构建离屏静态层
@@ -2193,6 +2245,503 @@ export class IsometricMap {
     ctx.closePath();
     ctx.stroke();
 
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V16.0 — 战役模式地图标记 公共 API
+  // ============================================================
+
+  // 设置战役目标点（等距坐标）
+  // {isoX, isoY} 或城市对象；null 清除
+  setCampaignTarget(target) {
+    if (!target) { this._campTarget = null; return; }
+    if (typeof target === 'object' && (target.isoX != null)) {
+      this._campTarget = { isoX: target.isoX, isoY: target.isoY };
+    } else {
+      this._campTarget = null;
+    }
+  }
+
+  // 设置战役路径（起点→目标的节点数组 [{isoX,isoY},...]）
+  setCampaignPath(points) {
+    if (!Array.isArray(points) || points.length < 2) { this._campPath = null; return; }
+    this._campPath = points.filter(p => p && p.isoX != null).slice(0, 12);
+  }
+
+  // 设置战役势力覆盖区域（多边形等距点 + 颜色）
+  // {isoPoints:[{isoX,isoY}], color:'#hex'}
+  setCampaignArea(area) {
+    if (!area || !Array.isArray(area.isoPoints) || area.isoPoints.length < 3) {
+      this._campArea = null; return;
+    }
+    this._campArea = {
+      isoPoints: area.isoPoints.slice(0, 24),
+      color: area.color || '#c04040'
+    };
+  }
+
+  // 战役胜利：目标点转为庆祝粒子（彩带/烟花）
+  markCampaignVictory() {
+    this._campWon = true;
+    if (this._campTarget) {
+      const pos = this.isoToScreen(this._campTarget.isoX, this._campTarget.isoY);
+      this._spawnCelebrationBurst(pos.x, pos.y);
+    }
+  }
+
+  // 清除战役标记（进入普通模式）
+  clearCampaignMarkers() {
+    this._campTarget = null;
+    this._campPath = null;
+    this._campArea = null;
+    this._campWon = false;
+    this._campParticles.length = 0;
+  }
+
+  // 触发一次交战火花（军队交战时由外部调用）
+  // x,y: 屏幕坐标；count: 火花数量
+  triggerBattleSparks(x, y, count = 6) {
+    for (let i = 0; i < count; i++) {
+      if (this._battleSparks.length >= 80) break;
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 40 + Math.random() * 120;
+      this._battleSparks.push({
+        x, y,
+        vx: Math.cos(ang) * spd,
+        vy: Math.sin(ang) * spd - 40,
+        life: 0.3 + Math.random() * 0.4,
+        maxLife: 0.7,
+        size: 1 + Math.random() * 2,
+        color: Math.random() < 0.3 ? '#FFD700' : '#ff5a3a'
+      });
+    }
+    // 武器碰撞光效（白色闪一下）
+    if (this._battleFlash.length < 6) {
+      this._battleFlash.push({ x, y, t: 0, maxLife: 0.18 });
+    }
+  }
+
+  // ============================================================
+  // V16.0 — 战役标记绘制
+  // ============================================================
+
+  // 绘制战役标记（目标旗 + 路径虚线 + 势力区域）
+  _drawCampaignMarkers(ctx) {
+    if (!this.game) return;
+    ctx.save();
+    // 1) 战役势力覆盖区域（最底层，半透明）
+    if (this._campArea) {
+      this._drawCampaignArea(ctx, this._campArea);
+    }
+    // 2) 战役路径虚线箭头
+    if (this._campPath && this._campPath.length >= 2) {
+      this._drawCampaignPath(ctx, this._campPath);
+    }
+    // 3) 战役目标点（金色旗帜 + 脉冲光环；胜利后变庆祝点）
+    if (this._campTarget) {
+      const pos = this.isoToScreen(this._campTarget.isoX, this._campTarget.isoY);
+      if (this._onScreen(pos.x, pos.y, 120)) {
+        if (this._campWon) {
+          this._drawVictoryPlaque(ctx, pos.x, pos.y);
+        } else {
+          this._drawGoalFlag(ctx, pos.x, pos.y);
+        }
+      }
+    }
+    ctx.restore();
+  }
+
+  // 战役势力覆盖区域：半透明势力色多边形
+  _drawCampaignArea(ctx, area) {
+    const pts = area.isoPoints.map(p => this.isoToScreen(p.isoX, p.isoY));
+    if (pts.length < 3) return;
+    // 视口粗裁剪（取包围盒中心）
+    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+    if (!this._onScreen(cx, cy, 400)) return;
+    ctx.save();
+    // 解析颜色 + alpha
+    const col = area.color;
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = col;
+    ctx.beginPath();
+    pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+    ctx.closePath(); ctx.fill();
+    // 边框虚线
+    ctx.globalAlpha = 0.6;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.lineDashOffset = -this._animTime * 20;
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // 战役路径：虚线箭头动画（沿路径流动的光点 + 虚线）
+  _drawCampaignPath(ctx, path) {
+    const pts = path.map(p => this.isoToScreen(p.isoX, p.isoY));
+    if (pts.length < 2) return;
+    // 视口粗裁剪
+    const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+    const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
+    if (!this._onScreen(cx, cy, 400)) return;
+    ctx.save();
+    // 路径虚线（金色，流动）
+    ctx.strokeStyle = 'rgba(255,215,0,0.75)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([8, 6]);
+    ctx.lineDashOffset = -this._animTime * 30;
+    ctx.beginPath();
+    pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 沿路径移动的箭头光点（一个光点循环跑）
+    const total = pts.length - 1;
+    const segT = (this._animTime * 0.4) % total;
+    const i0 = Math.floor(segT);
+    const f = segT - i0;
+    const a = pts[i0], b = pts[Math.min(i0 + 1, pts.length - 1)];
+    const ax = a.x + (b.x - a.x) * f;
+    const ay = a.y + (b.y - a.y) * f;
+    // 光点
+    const glow = ctx.createRadialGradient(ax, ay, 0, ax, ay, 10);
+    glow.addColorStop(0, 'rgba(255,240,180,0.9)');
+    glow.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(ax, ay, 10, 0, Math.PI * 2); ctx.fill();
+    // 箭头三角（指向终点方向）
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.moveTo(ax + Math.cos(ang) * 8, ay + Math.sin(ang) * 8);
+    ctx.lineTo(ax + Math.cos(ang + 2.5) * 6, ay + Math.sin(ang + 2.5) * 6);
+    ctx.lineTo(ax + Math.cos(ang - 2.5) * 6, ay + Math.sin(ang - 2.5) * 6);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // 战役目标点：金色旗帜 + 脉冲光环
+  _drawGoalFlag(ctx, x, y) {
+    const pulse = 0.5 + 0.5 * Math.sin(this._animTime * 3);
+    // 外层脉冲光环
+    const ringR = 18 + pulse * 8;
+    const grad = ctx.createRadialGradient(x, y, ringR * 0.6, x, y, ringR);
+    grad.addColorStop(0, 'rgba(255,215,0,0)');
+    grad.addColorStop(0.7, `rgba(255,215,0,${0.35 + pulse * 0.25})`);
+    grad.addColorStop(1, 'rgba(255,215,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, ringR, 0, Math.PI * 2); ctx.fill();
+    // 旗杆
+    ctx.fillStyle = '#8a6a20';
+    ctx.fillRect(x - 1.5, y - 24, 3, 30);
+    // 旗帜（飘动小三角，随风摆动）
+    const wave = Math.sin(this._animTime * 5) * 2;
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath();
+    ctx.moveTo(x + 1.5, y - 24);
+    ctx.quadraticCurveTo(x + 14, y - 22 + wave, x + 22, y - 20 + wave);
+    ctx.quadraticCurveTo(x + 14, y - 16 + wave, x + 1.5, y - 14);
+    ctx.closePath(); ctx.fill();
+    // 旗杆顶金珠
+    ctx.fillStyle = '#FFF3B0';
+    ctx.beginPath(); ctx.arc(x, y - 25, 2.5, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 战役胜利后：目标点变为金色奖牌/庆祝牌
+  _drawVictoryPlaque(ctx, x, y) {
+    const pulse = 0.5 + 0.5 * Math.sin(this._animTime * 4);
+    // 金色光晕
+    const glow = ctx.createRadialGradient(x, y, 4, x, y, 36);
+    glow.addColorStop(0, `rgba(255,220,120,${0.7 + pulse * 0.2})`);
+    glow.addColorStop(1, 'rgba(255,200,80,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(x, y, 36, 0, Math.PI * 2); ctx.fill();
+    // 小金牌
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath(); ctx.arc(x, y - 6, 9, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(x, y - 6, 9, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#7a4a00';
+    ctx.font = 'bold 12px "STSong", serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('胜', x, y - 6);
+  }
+
+  // ============================================================
+  // V16.0 — 战役庆祝粒子（彩带/烟花）对象池
+  // ============================================================
+
+  _campGetParticle() {
+    const p = this._campParticlePool.pop();
+    if (p) {
+      p.x = 0; p.y = 0; p.vx = 0; p.vy = 0;
+      p.life = 0; p.maxLife = 1; p.size = 2;
+      p.color = '#fff'; p.type = 'confetti'; p.seed = 0; p.gravity = 0;
+      return p;
+    }
+    return { x: 0, y: 0, vx: 0, vy: 0, life: 0, maxLife: 1,
+      size: 2, color: '#fff', type: 'confetti', seed: 0, gravity: 0 };
+  }
+  _campReleaseParticle(p) {
+    if (this._campParticlePool.length < 200) this._campParticlePool.push(p);
+  }
+  _spawnCampParticle(type, x, y, opts) {
+    if (this._campParticles.length >= this._CAMP_PARTICLE_CAP) {
+      const old = this._campParticles.shift();
+      if (old) this._campReleaseParticle(old);
+    }
+    const p = this._campGetParticle();
+    Object.assign(p, { type, x, y }, opts);
+    this._campParticles.push(p);
+    return p;
+  }
+
+  // 一次性彩带/烟花爆发（胜利时调用）
+  _spawnCelebrationBurst(x, y) {
+    const colors = ['#FFD700', '#ff5a5a', '#5aff8a', '#5ab0ff', '#ffb0e0', '#ffffff'];
+    for (let i = 0; i < 60; i++) {
+      const ang = Math.random() * Math.PI * 2;
+      const spd = 60 + Math.random() * 220;
+      this._spawnCampParticle(
+        Math.random() < 0.5 ? 'confetti' : 'spark',
+        x, y, {
+          vx: Math.cos(ang) * spd,
+          vy: Math.sin(ang) * spd - 120,
+          gravity: 180,
+          life: 0, maxLife: 1.6 + Math.random() * 1.6,
+          size: 2 + Math.random() * 3,
+          color: colors[Math.floor(Math.random() * colors.length)],
+          seed: Math.random() * Math.PI * 2
+        });
+    }
+  }
+
+  // 更新战役粒子 + 萤火虫 + 交战火花
+  _updateCampaignFX(dt) {
+    // 战役庆祝粒子
+    for (let i = this._campParticles.length - 1; i >= 0; i--) {
+      const p = this._campParticles[i];
+      p.life += dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (p.gravity) p.vy += p.gravity * dt;
+      if (p.type === 'confetti') p.vx += Math.sin(this._animTime * 4 + p.seed) * 20 * dt;
+      if (p.life >= p.maxLife || !this._onScreen(p.x, p.y, 80)) {
+        this._campParticles.splice(i, 1);
+        this._campReleaseParticle(p);
+      }
+    }
+    // 胜利后持续小礼花
+    if (this._campWon && this._campTarget) {
+      this._campWinTimer -= dt;
+      if (this._campWinTimer <= 0) {
+        this._campWinTimer = 0.6 + Math.random() * 0.5;
+        const pos = this.isoToScreen(this._campTarget.isoX, this._campTarget.isoY);
+        this._spawnCelebrationBurst(pos.x, pos.y);
+      }
+    }
+    // 交战红色火花
+    for (let i = this._battleSparks.length - 1; i >= 0; i--) {
+      const p = this._battleSparks[i];
+      p.life -= dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 200 * dt;
+      if (p.life <= 0) this._battleSparks.splice(i, 1);
+    }
+    // 武器碰撞光
+    for (let i = this._battleFlash.length - 1; i >= 0; i--) {
+      this._battleFlash[i].t += dt;
+      if (this._battleFlash[i].t >= this._battleFlash[i].maxLife) {
+        this._battleFlash.splice(i, 1);
+      }
+    }
+    // 夜晚萤火虫（森林/草丛附近）
+    if (this._isNight() && this.game) {
+      this._fireflyTimer -= dt;
+      if (this._fireflyTimer <= 0) {
+        this._fireflyTimer = 0.25;
+        // 找一个森林/平原城市作为发射点
+        const candidates = [];
+        for (const city of this.game.cities.values()) {
+          if (city.terrain === 'forest' || city.terrain === 'plain') {
+            const pos = this.isoToScreen(city.isoX, city.isoY);
+            if (this._onScreen(pos.x, pos.y, 150)) candidates.push(pos);
+          }
+        }
+        if (candidates.length && this._mapParticles.length < this._MAP_PARTICLE_CAP) {
+          const c = candidates[Math.floor(Math.random() * candidates.length)];
+          this._spawnMapParticle('firefly',
+            c.x + (Math.random() - 0.5) * 40,
+            c.y + (Math.random() - 0.5) * 20, {
+              vx: (Math.random() - 0.5) * 12,
+              vy: (Math.random() - 0.5) * 8,
+              life: 0, maxLife: 3 + Math.random() * 3,
+              size: 1.5 + Math.random() * 1.5,
+              color: '#aaff80', seed: Math.random() * 100
+            });
+        }
+      }
+    }
+  }
+
+  // 绘制战役粒子（彩带/烟花/萤火虫/交战火花/武器闪光）
+  _drawCampaignParticles(ctx) {
+    if (!this.game) return;
+    ctx.save();
+    // 战役庆祝粒子
+    for (const p of this._campParticles) {
+      if (!this._onScreen(p.x, p.y, 60)) continue;
+      const prog = p.life / p.maxLife;
+      const alpha = Math.max(0, 1 - prog);
+      if (p.type === 'confetti') {
+        ctx.globalAlpha = alpha * 0.9;
+        ctx.fillStyle = p.color;
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.seed + this._animTime * 6);
+        ctx.fillRect(-p.size / 2, -p.size / 4, p.size, p.size / 2);
+        ctx.restore();
+      } else {
+        // 烟花火花
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = p.color;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.size * (1 - prog * 0.5), 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    // 交战红色火花
+    for (const p of this._battleSparks) {
+      if (!this._onScreen(p.x, p.y, 40)) continue;
+      const alpha = Math.max(0, p.life / p.maxLife);
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2); ctx.fill();
+    }
+    // 武器碰撞白光闪
+    for (const f of this._battleFlash) {
+      if (!this._onScreen(f.x, f.y, 40)) continue;
+      const a = 1 - f.t / f.maxLife;
+      ctx.globalAlpha = a;
+      const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 16);
+      g.addColorStop(0, 'rgba(255,255,255,0.9)');
+      g.addColorStop(1, 'rgba(255,220,150,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(f.x, f.y, 16, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V16.0 — 地图视觉继续提升（水面/山影/森林三层/夜窗/萤火虫）
+  // ============================================================
+
+  // 水面增强：在河流波纹基础上叠加反光 + 倒影
+  // 在 _drawRiverRipples 之后调用（render 中已在 _drawRiverRipples 后串联）
+  _drawWaterEnhanced(ctx) {
+    if (!this.game) return;
+    const t = this._animTime;
+    ctx.save();
+    for (const city of this.game.cities.values()) {
+      if (city.terrain !== 'river') continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 80)) continue;
+      const w = TILE_W * 1.2 * this.scale;
+      // 反光：斜向高光带（随时间流动）
+      const sheenX = ((t * 20 + city.isoX * 30) % (w * 2)) - w / 2;
+      const sheenGrad = ctx.createLinearGradient(pos.x - w / 2, pos.y, pos.x + w / 2, pos.y);
+      sheenGrad.addColorStop(0, 'rgba(200,230,255,0)');
+      sheenGrad.addColorStop(0.5, 'rgba(220,240,255,0.35)');
+      sheenGrad.addColorStop(1, 'rgba(200,230,255,0)');
+      ctx.fillStyle = sheenGrad;
+      ctx.fillRect(pos.x - w / 2 + sheenX - 10, pos.y - 3, 20, 6);
+      // 倒影：下方轻微拉长的蓝色暗斑（模拟天空/山体倒影）
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = '#4a7a9a';
+      ctx.beginPath();
+      ctx.ellipse(pos.x, pos.y + 4, w * 0.35, 3, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
+
+  // 山地阴影：根据光源方向（右上）在山体左下侧画暗色三角
+  // 在 _drawTerrain 中已绘制山体；此处叠加动态阴影层（在主 ctx）
+  _drawMountainShadows(ctx) {
+    if (!this.game) return;
+    ctx.save();
+    for (const city of this.game.cities.values()) {
+      if (city.terrain !== 'mountain') continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 80)) continue;
+      const h = TILE_H * 1.2 * this.scale;
+      const w = TILE_W * 1.2 * this.scale;
+      // 光源右上 → 阴影投向左下
+      ctx.globalAlpha = 0.25;
+      ctx.fillStyle = 'rgba(20,30,40,1)';
+      ctx.beginPath();
+      ctx.moveTo(0, -h * 0.8);
+      ctx.lineTo(-w * 0.3, -h * 0.3);
+      ctx.lineTo(-w * 0.55, -h * 0.1);
+      ctx.lineTo(-w * 0.25, -h * 0.25);
+      ctx.closePath();
+      ctx.translate(pos.x, pos.y);
+      ctx.fill();
+      ctx.translate(-pos.x, -pos.y);
+    }
+    ctx.restore();
+  }
+
+  // 森林层次：近景深色 / 中景中色 / 远景浅色（按距离视口中心的远近分三层）
+  _drawForestLayers(ctx) {
+    if (!this.game) return;
+    const t = this._animTime;
+    ctx.save();
+    const cx = this.canvas.width / 2, cy = this.canvas.height / 2;
+    for (const city of this.game.cities.values()) {
+      if (city.terrain !== 'forest') continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 120)) continue;
+      const dist = Math.hypot(pos.x - cx, pos.y - cy);
+      let baseColor, size;
+      if (dist < 260) { baseColor = '#1f4a1a'; size = 5; }      // 近景深
+      else if (dist < 520) { baseColor = '#3a7a2a'; size = 4; }  // 中景中
+      else { baseColor = '#6aa050'; size = 3; }                   // 远景浅
+      // 树冠（2~3 个圆簇）
+      const sway = Math.sin(t * 1.5 + city.isoX) * 1;
+      ctx.fillStyle = baseColor;
+      for (let k = 0; k < 3; k++) {
+        const ox = (k - 1) * size * 1.2;
+        const oy = (k % 2) * -2;
+        ctx.beginPath();
+        ctx.arc(pos.x + ox + sway, pos.y + oy, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.restore();
+  }
+
+  // 夜晚城市窗口亮灯：在 _drawNightLights 基础上叠加小窗口光点（缓存）
+  _drawCityWindowLights(ctx) {
+    if (!this._isNight() || !this.game) return;
+    ctx.save();
+    for (const city of this.game.cities.values()) {
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 120)) continue;
+      if (typeof this.game.isCityExplored === 'function'
+          && !this.game.isCityExplored(city.id)) continue;
+      // 小窗格（3~4 个金色小方块，按城市 seed 分布）
+      const seed = city.id * 7;
+      const n = 3 + (city.size || 1);
+      for (let i = 0; i < n; i++) {
+        const wx = pos.x + ((Math.sin(seed + i * 13) + 1) / 2 - 0.5) * 18;
+        const wy = pos.y - 4 + ((Math.cos(seed + i * 7) + 1) / 2 - 0.5) * 10;
+        ctx.fillStyle = 'rgba(255,220,120,0.85)';
+        ctx.fillRect(wx, wy, 2.5, 2.5);
+      }
+    }
     ctx.restore();
   }
 }

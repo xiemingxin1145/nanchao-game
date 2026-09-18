@@ -92,6 +92,10 @@ export function recordIncome(game, money, food) {
 export function recordEnding(game, endingId, ngplusLevel) {
   const s = game.gameStats;
   if (!s) return;
+  // BUG修复（stats.js）：旧存档/异常状态下 s.endings 可能为 undefined 或非对象
+  //   （如手动编辑存档、跨版本迁移），直接 `s.endings[endingId] = ...` 会抛
+  //   TypeError，导致通关时崩溃。此处做防御性兜底。
+  if (!s.endings || typeof s.endings !== 'object') s.endings = {};
   s.endings[endingId] = (s.endings[endingId] || 0) + 1;
   s.ngPlusLevel = ngplusLevel || 0;
   // 累计成就/称号解锁数

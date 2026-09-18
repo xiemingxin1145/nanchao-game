@@ -102,7 +102,15 @@ export class HaremSystem {
     const emperorId = game.dynastySystem && game.dynastySystem.get(fid)
       ? game.dynastySystem.get(fid).emperorId : null;
     const emperor = emperorId ? game.generals.get(emperorId) : null;
-    const charm = emperor ? (emperor.command + emperor.force + emperor.intel + emperor.politics) / 4 : 60;
+    // BUG修复（harem.js）：旧存档/模组武将四维可能缺失（undefined），
+    //   直接 (cmd+force+intel+politics)/4 会得 NaN，进而使生育概率 p 为 NaN，
+    //   `Math.random() >= NaN` 恒为 false → 每回合无条件疯狂生育（子嗣爆炸）。
+    //   修复：四维缺失时回退到默认 60，与无君主时的分支一致。
+    const eCmd = Number(emperor && emperor.command) || 60;
+    const eForce = Number(emperor && emperor.force) || 60;
+    const eIntel = Number(emperor && emperor.intel) || 60;
+    const ePolitics = Number(emperor && emperor.politics) || 60;
+    const charm = (eCmd + eForce + eIntel + ePolitics) / 4;
     const charmBonus = Math.max(0, (charm - 60) / 10) * HAREM_CHARM_BONUS;
 
     for (const c of rec.consorts) {

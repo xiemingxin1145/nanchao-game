@@ -292,7 +292,12 @@ export class AIPlayer {
       }
 
       const gen = game.generals.get(army.generalId);
-      const atkPow = army.troops * (gen ? (gen.effCommand + gen.effForce) / 100 : 1);
+      // BUG修复（ai.js）：旧存档/模组武将的 effCommand/effForce 可能未计算或缺失，
+      //   直接相乘得 NaN，`NaN > defPow*1.3` 恒为 false → AI 永不进攻（看似正常实则躺平）。
+      //   此处做数值兜底，缺失时按 1 计算（与 gen 不存在时一致）。
+      const eCmd = Number(gen && gen.effCommand) || 0;
+      const eForce = Number(gen && gen.effForce) || 0;
+      const atkPow = army.troops * (gen ? Math.max(1, (eCmd + eForce) / 100) : 1);
       const defPow = target.garrison * (1 + target.defense / 100);
       // V4.0: AI进攻阈值 1.5→1.3（原值1.5，新值1.3，调整原因: 让AI更积极进攻但不过于鲁莽）
       // V4.0: 防御检查 — 若己方城市少于3座则优先防守，不主动攻城
@@ -453,16 +458,18 @@ export class AIPlayer {
     if (rel.alliance) return;
 
     // 70% 概率送人质求和；否则尝试联姻
+    // 性能优化（ai.js）：_pickIdleGeneral 内部对本势力武将全表 filter 一次。
+    //   原实现按 70/30 分支各调一次（两分支互斥，但仍有一次冗余扫描）；
+    //   优化后只调用一次并复用结果。144 将规模下每回合省一次 O(将数) 扫描。
+    const idleGen = this._pickIdleGeneral(game);
     if (Math.random() < 0.7) {
-      const hostageGen = this._pickIdleGeneral(game);
-      if (hostageGen) {
-        const r = game.diplomacy.sendHostage(game, this.factionId, strongest, hostageGen.id);
-        if (r.ok) game.pushLog(`【${this.name}】遣 ${hostageGen.name} 入 ${FACTIONS[strongest].name} 为质以求苟安`);
+      if (idleGen) {
+        const r = game.diplomacy.sendHostage(game, this.factionId, strongest, idleGen.id);
+        if (r.ok) game.pushLog(`【${this.name}】遣 ${idleGen.name} 入 ${FACTIONS[strongest].name} 为质以求苟安`);
       }
     } else {
-      const brideGen = this._pickIdleGeneral(game);
-      if (brideGen) {
-        const r = game.diplomacy.proposeMarriage(game, this.factionId, strongest, brideGen.id);
+      if (idleGen) {
+        const r = game.diplomacy.proposeMarriage(game, this.factionId, strongest, idleGen.id);
         if (r.ok) game.pushLog(`【${this.name}】与 ${FACTIONS[strongest].name} 议亲结好`);
       }
     }

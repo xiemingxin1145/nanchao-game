@@ -55,7 +55,10 @@ export function requestBuildPass(game, factionId, cityId, passNameOrId) {
   const target = PASSES.find(p =>
     p.locationCity === cityId &&
     (p.id === passNameOrId || p.name === passNameOrId) &&
-    !game.passes[p.id].built
+    // BUG修复（pass.js）：模组新增关隘时，game.passes 运行时表可能尚未为该 id
+    //   初始化条目（旧存档/热重载模组后）。直接取 game.passes[p.id].built 会抛
+    //   TypeError。此处做空值兜底：条目缺失视为「未建成」。
+    !(game.passes[p.id] && game.passes[p.id].built)
   );
   if (!target) return { ok: false, msg: '此处无可建造的关隘（或已建成）' };
   if (res.money < PASS_BUILD_COST_MONEY || res.food < PASS_BUILD_COST_FOOD) {

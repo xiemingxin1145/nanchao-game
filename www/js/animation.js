@@ -93,6 +93,21 @@ export class CharacterAnimator {
     this._achTrophyCache = null;   // 奖杯静态帧离屏缓存
     this._endingPalaceCache = {};  // 各等级宫殿剪影离屏缓存 {rank:canvas}
     this._achParticleCap = 120;    // 成就/结局覆盖层粒子上限保护
+
+    // ============================================================
+    // V16.0 — 动画与地图增强：开场/过场/战役关卡片头/目标/结算
+    // 设计：与 V15 覆盖层一致——play* 只写入状态机 + 触发一次性粒子；
+    //      update(dt) 用真实时间推进 t；draw* 按 t/dur 渲染。
+    //      预渲染：战场剪影/时间线背景等静态帧离屏缓存，避免每帧重算。
+    // ============================================================
+    this._prologueFX = null;       // 开场序幕 {t,dur,W,H,seed}
+    this._timelineFX = null;        // 时代变迁 {eventName,t,dur,W,H,phase}
+    this._campaignIntroFX = null;  // 战役片头 {campaignName,difficulty,t,dur,W,H}
+    this._campaignObjFX = null;    // 战役目标 {objectiveText,t,dur,W,H}
+    this._campaignVicFX = null;    // 战役结算 {stars,rewards,t,dur,W,H}
+    this._prologueSilhouetteCache = null; // 战场剪影预渲染帧
+    this._timelineBgCache = {};              // 时间线关键事件预渲染缓存 {eventName:canvas}
+    this._campMarkerPool = [];          // 战役标记对象池（map.js 复用）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -444,6 +459,28 @@ export class CharacterAnimator {
     if (this._endingFX) {
       this._endingFX.t += deltaTime;
       if (this._endingFX.t >= this._endingFX.dur) this._endingFX = null;
+    }
+
+    // ---- V16.0：开场/过场/战役覆盖层时间线推进（真实时间，不受慢动作影响）----
+    if (this._prologueFX) {
+      this._prologueFX.t += deltaTime;
+      if (this._prologueFX.t >= this._prologueFX.dur) this._prologueFX = null;
+    }
+    if (this._timelineFX) {
+      this._timelineFX.t += deltaTime;
+      if (this._timelineFX.t >= this._timelineFX.dur) this._timelineFX = null;
+    }
+    if (this._campaignIntroFX) {
+      this._campaignIntroFX.t += deltaTime;
+      if (this._campaignIntroFX.t >= this._campaignIntroFX.dur) this._campaignIntroFX = null;
+    }
+    if (this._campaignObjFX) {
+      this._campaignObjFX.t += deltaTime;
+      if (this._campaignObjFX.t >= this._campaignObjFX.dur) this._campaignObjFX = null;
+    }
+    if (this._campaignVicFX) {
+      this._campaignVicFX.t += deltaTime;
+      if (this._campaignVicFX.t >= this._campaignVicFX.dur) this._campaignVicFX = null;
     }
   }
 
@@ -3263,16 +3300,578 @@ export class CharacterAnimator {
     ctx.restore();
   }
 
+  // ============================================================
+  // V16.0 — 开场/过场/战役动画系统
+  // ============================================================
+
+  // 预渲染战场剪影（士兵冲锋/旗帜飘扬/骑兵疾驰 黑色剪影）
+  _ensurePrologueSilhouette(W, H) {
+    if (this._prologueSilhouetteCache
+        && this._prologueSilhouetteCache.width === W
+        && this._prologueSilhouetteCache.height === H) return this._prologueSilhouetteCache;
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = '#000';
+    const horizonY = H * 0.62;
+    // 远处山脊线（多层）
+    g.beginPath();
+    g.moveTo(0, horizonY);
+    for (let x = 0; x <= W; x += 40) {
+      g.lineTo(x, horizonY - 20 - Math.sin(x * 0.01) * 18 - Math.sin(x * 0.03) * 8);
+    }
+    g.lineTo(W, H); g.lineTo(0, H); g.closePath(); g.fill();
+    // 中景：一排士兵冲锋剪影（横排小三角+身体）
+    const n = Math.floor(W / 46);
+    for (let i = 0; i < n; i++) {
+      const bx = 20 + i * 46;
+      const by = horizonY + 10;
+      // 身体
+      g.fillRect(bx - 3, by - 18, 6, 18);
+      // 头
+      g.beginPath(); g.arc(bx, by - 21, 3, 0, Math.PI * 2); g.fill();
+      // 长矛
+      g.fillRect(bx + 3, by - 30, 1.5, 22);
+      // 旗帜（部分士兵）
+      if (i % 3 === 0) {
+        g.fillRect(bx - 8, by - 32, 1.5, 26);
+        g.beginPath();
+        g.moveTo(bx - 6.5, by - 32);
+        g.lineTo(bx + 4, by - 29);
+        g.lineTo(bx - 6.5, by - 26);
+        g.closePath(); g.fill();
+      }
+    }
+    // 近景：骑兵剪影（更大，2~3 个）
+    for (let k = 0; k < 3; k++) {
+      const cx = W * 0.15 + k * W * 0.32;
+      const cy = horizonY + 30;
+      // 马身
+      g.beginPath();
+      g.ellipse(cx, cy, 26, 9, 0, 0, Math.PI * 2); g.fill();
+      // 马腿（4 条）
+      g.fillRect(cx - 18, cy, 3, 14);
+      g.fillRect(cx - 12, cy + 2, 3, 14);
+      g.fillRect(cx + 10, cy, 3, 14);
+      g.fillRect(cx + 16, cy + 2, 3, 14);
+      // 马头
+      g.beginPath();
+      g.ellipse(cx + 26, cy - 6, 6, 8, -0.3, 0, Math.PI * 2); g.fill();
+      // 骑手
+      g.fillRect(cx - 4, cy - 18, 7, 12);
+      g.beginPath(); g.arc(cx - 1, cy - 21, 3.5, 0, Math.PI * 2); g.fill();
+      // 长枪
+      g.fillRect(cx + 4, cy - 34, 1.5, 30);
+      // 飘动旗
+      g.beginPath();
+      g.moveTo(cx + 5.5, cy - 34);
+      g.lineTo(cx + 18, cy - 30);
+      g.lineTo(cx + 5.5, cy - 26);
+      g.closePath(); g.fill();
+    }
+    this._prologueSilhouetteCache = c;
+    return c;
+  }
+
+  // 一、开场序幕动画：战场剪影横移 + 旗帜飘动 + 烟尘粒子
+  // ctx/canvas 用于取尺寸；w/h 为可选覆盖尺寸
+  playPrologueBattle(ctx, w, h) {
+    const W = w || (ctx && ctx.canvas ? ctx.canvas.width : 1280);
+    const H = h || (ctx && ctx.canvas ? ctx.canvas.height : 720);
+    this._prologueFX = { t: 0, dur: 5.5, W, H, seed: Math.random() * 100 };
+    // 开场烟尘粒子（黑褐，从地面涌起）
+    this._burstFXParticles(W / 2, H * 0.7, 30, {
+      colors: ['#3a2a1a', '#5a4a3a', '#2a1a0a', '#6a5a4a'],
+      minSpeed: 20, spread: 120, upBias: 80, gravity: -30,
+      lifeMin: 1.2, lifeMax: 2.6, sizeMin: 3, sizeMax: 7
+    });
+    // 金戈铁马火星
+    this._burstFXParticles(W / 2, H * 0.55, 18, {
+      colors: ['#FFD700', '#ff8a3a', '#FFF3B0'],
+      minSpeed: 40, spread: 200, upBias: 40, gravity: 60,
+      lifeMin: 0.6, lifeMax: 1.4, sizeMin: 1.5, sizeMax: 3
+    });
+    if (ctx) this.drawPrologueBattle(ctx);
+  }
+
+  // 绘制开场序幕（每帧调用）
+  drawPrologueBattle(ctx) {
+    const fx = this._prologueFX;
+    if (!fx || !ctx) return;
+    const { W, H, t, dur, seed } = fx;
+    const p = t / dur;
+    ctx.save();
+    // 阶段0：全屏黑幕渐入
+    const fadeIn = this._v15EaseOutCubic(p / 0.15);
+    ctx.fillStyle = `rgba(8,6,4,${fadeIn})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // 阶段1：战场剪影缓慢横移（0.1~0.9）
+    if (p > 0.1 && p < 0.95) {
+      const scroll = (p - 0.1) / 0.85;
+      const img = this._ensurePrologueSilhouette(W, H);
+      // 横向位移：从右滑入再缓停
+      const dx = this._v15Lerp(W * 0.3, -W * 0.05, this._v15EaseInOut(scroll));
+      ctx.globalAlpha = Math.min(1, (p - 0.1) / 0.2);
+      ctx.drawImage(img, dx, 0);
+      // 远处烟尘微光（橙红地平线战火）
+      const warGlow = ctx.createLinearGradient(0, H * 0.55, 0, H * 0.7);
+      warGlow.addColorStop(0, 'rgba(255,100,40,0)');
+      warGlow.addColorStop(1, `rgba(255,90,30,${0.35 * Math.sin(this.time * 2)})`);
+      ctx.fillStyle = warGlow;
+      ctx.fillRect(0, H * 0.55, W, H * 0.15);
+      ctx.globalAlpha = 1;
+    }
+
+    // 阶段2：序幕文字浮现（0.4~0.9）
+    const textP = this._v15EaseOutCubic((p - 0.4) / 0.25);
+    if (textP > 0) {
+      ctx.globalAlpha = textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#000'; ctx.shadowBlur = 18;
+      ctx.fillStyle = '#FFE9B0';
+      ctx.font = 'bold 44px "STSong", serif';
+      ctx.fillText('南北烽烟  百年乱世', W / 2, H * 0.30);
+      ctx.font = '18px "STSong", serif';
+      ctx.fillStyle = 'rgba(255,230,180,0.85)';
+      ctx.fillText('—— 自永嘉之乱，天下分崩，南北对峙，英雄辈出 ——', W / 2, H * 0.38);
+      ctx.globalAlpha = 1;
+    }
+
+    // 阶段3：收尾黑屏（0.9~1）
+    const fadeOut = Math.max(0, Math.min(1, (p - 0.9) / 0.1));
+    if (fadeOut > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${fadeOut})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+
+  // 预渲染时间线关键事件背景（火焰/刀剑/宫殿 剪影）
+  _ensureTimelineBg(eventName, W, H) {
+    const key = eventName + '_' + W + 'x' + H;
+    if (this._timelineBgCache[key]) return this._timelineBgCache[key];
+    const c = document.createElement('canvas');
+    c.width = W; c.height = H;
+    const g = c.getContext('2d');
+    g.fillStyle = 'rgba(0,0,0,0)';
+    // 暗色背景
+    const grad = g.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, '#1a1020');
+    grad.addColorStop(1, '#0a0608');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, W, H);
+    const cx = W / 2, cy = H / 2;
+    // 按事件类型绘制中央图标剪影
+    if (/火|焚|战|乱|火/.test(eventName)) {
+      // 火焰剪影（橙红渐变三角簇）
+      for (let i = 0; i < 5; i++) {
+        const fx = cx + (i - 2) * 30;
+        const fh = 60 + Math.sin(i * 1.7) * 30;
+        const fg = g.createLinearGradient(fx, cy + 40, fx, cy - fh);
+        fg.addColorStop(0, '#ff6a2a');
+        fg.addColorStop(1, 'rgba(255,200,80,0.2)');
+        g.fillStyle = fg;
+        g.beginPath();
+        g.moveTo(fx - 20, cy + 40);
+        g.quadraticCurveTo(fx, cy - fh, fx + 20, cy + 40);
+        g.closePath(); g.fill();
+      }
+    } else if (/剑|刀|兵|戈|伐/.test(eventName)) {
+      // 交叉刀剑
+      g.strokeStyle = '#c0c8d0'; g.lineWidth = 8; g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(cx - 50, cy + 50); g.lineTo(cx + 50, cy - 50);
+      g.moveTo(cx + 50, cy + 50); g.lineTo(cx - 50, cy - 50);
+      g.stroke();
+      // 剑柄
+      g.lineWidth = 6;
+      g.beginPath();
+      g.moveTo(cx - 60, cy - 40); g.lineTo(cx - 40, cy - 60);
+      g.moveTo(cx + 60, cy - 40); g.lineTo(cx + 40, cy - 60);
+      g.stroke();
+    } else {
+      // 默认：宫殿剪影
+      g.fillStyle = '#2a1a0a';
+      g.fillRect(cx - 70, cy - 10, 140, 50);
+      g.beginPath();
+      g.moveTo(cx - 90, cy - 10);
+      g.lineTo(cx, cy - 50);
+      g.lineTo(cx + 90, cy - 10);
+      g.closePath(); g.fill();
+      g.fillStyle = 'rgba(255,200,100,0.25)';
+      g.fillRect(cx - 12, cy + 10, 24, 30);
+    }
+    this._timelineBgCache[key] = c;
+    return c;
+  }
+
+  // 二、时代变迁动画：时间线粒子流动 + 关键事件闪现
+  // eventName: 事件名（如「永嘉南渡」「肥水之战」「孝文改制」）
+  playTimelineTransition(ctx, eventName, w, h) {
+    const W = w || (ctx && ctx.canvas ? ctx.canvas.width : 1280);
+    const H = h || (ctx && ctx.canvas ? ctx.canvas.height : 720);
+    this._timelineFX = {
+      eventName: String(eventName || '时代变迁'),
+      t: 0, dur: 3.2, W, H,
+      seed: Math.random() * 100
+    };
+    // 时间流金色粒子（横向流动）
+    for (let i = 0; i < 24; i++) {
+      this._burstFXParticles(Math.random() * W, H * 0.5 + (Math.random() - 0.5) * 120, 1, {
+        colors: ['#FFD700', '#FFF3B0', '#e8c060'],
+        minSpeed: 60, spread: 140, upBias: 0, gravity: 0,
+        lifeMin: 1.2, lifeMax: 2.4, sizeMin: 1, sizeMax: 2.5
+      });
+    }
+    if (ctx) this.drawTimelineTransition(ctx);
+  }
+
+  // 绘制时代变迁（每帧调用）
+  drawTimelineTransition(ctx) {
+    const fx = this._timelineFX;
+    if (!fx || !ctx) return;
+    const { W, H, t, dur, eventName, seed } = fx;
+    const p = t / dur;
+    ctx.save();
+    // 背景淡入
+    const bgP = this._v15EaseOutCubic(p / 0.2);
+    ctx.globalAlpha = bgP * 0.9;
+    const bg = this._ensureTimelineBg(eventName, W, H);
+    ctx.drawImage(bg, 0, 0);
+    ctx.globalAlpha = 1;
+
+    // 横向时间线（金色光带流动）
+    const lineY = H * 0.5;
+    const flow = (this.time * 80 + seed * 10) % 40;
+    ctx.strokeStyle = 'rgba(255,215,0,0.6)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([12, 8]);
+    ctx.lineDashOffset = -flow;
+    ctx.beginPath();
+    ctx.moveTo(W * 0.1, lineY);
+    ctx.lineTo(W * 0.9, lineY);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    // 光带中心亮点移动
+    const dotX = this._v15Lerp(W * 0.1, W * 0.9, this._v15EaseInOut(p));
+    const dotGrad = ctx.createRadialGradient(dotX, lineY, 0, dotX, lineY, 30);
+    dotGrad.addColorStop(0, 'rgba(255,240,180,0.9)');
+    dotGrad.addColorStop(1, 'rgba(255,200,80,0)');
+    ctx.fillStyle = dotGrad;
+    ctx.beginPath(); ctx.arc(dotX, lineY, 30, 0, Math.PI * 2); ctx.fill();
+
+    // 事件名大字浮现（0.25~0.7）
+    const textP = this._v15EaseOutBack((p - 0.25) / 0.25);
+    if (textP > 0) {
+      ctx.save();
+      ctx.translate(W / 2, H * 0.32);
+      ctx.scale(Math.max(0, textP), Math.max(0, textP));
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 24;
+      ctx.font = 'bold 48px "STSong", serif';
+      ctx.fillStyle = '#FFF3D0';
+      ctx.fillText(eventName, 0, 0);
+      ctx.restore();
+    }
+    // 收尾淡出（0.85~1）
+    const fadeOut = Math.max(0, Math.min(1, (p - 0.85) / 0.15));
+    if (fadeOut > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${fadeOut})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+
+  // 三、战役关卡片头：战役名称大字浮现 + 副标题 + 难度星级
+  // difficulty: 1~5 星
+  playCampaignIntro(ctx, campaignName, difficulty = 3) {
+    const W = ctx && ctx.canvas ? ctx.canvas.width : 1280;
+    const H = ctx && ctx.canvas ? ctx.canvas.height : 720;
+    const diff = Math.max(1, Math.min(5, Math.round(difficulty)));
+    this._campaignIntroFX = {
+      campaignName: String(campaignName || '战役'),
+      difficulty: diff, t: 0, dur: 3.0, W, H
+    };
+    // 金粉粒子从两侧汇聚中央
+    this._burstFXParticles(W / 2, H * 0.45, 30, {
+      colors: ['#FFD700', '#FFF3B0', '#e8c060'],
+      minSpeed: 60, spread: 220, upBias: 30, gravity: 20,
+      lifeMin: 0.8, lifeMax: 1.8, sizeMin: 1.5, sizeMax: 3
+    });
+    if (ctx) this.drawCampaignIntro(ctx);
+  }
+
+  // 绘制战役关卡片头（每帧调用）
+  drawCampaignIntro(ctx) {
+    const fx = this._campaignIntroFX;
+    if (!fx || !ctx) return;
+    const { W, H, t, dur, campaignName, difficulty } = fx;
+    const p = t / dur;
+    ctx.save();
+    // 背景暗化渐入
+    const bgP = this._v15EaseOutCubic(p / 0.2);
+    ctx.fillStyle = `rgba(10,8,18,${bgP * 0.85})`;
+    ctx.fillRect(0, 0, W, H);
+
+    // 战役名大字（0.15~0.6 弹入）
+    const titleP = this._v15EaseOutBack((p - 0.15) / 0.3);
+    if (titleP > 0) {
+      ctx.save();
+      ctx.translate(W / 2, H * 0.40);
+      ctx.scale(Math.max(0, titleP), Math.max(0, titleP));
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#7a1010'; ctx.shadowBlur = 24;
+      ctx.font = 'bold 72px "STSong", serif';
+      ctx.lineWidth = 6; ctx.strokeStyle = '#3a0808';
+      ctx.strokeText(campaignName, 0, 0);
+      ctx.fillStyle = '#FFE9B0';
+      ctx.fillText(campaignName, 0, 0);
+      ctx.restore();
+    }
+
+    // 副标题「—— 战役 ——」(0.35~0.6)
+    const subP = this._v15EaseOutCubic((p - 0.35) / 0.2);
+    if (subP > 0) {
+      ctx.globalAlpha = subP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '22px "STSong", serif';
+      ctx.fillStyle = 'rgba(255,220,180,0.85)';
+      ctx.fillText('— 战 役 —', W / 2, H * 0.40 + 70);
+      ctx.globalAlpha = 1;
+    }
+
+    // 难度星级（0.5~0.8 依次点亮）
+    for (let i = 0; i < 5; i++) {
+      const starP = Math.max(0, Math.min(1, (p - 0.5 - i * 0.06) / 0.15));
+      if (starP <= 0) continue;
+      const sx = W / 2 + (i - 2) * 44;
+      const sy = H * 0.40 + 110;
+      const lit = i < difficulty;
+      const scale = this._v15Lerp(0.5, 1.0, starP);
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.scale(scale, scale);
+      ctx.globalAlpha = starP;
+      ctx.shadowColor = lit ? '#FFD700' : 'transparent';
+      ctx.shadowBlur = lit ? 16 : 0;
+      ctx.fillStyle = lit ? '#FFD700' : 'rgba(120,110,90,0.5)';
+      ctx.beginPath();
+      for (let k = 0; k < 5; k++) {
+        const a = -Math.PI / 2 + k * Math.PI * 2 / 5;
+        const a2 = a + Math.PI / 5;
+        ctx.lineTo(Math.cos(a) * 16, Math.sin(a) * 16);
+        ctx.lineTo(Math.cos(a2) * 6, Math.sin(a2) * 6);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+    // 收尾淡出
+    const fadeOut = Math.max(0, Math.min(1, (p - 0.85) / 0.15));
+    if (fadeOut > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${fadeOut})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+
+  // 四、战役目标提示：目标图标 + 文字从右侧滑入
+  // objectiveText: 目标描述
+  playCampaignObjective(ctx, objectiveText) {
+    const W = ctx && ctx.canvas ? ctx.canvas.width : 1280;
+    const H = ctx && ctx.canvas ? ctx.canvas.height : 720;
+    this._campaignObjFX = {
+      objectiveText: String(objectiveText || '攻占目标城池'),
+      t: 0, dur: 3.0, W, H
+    };
+    if (ctx) this.drawCampaignObjective(ctx);
+  }
+
+  // 绘制战役目标提示（每帧调用）
+  drawCampaignObjective(ctx) {
+    const fx = this._campaignObjFX;
+    if (!fx || !ctx) return;
+    const { W, H, t, dur, objectiveText } = fx;
+    const p = t / dur;
+    ctx.save();
+    // 滑入滑出：0~0.25 从右滑入；0.75~1 滑出
+    let offsetX;
+    if (p < 0.25) offsetX = (1 - this._v15EaseOutCubic(p / 0.25)) * (W * 0.5 + 200);
+    else if (p > 0.75) offsetX = this._v15EaseInOut((p - 0.75) / 0.25) * (W * 0.5 + 200);
+    else offsetX = 0;
+
+    const bx = W - 320 - offsetX;   // 面板左上 x
+    const by = 80;
+    const bw = 300, bh = 70;
+    // 半透明深色面板
+    ctx.fillStyle = 'rgba(20,18,10,0.85)';
+    ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.5;
+    this._v15RoundRect(ctx, bx, by, bw, bh, 8);
+    ctx.fill(); ctx.stroke();
+    // 目标图标（金色小旗帜）
+    const ix = bx + 28, iy = by + bh / 2;
+    ctx.fillStyle = '#FFD700';
+    ctx.fillRect(ix - 2, iy - 20, 3, 40);
+    ctx.beginPath();
+    ctx.moveTo(ix + 1, iy - 20);
+    ctx.lineTo(ix + 22, iy - 13);
+    ctx.lineTo(ix + 1, iy - 6);
+    ctx.closePath(); ctx.fill();
+    // 脉冲光环（图标周围）
+    const pulse = 0.5 + 0.5 * Math.sin(this.time * 4);
+    ctx.strokeStyle = `rgba(255,215,0,${0.4 + pulse * 0.3})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(ix, iy, 24 + pulse * 4, 0, Math.PI * 2); ctx.stroke();
+    // 文字
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#FFE9B0';
+    ctx.font = 'bold 16px "STSong", serif';
+    ctx.fillText('战役目标', bx + 52, by + 22);
+    ctx.fillStyle = 'rgba(255,240,210,0.92)';
+    ctx.font = '14px "STSong", serif';
+    // 简单换行（按宽度截断为两行）
+    const maxChars = 14;
+    const line1 = objectiveText.slice(0, maxChars);
+    const line2 = objectiveText.slice(maxChars, maxChars * 2);
+    ctx.fillText(line1, bx + 52, by + 42);
+    if (line2) ctx.fillText(line2, bx + 52, by + 58);
+    ctx.restore();
+  }
+
+  // 五、战役结算：三星依次点亮 + 奖励图标飞入
+  // stars: 1~3；rewards: ['粮草','兵器','银两',...] 字符串数组
+  playCampaignVictory(ctx, stars = 3, rewards = []) {
+    const W = ctx && ctx.canvas ? ctx.canvas.width : 1280;
+    const H = ctx && ctx.canvas ? ctx.canvas.height : 720;
+    const s = Math.max(1, Math.min(3, Math.round(stars)));
+    this._campaignVicFX = {
+      stars: s, rewards: Array.isArray(rewards) ? rewards.slice(0, 6) : [],
+      t: 0, dur: 4.0, W, H
+    };
+    // 彩带/烟花爆发
+    this._burstFXParticles(W / 2, H * 0.4, 40, {
+      colors: ['#FFD700', '#ff5a5a', '#5aff8a', '#5ab0ff', '#ffb0e0', '#ffffff'],
+      minSpeed: 60, spread: 260, upBias: 120, gravity: 120,
+      lifeMin: 1.2, lifeMax: 2.6, sizeMin: 2, sizeMax: 4
+    });
+    if (ctx) this.drawCampaignVictory(ctx);
+  }
+
+  // 绘制战役结算（每帧调用）
+  drawCampaignVictory(ctx) {
+    const fx = this._campaignVicFX;
+    if (!fx || !ctx) return;
+    const { W, H, t, dur, stars, rewards } = fx;
+    const p = t / dur;
+    ctx.save();
+    // 背景金光渐入
+    const bgGrad = ctx.createRadialGradient(W / 2, H * 0.4, 20, W / 2, H * 0.4, Math.max(W, H) * 0.6);
+    bgGrad.addColorStop(0, `rgba(255,220,120,${0.7 * this._v15EaseOutCubic(p / 0.25)})`);
+    bgGrad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 「战役胜利」大字（0.1~0.4 弹入）
+    const titleP = this._v15EaseOutBack((p - 0.1) / 0.25);
+    if (titleP > 0) {
+      ctx.save();
+      ctx.translate(W / 2, H * 0.25);
+      ctx.scale(Math.max(0, titleP), Math.max(0, titleP));
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 20;
+      ctx.font = 'bold 60px "STSong", serif';
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText('战役胜利', 0, 0);
+      ctx.restore();
+    }
+
+    // 三星依次点亮（0.3~0.8）
+    for (let i = 0; i < 3; i++) {
+      const starP = Math.max(0, Math.min(1, (p - 0.3 - i * 0.12) / 0.2));
+      if (starP <= 0) continue;
+      const sx = W / 2 + (i - 1) * 80;
+      const sy = H * 0.42;
+      const lit = i < stars;
+      const scale = this._v15Lerp(0.3, 1.0, this._v15EaseOutBack(starP));
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.scale(scale, scale);
+      ctx.shadowColor = lit ? '#FFD700' : 'transparent';
+      ctx.shadowBlur = lit ? 24 : 0;
+      ctx.fillStyle = lit ? '#FFD700' : 'rgba(120,110,90,0.4)';
+      ctx.beginPath();
+      for (let k = 0; k < 5; k++) {
+        const a = -Math.PI / 2 + k * Math.PI * 2 / 5;
+        const a2 = a + Math.PI / 5;
+        ctx.lineTo(Math.cos(a) * 22, Math.sin(a) * 22);
+        ctx.lineTo(Math.cos(a2) * 9, Math.sin(a2) * 9);
+      }
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // 奖励图标飞入（0.5~1.0，从两侧飞入排成一排）
+    rewards.forEach((r, i) => {
+      const rp = Math.max(0, Math.min(1, (p - 0.5 - i * 0.08) / 0.2));
+      if (rp <= 0) return;
+      const ex = W / 2 + (i - (rewards.length - 1) / 2) * 90;
+      const ey = H * 0.62;
+      // 从下方飞入
+      const yOff = (1 - this._v15EaseOutBack(rp)) * 120;
+      ctx.save();
+      ctx.globalAlpha = rp;
+      // 奖励方块
+      ctx.fillStyle = 'rgba(40,30,10,0.85)';
+      ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.5;
+      this._v15RoundRect(ctx, ex - 32, ey + yOff - 20, 64, 40, 6);
+      ctx.fill(); ctx.stroke();
+      // 奖励文字
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#FFE9B0';
+      ctx.font = 'bold 14px "STSong", serif';
+      ctx.fillText(r, ex, ey + yOff);
+      ctx.restore();
+    });
+
+    // 收尾淡出
+    const fadeOut = Math.max(0, Math.min(1, (p - 0.92) / 0.08));
+    if (fadeOut > 0) {
+      ctx.fillStyle = `rgba(0,0,0,${fadeOut})`;
+      ctx.fillRect(0, 0, W, H);
+    }
+    ctx.restore();
+  }
+
+  // V16.0：圆角矩形辅助
+  _v15RoundRect(ctx, x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
   // 便捷：绘制所有激活中的覆盖层（每帧一次调用）
   drawOverlayFX(ctx, w, h) {
     this.drawAchievementFX(ctx);
     this.drawTierUpFX(ctx);
     this.drawEndingAnimation(ctx);
+    // V16.0：开场/过场/战役覆盖层
+    this.drawPrologueBattle(ctx);
+    this.drawTimelineTransition(ctx);
+    this.drawCampaignIntro(ctx);
+    this.drawCampaignObjective(ctx);
+    this.drawCampaignVictory(ctx);
   }
 
   // 查询当前是否有覆盖层动画在播放
   hasOverlayFX() {
-    return !!(this._achFX || this._tierFX || this._endingFX);
+    return !!(this._achFX || this._tierFX || this._endingFX
+      || this._prologueFX || this._timelineFX
+      || this._campaignIntroFX || this._campaignObjFX || this._campaignVicFX);
   }
 }
 

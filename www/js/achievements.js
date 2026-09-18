@@ -506,6 +506,87 @@ export const ACHIEVEMENTS = [
         return { current: Math.min(10, temples), total: 10 };
       } catch (e) { return { current: 0, total: 10 }; }
     }
+  },
+
+  // ==================== V16.0 新增（10 个 v16_ 前缀） ====================
+  // ---- 战役模式（3） ----
+  {
+    id: 'v16_ach_campaign_first', name: '初战告捷', icon: '🏁', category: 'special', points: 20,
+    description: '首次通关任意一个战役关卡。', reward: { money: 1500, title: '战役先锋' },
+    condition: (g) => (g.gameStats?.campaignsCompleted || g.campaignsCompleted || 0) >= 1,
+    progress: (g) => ({ current: Math.min(1, g.gameStats?.campaignsCompleted || g.campaignsCompleted || 0), total: 1 })
+  },
+  {
+    id: 'v16_ach_campaign_all', name: '战役全胜', icon: '🏆', category: 'special', points: 50,
+    description: '通关战役模式全部关卡。', reward: { bgm: 'dynasty', title: '战役之神' },
+    condition: (g) => (g.gameStats?.campaignsCompleted || g.campaignsCompleted || 0) >= 6,
+    progress: (g) => ({ current: Math.min(6, g.gameStats?.campaignsCompleted || g.campaignsCompleted || 0), total: 6 })
+  },
+  {
+    id: 'v16_ach_campaign_s', name: 'S级名将', icon: '💎', category: 'special', points: 40,
+    description: '在任意一个战役关卡获得 S 级评价。', reward: { title: 'S级名将' },
+    condition: (g) => (g.gameStats?.campainsSRank || g.campaignsSRank || 0) >= 1,
+    progress: (g) => ({ current: Math.min(1, g.gameStats?.campainsSRank || g.campaignsSRank || 0), total: 1 })
+  },
+
+  // ---- 多周目 meta（3） ----
+  {
+    id: 'v16_ach_ngplus_reward', name: '周目先驱', icon: '🔓', category: 'special', points: 20,
+    description: '解锁第一个周目奖励槽位。', reward: { money: 1000 },
+    condition: (g) => (g.gameStats?.ngplusRewardsUnlocked || 0) >= 1,
+    progress: (g) => ({ current: Math.min(1, g.gameStats?.ngplusRewardsUnlocked || 0), total: 1 })
+  },
+  {
+    id: 'v16_ach_ngplus_tree', name: '轮回满树', icon: '🌳', category: 'special', points: 50,
+    description: '解锁全部 10 个周目奖励槽位。', reward: { title: '轮回之主' },
+    condition: (g) => (g.gameStats?.ngplusRewardsUnlocked || 0) >= 10,
+    progress: (g) => ({ current: Math.min(10, g.gameStats?.ngplusRewardsUnlocked || 0), total: 10 })
+  },
+  {
+    id: 'v16_ach_gallery', name: '图鉴收藏家', icon: '📖', category: 'special', points: 40,
+    description: '图鉴收集率达到 50%。', reward: { bgm: 'culture' },
+    condition: (g) => (g.gameStats?.galleryCompletion || 0) >= 50,
+    progress: (g) => ({ current: Math.min(50, g.gameStats?.galleryCompletion || 0), total: 50 })
+  },
+
+  // ---- 高级系统（4） ----
+  {
+    id: 'v16_ach_espionage_5', name: '谍影重重', icon: '🕵️', category: 'politics', points: 30,
+    description: '成功策反敌将 5 次。', reward: { money: 2000 },
+    condition: (g) => (g.stats?.defectSuccesses || g.gameStats?.defectSuccesses || 0) >= 5,
+    progress: (g) => ({ current: Math.min(5, g.stats?.defectSuccesses || g.gameStats?.defectSuccesses || 0), total: 5 })
+  },
+  {
+    id: 'v16_ach_trade_master', name: '货殖宗师', icon: '🐫', category: 'economy', points: 30,
+    description: '同时维持 15 条以上商路。', reward: { money: 3000 },
+    condition: (g) => (g.tradeRoutes || []).length >= 15,
+    progress: (g) => ({ current: Math.min(15, (g.tradeRoutes || []).length), total: 15 })
+  },
+  {
+    id: 'v16_ach_religion_pillar', name: '佛道双柱', icon: '☸️', category: 'politics', points: 30,
+    description: '境内佛寺、道观各达到 5 座。', reward: { bgm: 'culture' },
+    condition: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const buddhist = cities.reduce((s, c) => s + (c.buildings?.buddhist_temple || 0), 0);
+        const daoist = cities.reduce((s, c) => s + (c.buildings?.daoist_temple || 0), 0);
+        return buddhist >= 5 && daoist >= 5;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        const b = cities.reduce((s, c) => s + (c.buildings?.buddhist_temple || 0), 0);
+        const d = cities.reduce((s, c) => s + (c.buildings?.daoist_temple || 0), 0);
+        return { current: Math.min(5, b) + Math.min(5, d), total: 10 };
+      } catch (e) { return { current: 0, total: 10 }; }
+    }
+  },
+  {
+    id: 'v16_ach_weather_warrior', name: '风雨百战', icon: '⛈️', category: 'military', points: 30,
+    description: '在雨雪天气条件下取得 5 场胜利。', reward: { food: 2500 },
+    condition: (g) => (g.stats?.weatherWins || g.gameStats?.weatherWins || 0) >= 5,
+    progress: (g) => ({ current: Math.min(5, g.stats?.weatherWins || g.gameStats?.weatherWins || 0), total: 5 })
   }
 ];
 

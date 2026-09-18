@@ -28,6 +28,12 @@ function findTribe(game, tribeId) {
   return (game.barbarianTribes || []).find(t => t.id === tribeId) || null;
 }
 
+// BUG修复（barbarian.js）：热座/模组/势力灭亡场景下 FACTIONS[factionId] 可能为 undefined，
+//   日志里直接取 .name 会抛 TypeError。统一用此小工具安全取势力名。
+function _factionName(fid) {
+  return (FACTIONS[fid] && FACTIONS[fid].name) || fid || '本国';
+}
+
 // 选出某势力驻在蛮族锚点城市（或相邻）的最强军队
 function pickArmyForBarbarian(game, factionId, anchorCityId) {
   const candidates = game.getFactionArmies(factionId).filter(a => a.cityId === anchorCityId);
@@ -77,7 +83,7 @@ export function attackBarbarian(game, factionId, tribeId) {
     res.money += loot;
     tribe.troops = Math.max(2000, Math.round(tribe.troops - result.defenderLoss * 1.5));
     tribe.relation = Math.max(-100, tribe.relation - 20);
-    game.pushLog(`⚔ ${FACTIONS[factionId].name} 大破${tribe.name}！缴获 ${loot} 金，蛮族远遁。`);
+    game.pushLog(`⚔ ${_factionName(factionId)} 大破${tribe.name}！缴获 ${loot} 金，蛮族远遁。`);
     if (army.troops <= 0) {
       army.destroyed = true;
       if (attGen) { attGen.inArmy = null; attGen.location = army.cityId; }
@@ -85,7 +91,7 @@ export function attackBarbarian(game, factionId, tribeId) {
     return { ok: true, msg: `征讨大捷！缴获 ${loot} 金`, win: true, loot };
   }
   tribe.relation = Math.max(-100, tribe.relation - 5);
-  game.pushLog(`${FACTIONS[factionId].name} 征${tribe.name}受挫，损兵折将。`);
+  game.pushLog(`${_factionName(factionId)} 征${tribe.name}受挫，损兵折将。`);
   if (army.troops <= 0) {
     army.destroyed = true;
     if (attGen) { attGen.inArmy = null; attGen.location = army.cityId; }
@@ -111,7 +117,7 @@ export function recruitBarbarian(game, factionId, tribeId) {
   // BUG修复（barbarian.js #4b）：记录宗主势力——否则下回合 settleBarbarians 会把
   //   进贡错误地发给玩家势力（即使是 AI 招安的附庸也给玩家进贡）。
   tribe.suzerain = factionId;
-  game.pushLog(`🏮 ${FACTIONS[factionId].name} 招抚${tribe.name}成功！其岁岁进贡，可供驱策。`);
+  game.pushLog(`🏮 ${_factionName(factionId)} 招抚${tribe.name}成功！其岁岁进贡，可供驱策。`);
   return { ok: true, msg: `${tribe.name} 归附！每回合进贡 ${BARBARIAN_VASSAL_TRIBUTE} 金` };
 }
 

@@ -2287,7 +2287,17 @@ export class Game {
   checkVictory() {
     // V5.0：热座模式下，人类任一方一统即胜（终局逻辑由 _checkHotSeatEnd 统一处理）
     if (this.isHotSeat) { this._checkHotSeatEnd(); return !!this.gameOver; }
-    const playerCities = this.getFactionCities(this.playerFaction);
+    // 性能优化（game.js #1）：战役/回合结算后判定优化——
+    //   优化前：checkVictory 每回合调用 getFactionCities(this.playerFaction)，
+    //   内部对 72 城做一次全表 filter；settleTurn 末尾已建好 _fidCityCountCache
+    //   （fid → city 数组），此处直接查表 O(1) 取玩家城市数组，避免重复遍历。
+    //   非回合结算路径（如 UI 主动调用）缓存可能为旧值或缺省，兜底回退原实现。
+    let playerCities;
+    if (this._fidCityCountCache && this._fidCityCountCache.has(this.playerFaction)) {
+      playerCities = this._fidCityCountCache.get(this.playerFaction);
+    } else {
+      playerCities = this.getFactionCities(this.playerFaction);
+    }
     // V3.0：30 城地图，占 29 城以上视为一统（与 ending.unify 一致）
     const total = this.cities.size || 30;
     if (playerCities.length >= total - 1) {

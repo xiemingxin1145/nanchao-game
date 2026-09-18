@@ -29,7 +29,11 @@ const PENTATONIC = {
   C4: 261.63, D4: 293.66, E4: 329.63, G4: 392.00, A4: 440.00,
   C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880.00,
   C3: 130.81, D3: 146.83, E3: 164.81, G3: 196.00, A3: 220.00,
-  F3: 174.61, F4: 349.23, F5: 698.46
+  F3: 174.61, F4: 349.23, F5: 698.46,
+  // V16.0 新增：G羽调战役 BGM 所需的低音区与 A大调开场 BGM 所需的三/六级音
+  G2: 98.00, A2: 110.00, B2: 123.47, D2: 73.42, E2: 82.41,
+  B3: 246.94, B4: 493.88,
+  C4s: 277.18, C5s: 554.37, F3s: 185.00, F4s: 369.99, F5s: 739.99
 };
 
 // 各场景 BGM 配置
@@ -141,6 +145,20 @@ const BGM_TRACKS = {
   finale: {
     bpm: 66, scale: ['C3', 'D3', 'E3', 'G3', 'A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5'],
     wave: 'triangle', bassWave: 'sine', stepMs: 700, hasDrum: true, density: 0.7
+  },
+
+  // ============================================================
+  // V16.0「音效扩充」新增 2 首 BGM
+  // ============================================================
+  campaign: { // 战役模式：G羽调，130BPM，紧张激烈进行曲（锯齿主奏+方波低音+战鼓）
+    // 羽调式音阶（羽=G）：G A C D E G A C D E，强调军乐行进感
+    bpm: 130, scale: ['G2', 'A2', 'C3', 'D3', 'E3', 'G3', 'A3', 'C4', 'D4', 'E4', 'G4'],
+    wave: 'sawtooth', bassWave: 'square', stepMs: 460, hasDrum: true, density: 0.92
+  },
+  intro: {    // 开场/过场：A大调，90BPM，宏大史诗（三角主奏+正弦低音+定音鼓）
+    // A大调自然音阶近似：A B C# D E F# A B C#
+    bpm: 90, scale: ['A2', 'B2', 'C3s', 'D3', 'E3', 'F3s', 'A3', 'B3', 'C4s', 'D4', 'E4', 'F4s', 'A4'],
+    wave: 'triangle', bassWave: 'sine', stepMs: 680, hasDrum: true, density: 0.75
   }
 };
 
@@ -168,13 +186,17 @@ export const BGM_INFO = {
   duel:           { name: '龙争虎斗', desc: '武将单挑·鼓角不协和' },
   domestic:       { name: '垂拱四方', desc: '内政管理·古琴笙磬' },
   // V15.0 新增
-  finale:         { name: '四海归颂', desc: '结局·宏大交响（按评级变奏）' }
+  finale:         { name: '四海归颂', desc: '结局·宏大交响（按评级变奏）' },
+  // V16.0 新增
+  campaign:       { name: '戎马关山', desc: '战役模式·G羽调进行曲' },
+  intro:          { name: '开天辟地', desc: '开场过场·A大调史诗' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
 // V14.0：单挑/内政两首新 BGM 默认解锁（随新系统开放即可用）
+// V16.0：战役/开场两首新 BGM 默认解锁（战役模式与开场演出随版本开放即可用）
 const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'ending',
-  'navy', 'diplomacy', 'victory', 'defeat', 'duel', 'domestic'];
+  'navy', 'diplomacy', 'victory', 'defeat', 'duel', 'domestic', 'campaign', 'intro'];
 
 export class AudioManager {
   constructor() {
@@ -242,6 +264,16 @@ export class AudioManager {
     this.endingGain = null;
     this.endingVolume = 0.8;         // 结局总线默认音量
 
+    // ---- V16.0 混音扩充：战役/开场两条独立总线 ----
+    // campaignGain：战役模式专属音效总线（战役开始/胜负/三星等），挂在 sfxGain 下游，
+    //   便于战役高潮时独立推高音量而不影响普通 UI 音效。
+    this.campaignGain = null;
+    this.campaignVolume = 0.9;       // 战役总线默认音量
+    // introGain：开场旁白/过场氛围音总线（低频嗡鸣/风声/翻页），挂在 sfxGain 下游，
+    //   与剧情旁白绑定，可独立压低以突出叙事感。
+    this.introGain = null;
+    this.introVolume = 0.7;          // 开场总线默认音量
+
     // ---- V15.0 天气氛围音（滤波噪声循环） ----
     this._weatherName = null;        // 当前天气名 rain/snow/wind/sandstorm
     this._weatherNodes = [];         // 天气循环持有节点（停止时统一关闭）
@@ -302,6 +334,14 @@ export class AudioManager {
         this.endingGain = this.ctx.createGain();
         this.endingGain.gain.value = this.endingVolume;
         this.endingGain.connect(this.bgmGain);
+        // V16.0：战役音效总线（campaignGain）→ 挂在 sfxGain 下游
+        this.campaignGain = this.ctx.createGain();
+        this.campaignGain.gain.value = this.campaignVolume;
+        this.campaignGain.connect(this.sfxGain);
+        // V16.0：开场/过场旁白总线（introGain）→ 挂在 sfxGain 下游
+        this.introGain = this.ctx.createGain();
+        this.introGain.gain.value = this.introVolume;
+        this.introGain.connect(this.sfxGain);
         // V13.0：环境音与 BGM 侧链压缩优化
         // 当 BGM 播放时，通过侧链压缩器轻微压低环境音，避免两者互相掩蔽。
         if (this.ctx.createDynamicsCompressor) {
@@ -355,13 +395,16 @@ export class AudioManager {
     }
     // bus: 'master' | 'bgm' | 'sfx' | 'skill' | 'duel' | 'domestic'（V14.0 新增后两者）
     //      | 'achievement' | 'ending'（V15.0 新增两条独立总线）
+    //      | 'campaign' | 'intro'（V16.0 新增战役/开场两条总线）
     const dest = bus === 'bgm' ? this.bgmGain
       : (bus === 'sfx' ? this.sfxGain
         : (bus === 'skill' ? this.skillGain
           : (bus === 'duel' ? this.duelGain
             : (bus === 'domestic' ? this.domesticGain
               : (bus === 'achievement' ? this.achievementGain
-                : (bus === 'ending' ? this.endingGain : this.master))))));
+                : (bus === 'ending' ? this.endingGain
+                  : (bus === 'campaign' ? this.campaignGain
+                    : (bus === 'intro' ? this.introGain : this.master))))))));
     outNode.connect(dest);
     osc.start(t0);
     osc.stop(t0 + dur + 0.05);
@@ -395,14 +438,16 @@ export class AudioManager {
     g.gain.setValueAtTime(vol, t0);
     g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.25);
     osc.connect(g);
-    // V14.0：总线扩展 duel/domestic；V15.0：achievement/ending
+    // V14.0：总线扩展 duel/domestic；V15.0：achievement/ending；V16.0：campaign/intro
     const out = bus === 'bgm' ? this.bgmGain
       : (bus === 'sfx' ? this.sfxGain
         : (bus === 'skill' ? this.skillGain
           : (bus === 'duel' ? this.duelGain
             : (bus === 'domestic' ? this.domesticGain
               : (bus === 'achievement' ? this.achievementGain
-                : (bus === 'ending' ? this.endingGain : this.master))))));
+                : (bus === 'ending' ? this.endingGain
+                  : (bus === 'campaign' ? this.campaignGain
+                    : (bus === 'intro' ? this.introGain : this.master))))))));
     g.connect(out);
     osc.start(t0); osc.stop(t0 + 0.3);
   }
@@ -467,9 +512,15 @@ export class AudioManager {
       sp.pan.value = Math.max(-1, Math.min(1, pan));
       ng.connect(sp); outNode = sp;
     }
+    // V16.0：路由扩展 campaign/intro（与 V15.0 achievement/ending 对齐），
+    //   未识别总线兜底 sfxGain。
     const dest = bus === 'duel' ? this.duelGain
       : (bus === 'domestic' ? this.domesticGain
-        : (bus === 'skill' ? this.skillGain : this.sfxGain));
+        : (bus === 'skill' ? this.skillGain
+          : (bus === 'achievement' ? this.achievementGain
+            : (bus === 'ending' ? this.endingGain
+              : (bus === 'campaign' ? this.campaignGain
+                : (bus === 'intro' ? this.introGain : this.sfxGain))))));
     outNode.connect(dest);
     nsrc.start(t0); nsrc.stop(t0 + dur + 0.02);
     return { src: nsrc, gain: ng };
@@ -1982,6 +2033,144 @@ export class AudioManager {
   }
 
   // ============================================================
+  // V16.0「音效扩充」新增 8 类音效（全部 Web Audio 程序化合成）
+  // 总线：战役类走 campaignGain；开场/过场类走 introGain。
+  // 技术参考：MDN Web Audio——号角=锯齿波长音+五度泛音；编钟=基音+非谐泛音长尾；
+  //   风声=滤波白噪声；翻页=带通噪声快速抖动；男声氛围=低频正弦+低频噪声嗡鸣。
+  // ============================================================
+
+  // 1) 战役开始：号角长鸣 + 战鼓滚奏 + 全军呐喊（群噪起伏）
+  playCampaignStart() {
+    this.resume(); if (!this.ctx || !this._sfxGate('campaign_start', 800)) return;
+    const BUS = 'campaign';
+    // 号角长鸣：G2→G3 主号角 + 五度泛音，长音 1.6s
+    this.horn(98.0, 1.6, 0.26, 0, null, -0.2);
+    this.horn(196.0, 1.6, 0.22, 0.1, null, 0.2);
+    this.horn(146.83, 1.4, 0.18, 0.2, null, 0);
+    // 战鼓滚奏：由弱渐强的连续低频鼓点
+    for (let i = 0; i < 6; i++) this.drum(0.3 + i * 0.05, 0.4 + i * 0.12, 60 - i * 3, BUS);
+    // 全军呐喊：宽频带通噪声群吼（左右声像散开，模拟千军万马）
+    this._noiseBurst({ dur: 0.7, freq: 400, q: 0.8, type: 'bandpass', vol: 0.16, offset: 0.5, bus: BUS, pan: -0.5 });
+    this._noiseBurst({ dur: 0.7, freq: 500, q: 0.8, type: 'bandpass', vol: 0.16, offset: 0.55, bus: BUS, pan: 0.5 });
+    this._noiseBurst({ dur: 0.5, freq: 700, q: 1.0, type: 'bandpass', vol: 0.12, offset: 0.6, bus: BUS, pan: 0 });
+  }
+
+  // 2) 战役胜利：庆典号角 + 编钟齐鸣 + 欢呼声 + 金色琶音
+  playCampaignVictory() {
+    this.resume(); if (!this.ctx || !this._sfxGate('campaign_victory', 800)) return;
+    const BUS = 'campaign';
+    // 庆典号角三连（辉煌上行）
+    this.horn(196.0, 0.6, 0.24, 0, null, 0);
+    this.horn(293.66, 0.6, 0.24, 0.22, null, 0);
+    this.horn(392.0, 0.9, 0.26, 0.44, null, 0);
+    // 编钟齐鸣：G宫大调编钟列阵
+    const chimes = [392.0, 523.25, 659.25, 783.99, 1046.5];
+    chimes.forEach((f, i) => this.bell(f, 2.0, 0.18, 0.6 + i * 0.1, (i - 2) * 0.15));
+    // 金色琶音：快速上行分解和弦（C5→E6）
+    const arp = [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98, 2093.0];
+    arp.forEach((f, i) => {
+      this.tone(f, 0.3, 'triangle', 0.14, 1.0 + i * 0.06, null, BUS);
+      this.tone(f * 2, 0.2, 'sine', 0.06, 1.0 + i * 0.06, null, BUS);
+    });
+    // 欢呼声：宽频噪声浪潮
+    this._noiseBurst({ dur: 1.0, freq: 800, q: 0.7, type: 'bandpass', vol: 0.14, offset: 0.8, bus: BUS, pan: -0.4 });
+    this._noiseBurst({ dur: 1.0, freq: 900, q: 0.7, type: 'bandpass', vol: 0.14, offset: 0.85, bus: BUS, pan: 0.4 });
+    // 定音鼓收尾
+    this.drum(0.5, 0.6, 75, BUS);
+    this.drum(0.45, 1.0, 70, BUS);
+    this.drum(0.5, 1.4, 65, BUS);
+  }
+
+  // 3) 战役失败：低沉号角 + 鼓声渐弱 + 悲怆弦乐下行
+  playCampaignDefeat() {
+    this.resume(); if (!this.ctx || !this._sfxGate('campaign_defeat', 800)) return;
+    const BUS = 'campaign';
+    // 低沉号角：Bb1 长音滑向更低，悲怆
+    this.horn(116.54, 2.0, 0.22, 0, 58, 0);
+    // 鼓声渐弱：每拍音量递减、频率下沉
+    for (let i = 0; i < 5; i++) this.drum(0.45 - i * 0.06, i * 0.35, 55 - i * 4, BUS);
+    // 悲怆弦乐：A羽小调式下行长音（正弦长音模拟弦乐铺底）
+    const descent = [220.0, 207.65, 196.0, 174.61, 164.81, 146.83];
+    descent.forEach((f, i) => this.tone(f, 0.9, 'sine', 0.14, 0.5 + i * 0.3, null, BUS, (i % 2 ? 0.25 : -0.25)));
+    // 尾音：低音长嗡
+    this.tone(98.0, 2.5, 'sine', 0.12, descent.length * 0.3 + 0.5, null, BUS);
+  }
+
+  // 4) 三星评级：每星一个叮声（音阶递增：C5→E5→G5）
+  // stars: 1~3；已评过的星不重复响（由 UI 按顺序逐星调用即可）。
+  playStarRating(stars = 1) {
+    this.resume(); if (!this.ctx) return;
+    const BUS = 'campaign';
+    // 音阶递增：第1星 C5、第2星 E5、第3星 G5（五声宫调上行大三度）
+    const starNotes = [523.25, 659.25, 783.99];
+    const n = Math.max(1, Math.min(3, stars | 0));
+    for (let i = 0; i < n; i++) {
+      const f = starNotes[i];
+      // 清脆叮声：高频正弦+泛音，带轻微金属感
+      this.tone(f, 0.5, 'sine', 0.22, i * 0.25, null, BUS);
+      this.tone(f * 2, 0.4, 'sine', 0.10, i * 0.25, null, BUS);
+      this.tone(f * 2.76, 0.3, 'sine', 0.05, i * 0.25, null, BUS); // 金属泛音
+    }
+    // 满三星加一枚金色尾叮
+    if (n >= 3) this.tone(1046.5, 0.8, 'triangle', 0.18, n * 0.25, null, BUS);
+  }
+
+  // 5) 开场旁白氛围音：低沉男声质感（低频嗡鸣 + 风声）
+  // 用于开场/过场演出的底噪，营造史诗叙事的沉郁感。
+  playIntroAmbience() {
+    this.resume(); if (!this.ctx || !this._sfxGate('intro_ambience', 1500)) return;
+    const BUS = 'intro';
+    // 低频嗡鸣：60Hz 正弦持续音（模拟胸腔共鸣）+ 55Hz 衬底
+    this.tone(60.0, 3.0, 'sine', 0.18, 0, null, BUS);
+    this.tone(55.0, 3.0, 'sine', 0.12, 0.1, null, BUS);
+    this.tone(82.41, 2.5, 'triangle', 0.08, 0.2, null, BUS);
+    // 风声：低通噪声缓起缓落（0.5s 起音 / 2s 维持 / 0.5s 释放）
+    this._noiseBurst({ dur: 2.8, freq: 400, q: 0.6, type: 'lowpass', vol: 0.10, offset: 0.2, bus: BUS, sweepTo: 200 });
+    this._noiseBurst({ dur: 2.4, freq: 700, q: 0.8, type: 'bandpass', vol: 0.06, offset: 0.6, bus: BUS });
+  }
+
+  // 6) 时间线过渡：翻页声 + 风声过渡
+  playTimelineTransition() {
+    this.resume(); if (!this.ctx || !this._sfxGate('timeline_transition', 400)) return;
+    const BUS = 'intro';
+    // 翻页声：带通噪声快速抖动两次（模拟书页/卷轴翻动）
+    this._noiseBurst({ dur: 0.18, freq: 2200, q: 1.4, type: 'bandpass', vol: 0.16, offset: 0, bus: BUS });
+    this._noiseBurst({ dur: 0.14, freq: 2600, q: 1.4, type: 'bandpass', vol: 0.12, offset: 0.18, bus: BUS });
+    this._noiseBurst({ dur: 0.22, freq: 1800, q: 1.2, type: 'bandpass', vol: 0.10, offset: 0.36, bus: BUS });
+    // 风声过渡：低通噪声滑向低频，营造时空流转
+    this._noiseBurst({ dur: 1.2, freq: 1200, q: 0.7, type: 'lowpass', vol: 0.10, offset: 0.3, bus: BUS, sweepTo: 150 });
+    // 过渡尾音：轻柔五声上滑（提示新时间线）
+    this.tone(392.0, 0.4, 'sine', 0.08, 0.7, 587.33, BUS);
+  }
+
+  // 7) NG+ 界面：神秘解锁音效 + 奖励树展开音
+  playNGPlusUnlock() {
+    this.resume(); if (!this.ctx || !this._sfxGate('ngplus_unlock', 800)) return;
+    const BUS = 'achievement';
+    // 神秘解锁：不协和微音程缓缓打开（悬疑→揭示）
+    this.tone(220.0, 1.2, 'sine', 0.14, 0, null, BUS, -0.2);
+    this.tone(233.08, 1.2, 'sine', 0.12, 0.15, null, BUS, 0.2);
+    // 奖励树展开：琶音逐级展开（每级一个音符，模拟树枝点亮）
+    const bloom = [440.0, 523.25, 659.25, 783.99, 880.0, 1046.5, 1318.51];
+    bloom.forEach((f, i) => {
+      this.tone(f, 0.35, 'triangle', 0.16, 0.6 + i * 0.09, null, BUS);
+      this.tone(f * 2, 0.2, 'sine', 0.06, 0.6 + i * 0.09, null, BUS); // 光点
+    });
+    // 树顶金光：高音编钟
+    this.bell(1567.98, 1.5, 0.16, 0.6 + bloom.length * 0.09, 0);
+    this.drum(0.35, 0.6, 70, BUS);
+  }
+
+  // 8) 教程提示：轻量提示音（短而不烦人）
+  playTutorialHint() {
+    this.resume(); if (!this.ctx || !this._sfxGate('tutorial_hint', 500)) return;
+    const BUS = 'intro';
+    // 双音轻提示：B5→E6 短促明亮，音量压低，不打断沉浸感
+    this.tone(987.77, 0.12, 'sine', 0.14, 0, null, BUS);
+    this.tone(1318.51, 0.18, 'sine', 0.12, 0.09, null, BUS);
+  }
+
+  // ============================================================
   // V15.0 天气氛围音（滤波白噪声循环，走 ambientGain 总线）
   //   rain：低通 2kHz 柔和雨白噪声；
   //   snow：高频轻柔嘶声（带通 6kHz，低音量）；
@@ -2206,7 +2395,10 @@ export class AudioManager {
       // V15.0 新增：成就/段位/结局/外交/谍报/科举
       'achievementGain', 'rankUp', 'endingSfx',
       'diploAlliance', 'diploWar', 'diploMarriage', 'diploTrade',
-      'spySneak', 'spyIntel', 'spyTurn', 'examBell'
+      'spySneak', 'spyIntel', 'spyTurn', 'examBell',
+      // V16.0 新增：战役/开场/过场/NG+/教程
+      'campaignStart', 'campaignVictory', 'campaignDefeat', 'starRating',
+      'introAmbience', 'timelineTransition', 'ngPlusUnlock', 'tutorialHint'
     ];
   }
 
@@ -2290,6 +2482,20 @@ export class AudioManager {
       this.endingGain.gain.setValueAtTime(this.endingVolume, this.ctx.currentTime);
     }
   }
+  // V16.0：战役音效总线音量
+  setCampaignVolume(v) {
+    this.campaignVolume = Math.max(0, Math.min(1, v));
+    if (this.campaignGain && this.ctx) {
+      this.campaignGain.gain.setValueAtTime(this.campaignVolume, this.ctx.currentTime);
+    }
+  }
+  // V16.0：开场/过场旁白总线音量
+  setIntroVolume(v) {
+    this.introVolume = Math.max(0, Math.min(1, v));
+    if (this.introGain && this.ctx) {
+      this.introGain.gain.setValueAtTime(this.introVolume, this.ctx.currentTime);
+    }
+  }
   // 兼容旧接口
   setVolume(v) { this.setMasterVolume(v); }
 
@@ -2311,7 +2517,14 @@ export class AudioManager {
     if (!this.ctx) return;
     this._bgmOn = true;
     this._bgmStep = 0;
-    // 淡入：bgmGain 从 0 到目标值（2秒）
+    // 性能优化（audio.js #4）：多 BGM 切换时的资源管理——
+    //   优化前：stopBGM 用 2s 线性淡出，紧接着 startBGM 又从 0 淡入到目标；
+    //   若玩家快速连续切歌（如 UI 连点/场景自动切换），bgmGain 上会堆积多条
+    //   linearRamp 调度，旧曲线未走完就被 cancelScheduledValues 打断，偶发音量跳变；
+    //   且旧曲目 _bgmTick 已经入队的回调仍会再触发 1~2 拍，与新曲目叠音。
+    //   优化后：淡入前先 cancelScheduledValues 并立即把 gain 钉在 0.0001，
+    //   再线性淡入（2s）；切歌过渡由「长淡出+长淡入」改为「瞬切+长淡入」，
+    //   旧曲目残留尾音控制在 ≤1 拍（0.3~0.85s 自然结束），无叠音爆音。
     if (this.bgmGain && this.ctx) {
       const t0 = this.ctx.currentTime;
       this.bgmGain.gain.cancelScheduledValues(t0);
@@ -2324,12 +2537,15 @@ export class AudioManager {
   stopBGM() {
     this._bgmOn = false;
     if (this._bgmTimer) { clearInterval(this._bgmTimer); this._bgmTimer = null; }
-    // 淡出：bgmGain 到 0（2秒）
+    // 性能优化（audio.js #4 续）：淡出时长由 2s 缩短为 0.8s——
+    //   切歌场景下旧 BGM 无需冗长淡出；常驻停止（如静音退出）仍保留平滑衰减。
+    //   正在发声的 _bgmTick osc 节点（旋律 0.65s / 低音 0.85s）会自然收尾，
+    //   不主动 stop 以免产生可闻的截断 click。
     if (this.bgmGain && this.ctx) {
       const t0 = this.ctx.currentTime;
       this.bgmGain.gain.cancelScheduledValues(t0);
       this.bgmGain.gain.setValueAtTime(this.bgmGain.gain.value, t0);
-      this.bgmGain.gain.linearRampToValueAtTime(0.0001, t0 + 2.0);
+      this.bgmGain.gain.linearRampToValueAtTime(0.0001, t0 + 0.8);
     }
   }
 

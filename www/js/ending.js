@@ -227,6 +227,35 @@ export const ENDINGS = [
       return game.turn >= 38 && factionCities(game, game.playerFaction) < 20;
     },
     achievement: 'history_repeats'
+  },
+
+  // V16.0 新增：战役全胜（S）— 通关全部战役关卡
+  {
+    id: 'v16_campaign_grand', name: '战役全胜', rank: 'S',
+    text: '沙苑设伏，潼关据守，江陵渡江，淮南拉锯，河西拓土，混一北方。' +
+          '大小战役七十余战，未尝一败。军中传檄曰：「将军一出，天下定矣。」' +
+          '史官秉笔，以为自孙吴以来，未有若此之善用兵者也。武略至此，虽古之名将，何以加焉。',
+    condition: (game) => {
+      try {
+        const done = game.gameStats?.campaignsCompleted || game.campaignsCompleted || 0;
+        return done >= 6;
+      } catch (e) { return false; }
+    },
+    achievement: 'v16_ach_campaign_all'
+  },
+
+  // V16.0 新增：全成就收集（S）— 收集全部成就
+  {
+    id: 'v16_achievement_collector', name: '青史留名', rank: 'S',
+    text: '文治武功，权谋谍报，佛道商路，风雨百战。' +
+          '六十余项成就，无不毕举。后人读史，见陛下之名，赫然列于典籍之首。' +
+          '虽百世之下，犹将闻风而起敬。此所谓「立德、立功、立言」三不朽者也。',
+    condition: (game) => {
+      try {
+        return (game.gameStats?.galleryCompletion || 0) >= 100;
+      } catch (e) { return false; }
+    },
+    achievement: 'v16_ach_gallery'
   }
 ];
 
