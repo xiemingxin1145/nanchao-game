@@ -437,6 +437,53 @@ export const ENDINGS = [
       } catch (e) { return false; }
     },
     achievement: 'v22_official_evaluate'
+  },
+
+  // V23.0.0 新增：铁血霸主（S）— 满训精锐、大将军衔、军功第一、军团整军经武
+  {
+    id: 'v23_military_hegemon', name: '铁血霸主', rank: 'S',
+    text: '自晋氏南渡，甲兵不戢者二百载。陛下整军经武，作教于渭上：' +
+          '部伍有训练之法，什伍有卒长之教，偏禆升为校尉，郎将擢为将军，' +
+          '以至授钺为大将军。行军功之爵，斩甲首一级则赐爵一级，' +
+          '于是士卒知劝，争当先登。又合五军为一军团，行伍相维，金鼓相应，' +
+          '训练既精，整编又习，虽古之材官蹶张，不是过也。' +
+          '麾下大将，爵彻侯而食万户，帐下锐卒，皆十练之精。' +
+          '北夷闻之，不敢南下而牧马；南朝望之，莫不敛衽而惮威。' +
+          '史臣曰：「有文事者必有武备。」若乃卒乘完、什伍辑、爵赏明、' +
+          '士心一，虽古之名将，何以加焉。后世称「铁血霸主」，岂为过哉。',
+    condition: (game) => {
+      try {
+        const sys = game.militaryTraining;
+        if (!sys) return false;
+        const st = sys.v23_stats || {};
+        // 军衔最高至大将军(阶4)、爵位最高至彻侯(阶5)、有武将军功≥3500、完成过5级整编
+        const reorgMax = Object.values(sys.reorganized || {}).reduce((m, v) => Math.max(m, v), 0);
+        return (st.maxRank || 0) >= 4 && (st.maxNobility || 0) >= 5 &&
+               (st.maxMerit || 0) >= 3500 && reorgMax >= 5;
+      } catch (e) { return false; }
+    },
+    achievement: 'v23_iron_army'
+  },
+
+  // V23.0.0 新增：锻造大师（A）— 百炼精钢，十件极品装备出其手
+  {
+    id: 'v23_forge_master', name: '锻造大师', rank: 'A',
+    text: '陛下以武定天下，而尤精于器械。开馆于城西，聚良工、募精铁，' +
+          '设锻炉、置淬池，武器则百炼而斩马，铠胄则札札如鱼麟，' +
+          '战马则蹄铁如新，具装则兜鍪坚致。每成一器，必试于庭：' +
+          '强弓贯札，利刃断金，良马绝尘。十年来，精锻极品之器十有副，' +
+          '以赐诸将。于是我师之甲，坚于铁衣；我骑之锋，利于吹毛。' +
+          '敌虽坚阵，遇之辄摧；敌虽深沟，犯之必克。' +
+          '史臣曰：「工欲善其事，必先利其器。」武侯之连弩、孟德之百辟，' +
+          '载在史册。今陛下砻砺不怠，器械精锐，斯亦「锻造大师」之谓欤。',
+    condition: (game) => {
+      try {
+        const st = game.militaryTraining?.v23_stats || {};
+        // 锻造 10 件极品（+8 及以上）装备
+        return (st.topTierForged || 0) >= 10;
+      } catch (e) { return false; }
+    },
+    achievement: 'v23_forge_weapon'
   }
 ];
 

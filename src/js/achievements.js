@@ -52,6 +52,18 @@ function _examStats(g) {
 function _examSys(g) {
   try { return g.imperialExam || null; } catch (e) { return null; }
 }
+// 工具：V23 军事训练/整编/军衔/军功/兵法/锻造系统统计
+function _mtStats(g) {
+  try { return g.militaryTraining?.v23_stats || {}; } catch (e) { return {}; }
+}
+function _mtSys(g) {
+  try { return g.militaryTraining || null; } catch (e) { return null; }
+}
+// 工具：玩家武将 id 列表
+function _myGeneralIds(g) {
+  try { return (g.getFactionGenerals(g.playerFaction) || []).map(x => x.id); }
+  catch (e) { return []; }
+}
 
 export const ACHIEVEMENTS = [
   // ==================== 基础（原 V 系列 12 个） ====================
@@ -1110,6 +1122,133 @@ export const ACHIEVEMENTS = [
     description: '三岁考课累计晋升官员 ≥ 5 人。', reward: { money: 3000 },
     condition: (g) => _examStats(g).promoted >= 5,
     progress: (g) => ({ current: Math.min(5, _examStats(g).promoted || 0), total: 5 })
+  },
+
+  // ==================== V23.0.0 新增（10 个 v23_ 前缀：军事训练/军团整编/装备锻造深化） ====================
+  // ---- 训练系统（2）----
+  {
+    id: 'v23_train_elite', name: '训练精兵', icon: '🏋️', category: 'military', points: 20,
+    description: '将一支部队训练至 5 级。', reward: { food: 2000 },
+    condition: (g) => _mtStats(g).maxTrainingLevel >= 5,
+    progress: (g) => ({ current: Math.min(5, _mtStats(g).maxTrainingLevel || 0), total: 5 })
+  },
+  {
+    id: 'v23_battle_hardened', name: '百战精兵', icon: '🪖', category: 'military', points: 40,
+    description: '麾下同时拥有 3 支 10 级满训精锐部队。', reward: { money: 4000, title: '练兵如神' },
+    condition: (g) => {
+      try {
+        const sys = _mtSys(g);
+        if (!sys) return false;
+        const armies = g.getFactionArmies ? g.getFactionArmies(g.playerFaction) : (g.armies || []);
+        const mine = armies.filter(a => a.faction === g.playerFaction);
+        return mine.filter(a => sys.getTrainingLevel(a.id) >= 10).length >= 3;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _mtSys(g);
+        const armies = g.getFactionArmies ? g.getFactionArmies(g.playerFaction) : (g.armies || []);
+        const n = armies.filter(a => a.faction === g.playerFaction && sys && sys.getTrainingLevel(a.id) >= 10).length;
+        return { current: Math.min(3, n), total: 3 };
+      } catch (e) { return { current: 0, total: 3 }; }
+    }
+  },
+
+  // ---- 军团整编（1）----
+  {
+    id: 'v23_legion_reorganize', name: '军团整编', icon: '🧭', category: 'military', points: 20,
+    description: '完成一次军团整编，提升协同作战。', reward: { money: 2000 },
+    condition: (g) => (_mtStats(g).reorganizes || 0) >= 1,
+    progress: (g) => ({ current: Math.min(1, _mtStats(g).reorganizes || 0), total: 1 })
+  },
+
+  // ---- 军衔 / 军功爵（3）----
+  {
+    id: 'v23_rank_promote', name: '军衔晋升', icon: '🎖️', category: 'military', points: 30,
+    description: '麾下一名武将晋衔至「将军」。', reward: { food: 2500 },
+    condition: (g) => (_mtStats(g).maxRank || 0) >= 3,
+    progress: (g) => ({ current: Math.min(3, _mtStats(g).maxRank || 0), total: 3 })
+  },
+  {
+    id: 'v23_enfeoff', name: '封侯拜将', icon: '🏮', category: 'military', points: 40,
+    description: '麾下一名武将凭军功晋爵至「左庶长」以上。', reward: { bgm: 'dynasty', money: 4000, title: '开国功臣' },
+    condition: (g) => (_mtStats(g).maxNobility || 0) >= 3,
+    progress: (g) => ({ current: Math.min(3, _mtStats(g).maxNobility || 0), total: 3 })
+  },
+  {
+    id: 'v23_meritorious', name: '军功卓著', icon: '⚔️', category: 'military', points: 40,
+    description: '麾下单名武将累计军功达到 3500（晋爵大良造）。', reward: { money: 4000 },
+    condition: (g) => (_mtStats(g).maxMerit || 0) >= 3500,
+    progress: (g) => ({ current: Math.min(3500, _mtStats(g).maxMerit || 0), total: 3500 })
+  },
+
+  // ---- 兵法研习（2）----
+  {
+    id: 'v23_read_bingfa', name: '熟读兵书', icon: '📖', category: 'person', points: 20,
+    description: '麾下一名武将研习任意一部兵法。', reward: { money: 1500 },
+    condition: (g) => (_mtStats(g).artsStudied || 0) >= 1,
+    progress: (g) => ({ current: Math.min(1, _mtStats(g).artsStudied || 0), total: 1 })
+  },
+  {
+    id: 'v23_strategist', name: '兵法大家', icon: '🏛️', category: 'person', points: 50,
+    description: '麾下一名武将研习全部四部兵法（孙吴六三略）。', reward: { bgm: 'culture', title: '武库宗师' },
+    condition: (g) => {
+      try {
+        const sys = _mtSys(g);
+        return !!(sys && sys.countFullArtists(_myGeneralIds(g)) >= 1);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _mtSys(g);
+        const n = sys ? sys.countFullArtists(_myGeneralIds(g)) : 0;
+        return { current: Math.min(1, n), total: 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+
+  // ---- 装备锻造深化（1）----
+  {
+    id: 'v23_forge_weapon', name: '神兵锻造', icon: '🔨', category: 'military', points: 30,
+    description: '将单件装备强化至 +5。', reward: { money: 3000 },
+    condition: (g) => {
+      try {
+        const sys = _mtSys(g);
+        if (!sys || !sys.enhanced) return false;
+        return Object.values(sys.enhanced).some(e => (e.lv || 0) >= 5);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _mtSys(g);
+        let best = 0;
+        if (sys && sys.enhanced) for (const e of Object.values(sys.enhanced)) best = Math.max(best, e.lv || 0);
+        return { current: Math.min(5, best), total: 5 };
+      } catch (e) { return { current: 0, total: 5 }; }
+    }
+  },
+
+  // ---- 综合（1）----
+  {
+    id: 'v23_iron_army', name: '铁血雄师', icon: '🐯', category: 'military', points: 50,
+    description: '完成一次 5 级军团整编，且拥有满训（10 级）精锐。', reward: { bgm: 'grandbattle', title: '铁血雄师' },
+    condition: (g) => {
+      try {
+        const sys = _mtSys(g);
+        if (!sys) return false;
+        const reorgMax = Object.values(sys.reorganized || {}).reduce((m, v) => Math.max(m, v), 0);
+        return reorgMax >= 5 && (g.militaryTraining?.v23_stats?.maxTrainingLevel || 0) >= 10;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _mtSys(g);
+        let reorgMax = 0;
+        if (sys) reorgMax = Object.values(sys.reorganized || {}).reduce((m, v) => Math.max(m, v), 0);
+        const train = g.militaryTraining?.v23_stats?.maxTrainingLevel || 0;
+        return { current: Math.min(5, reorgMax) + Math.min(10, train) / 2, total: 10 };
+      } catch (e) { return { current: 0, total: 10 }; }
+    }
   }
 ];
 
