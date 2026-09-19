@@ -48,12 +48,24 @@ function bfsDistances(starts, maxDist) {
 export function computeVisibleCities(game, factionId) {
   const visible = new Set();
   const factionCities = game.getFactionCities(factionId).map(c => c.id);
-  const allyCities = [];
+  // 性能优化（fog.js V23.0·computeVisibleCities 同盟视野）：
+  //   基准：原实现对每个同盟势力都调用 game.getFactionCities(fid)——内部是
+  //     `[...cities.values()].filter(c=>c.owner===fid)` 全表过滤。设 C=城市数、
+  //     A=同盟势力数，本函数每回合结算都被调用一次，多同盟局下是 O(A×C) 的重复
+  //     全表扫描（每多一个同盟就把全部城市重扫一遍）。
+  //   优化：先单次遍历 FACTIONS 建同盟势力集合 allySet（O(F)），再单次遍历
+  //     game.cities.values() 把 owner∈allySet 的城市 id 收集到 allyCities（O(C)）。
+  //     总复杂度从 O(A×C) 降为 O(F + C)，多同盟局每回合省 A-1 次全表过滤。
+  const allySet = new Set();
   for (const fid of Object.keys(FACTIONS)) {
     if (fid === factionId) continue;
     const rel = game.diplomacy.getRelation(factionId, fid);
-    if (rel && rel.alliance) {
-      for (const c of game.getFactionCities(fid)) allyCities.push(c.id);
+    if (rel && rel.alliance) allySet.add(fid);
+  }
+  const allyCities = [];
+  if (allySet.size) {
+    for (const c of game.cities.values()) {
+      if (allySet.has(c.owner)) allyCities.push(c.id);
     }
   }
 

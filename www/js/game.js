@@ -733,7 +733,14 @@ export class Game {
     for (const [k, v] of Object.entries(aggregateTechEffects(researched))) {
       bag[k] = (bag[k] || 0) + v;
     }
-    for (const g of this.getFactionGenerals(factionId)) {
+    // 性能优化（game.js V23.0·getTechBag 武将遍历）：
+    //   基准：原 `this.getFactionGenerals(factionId)` 是 `[...generals.values()].filter(...)`
+    //     全表过滤。getTechBag 虽有「同一回合每势力只算一次」的回合级缓存，但战斗/经济/UI
+    //     每回合仍会触发若干势力各一次全表过滤。runAITurns 入口已建好 `_roundFactionGenerals`
+    //     分桶索引（O(1) 命中本势力武将数组），此处复用；缓存缺失（非 AI 回合路径）时兜底原实现。
+    const _gens = (this._roundFactionGenerals && this._roundFactionGenerals.get(factionId))
+      || this.getFactionGenerals(factionId);
+    for (const g of _gens) {
       for (const sk of this._mergedGeneralSkills(g.id)) {
         if (sk.type !== 'passive') continue;
         for (const [k, v] of Object.entries(sk.effect)) {
@@ -761,14 +768,22 @@ export class Game {
   }
 
   // ---- V2.0：羁绊效果袋（同势力武将组合触发） ----
+  // 性能优化（game.js V23.0·羁绊袋）：getBondBag/getActiveBonds 各自调用
+  //   `getFactionGenerals(factionId)` 全表 filter，且 getTechBag 内部又会调 getBondBag——
+  //   同一势力一次科技袋计算里，getFactionGenerals 被全表过滤两次。此处复用 runAITurns
+  //   入口建好的 `_roundFactionGenerals` 分桶索引（O(1) 命中），缓存缺失时兜底原实现。
   getBondBag(factionId) {
-    const genIds = this.getFactionGenerals(factionId).map(g => g.id);
+    const _gens = (this._roundFactionGenerals && this._roundFactionGenerals.get(factionId))
+      || this.getFactionGenerals(factionId);
+    const genIds = _gens.map(g => g.id);
     return checkBonds(genIds).bag;
   }
 
   // 某势力当前激活的羁绊列表（供 UI 展示）
   getActiveBonds(factionId) {
-    const genIds = this.getFactionGenerals(factionId).map(g => g.id);
+    const _gens = (this._roundFactionGenerals && this._roundFactionGenerals.get(factionId))
+      || this.getFactionGenerals(factionId);
+    const genIds = _gens.map(g => g.id);
     return checkBonds(genIds).activated;
   }
   getTechBonus(factionId, key) {
@@ -801,8 +816,16 @@ export class Game {
     this.pushLog(`研究完成：${t.name} — ${t.description}`);
     const eff = t.effect || {};
     if (eff.loyaltyFlat) for (const g of this.getFactionGenerals(this.playerFaction)) g.loyalty = Math.min(100, g.loyalty + eff.loyaltyFlat);
-    if (eff.moraleFlat) for (const c of this.getFactionCities(this.playerFaction)) c.morale = Math.min(100, c.morale + eff.moraleFlat);
-    if (eff.prosperityFlat) for (const c of this.getFactionCities(this.playerFaction)) c.prosperity = Math.min(100, c.prosperity + eff.prosperityFlat);
+    // 性能优化（game.js V23.0·_completeResearch 合并城市遍历）：
+    //   基准：原写法对 moraleFlat 与 prosperityFlat 分别调用 getFactionCities——
+    //     两次全表 filter 同一份玩家城市（O(2×C)）。此处合并为一次遍历，同时更新
+    //     morale/prosperity，省一次全表扫描。
+    if (eff.moraleFlat || eff.prosperityFlat) {
+      for (const c of this.getFactionCities(this.playerFaction)) {
+        if (eff.moraleFlat) c.morale = Math.min(100, c.morale + eff.moraleFlat);
+        if (eff.prosperityFlat) c.prosperity = Math.min(100, c.prosperity + eff.prosperityFlat);
+      }
+    }
   }
 
   // ---------- 成就 ----------
@@ -951,13 +974,21 @@ export class Game {
     const costBase = { common: 100, fine: 300, rare: 500, epic: 700, legendary: 900 }[rarity];
     const cost = Math.max(50, Math.round(costBase * (1 - 0.10 * (wsLv - 1))));
     const res = this.getPlayerRes();
-    if (res.money < cost) return { ok: false, msg: `金钱不足（需 ${cost} 金）` };
+    // BUG修复（game.js forgeEquipment 空指针）：getPlayerRes() 在热座切换/数据异常下
+    //   可能返回 undefined（factionRes 缺 playerFaction），下一行 `res.money < cost`
+    //   会抛 TypeError，中断工坊打造流程。同文件 buildGrotto/buildNavy 均有 `!res` 防护，
+    //   此处漏判。修复：与既有调用点对齐做空值兜底。
+    if (!res || res.money < cost) return { ok: false, msg: `金钱不足（需 ${cost} 金）` };
     res.money -= cost;
     const itemId = rollForgeItem(wsLv);
     if (!itemId) return { ok: false, msg: '打造失败' };
     this.getPlayerInventory().push(itemId);
     const item = getItem(itemId);
-    this.pushLog(`${city.name} 工坊打造出【${item.name}】（${item.name ? '' : ''}）`);
+    // BUG修复（game.js forgeEquipment 死代码）：原日志模板里 `（${item.name ? '' : ''}）`
+    //   三元两个分支都是空串（无论真假都输出空），属复制粘贴残留——原意是想标注品质阶。
+    //   修复：改为输出真实品质名（item.rarity 映射），日志信息完整。
+    const _rarityName = { common: '凡品', fine: '良品', rare: '珍品', epic: '上品', legendary: '神品' };
+    this.pushLog(`${city.name} 工坊打造出【${item.name}】（${_rarityName[item.rarity] || ''}）`);
     return { ok: true, msg: `打造成功：${item.name}`, itemId };
   }
 
@@ -1172,7 +1203,9 @@ export class Game {
     if (!t) return { ok: false, msg: '爵位不存在' };
     const res = this.getPlayerRes();
     const cost = t.level * 800; // 封赏需耗金
-    if (res.money < cost) return { ok: false, msg: `封赏需 ${cost} 金` };
+    // BUG修复（game.js grantTitle 空指针）：getPlayerRes() 在热座切换/数据异常下可能返回
+    //   undefined，下一行 `res.money < cost` 会抛 TypeError，中断封赏流程。此处补 `!res` 防护。
+    if (!res || res.money < cost) return { ok: false, msg: `封赏需 ${cost} 金` };
     res.money -= cost;
     g.title = titleId;
     g.loyalty = Math.min(100, g.loyalty + t.loyaltyBonus);
@@ -1450,6 +1483,9 @@ export class Game {
 
     if (target.owner === this.playerFaction) {
       const res = this.getPlayerRes();
+      // BUG修复（game.js moveArmy 空指针）：getPlayerRes() 热座切换/数据异常下可能 undefined，
+      //   下一行 `res.food -= foodCost` 会抛 TypeError，中断行军。此处补 `!res` 防护。
+      if (!res) return { ok: false, msg: '势力资源异常，无法行军' };
       const foodCost = Math.round(army.troops * 0.05 * 2);
       res.food -= foodCost;
       army.cityId = targetCityId;
@@ -1462,6 +1498,7 @@ export class Game {
       return { ok: true, msg: `军队移动至${target.name}`, legionBattle };
     } else if (target.owner === null) {
       const res = this.getPlayerRes();
+      if (!res) return { ok: false, msg: '势力资源异常，无法占领' };
       const foodCost = Math.round(army.troops * 0.05 * 2);
       res.food -= foodCost;
       target.owner = this.playerFaction;

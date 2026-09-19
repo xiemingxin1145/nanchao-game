@@ -6,6 +6,7 @@
 // ============================================================
 import { TERRAIN, FACTIONS, CITY_LINKS, SEASONS } from './data.js';
 import { Animator } from './animation.js';
+import { getOffice } from './office.js';   // V23.0：高军衔武将将旗判定
 
 const TILE_W = 64;   // 等距 tile 宽
 const TILE_H = 32;   // 等距 tile 高
@@ -208,6 +209,20 @@ export class IsometricMap {
     this._SILK_NAME_KEYS = ['长安','洛阳','敦煌','楼兰','龟兹','于阗','疏勒',
       '张掖','酒泉','武威','凉州','高昌','伊吾','碎叶','阳关','玉门',
       '甘州','肃州','瓜州','鄯善','且末','蒲昌','焉耆','轮台'];
+
+    // ============================================================
+    // V23.0 — 地图可视化：军事训练 / 装备锻造 / 高军衔将旗
+    // 设计：
+    //   - 训练城市(city.training>=50)：城内小士兵持矛踏步标记
+    //   - 锻造城市(city.buildings.workshop>=1)：铁匠炉烟囱冒烟+火花
+    //   - 高军衔武将所在城市：金色将旗（脉动）
+    // 性能：高军衔城市集合每 0.5s 重建一次（避免每帧遍历全部武将）；
+    //       距离 LOD（scale<0.7）简化绘制；视口裁剪 + 战争迷雾判定。
+    // ============================================================
+    this._v23HighRankCityIds = [];   // 高军衔武将所在城市 id 缓存
+    this._v23RankRebuildAt = 0;      // 上次重建高军衔城市集合时刻
+    this._V23_HIGH_RANK_OFFICE = 2;  // 官职 rank<=2 视为高军衔（大将军/三公/柱国/骠骑/车骑）
+    this._V23_TRAIN_THRESHOLD = 50;  // 训练等级阈值
 
     this._bindEvents();
     this._initView();
@@ -1986,6 +2001,10 @@ export class IsometricMap {
     if (typeof Animator.drawExamResultsFX === 'function') {
       Animator.drawExamResultsFX(ctx);
     }
+    // V23.0：军事训练/整编/锻造动画 FX（操练/晋升/授奖/锻造武器甲马/整编/阅兵）
+    if (typeof Animator.drawV23FX === 'function') {
+      Animator.drawV23FX(ctx);
+    }
   }
 
   // 构建离屏静态层
@@ -2391,6 +2410,9 @@ export class IsometricMap {
 
       // V19.0：文化建筑标记 / 科技完成金星 / 高文化装饰（彩旗·灯笼·书卷）
       this._drawV19CultureTechMarkers(ctx, city, r, t);
+
+      // V23.0：军事训练小兵 / 锻造烟囱火花 / 高军衔金色将旗 城市标记
+      this._drawV23MilitaryMarkers(ctx, city, r, t);
 
       // V15.0：冬季白雪覆盖（城市底座一层薄雪）
       if (this._seasonIdx() === 3) {
@@ -4072,6 +4094,132 @@ export class IsometricMap {
     }
     ctx.closePath();
     ctx.fill();
+  }
+
+  // ============================================================
+  // V23.0 — 军事训练 / 装备锻造 / 高军衔将旗 城市标记
+  // 传入的 ctx 已 translate 到城市原点、按 scale 缩放（r 为城市半径）。
+  // ============================================================
+
+  // 重建高军衔武将所在城市集合（每 0.5s 一次，避免每帧遍历武将）
+  _v23RebuildHighRankCities() {
+    if (!this.game || !this.game.generals) { this._v23HighRankCityIds = []; return; }
+    const set = new Set();
+    for (const gen of this.game.generals.values()) {
+      if (!gen || !gen.office || gen.location == null) continue;
+      const off = getOffice(gen.office);
+      if (off && off.type === 'military' && (off.rank || 99) <= this._V23_HIGH_RANK_OFFICE) {
+        set.add(gen.location);
+      }
+    }
+    this._v23HighRankCityIds = Array.from(set);
+  }
+
+  _v23HasHighRankGeneral(cityId) {
+    if (this._animTime - this._v23RankRebuildAt > 0.5) {
+      this._v23RankRebuildAt = this._animTime;
+      this._v23RebuildHighRankCities();
+    }
+    return this._v23HighRankCityIds.indexOf(cityId) >= 0;
+  }
+
+  // V23 城市标记总入口（由 _drawCities 在 V19 标记后调用）
+  _drawV23MilitaryMarkers(ctx, city, r, t) {
+    if (!city) return;
+    const s = this.scale;
+    const farLOD = s < 0.7;   // 距离 LOD：远视野简化绘制
+
+    // ---- 1) 训练中的城市：城内小士兵持矛操练标记 ----
+    const trainLv = city.training || 0;
+    if (trainLv >= this._V23_TRAIN_THRESHOLD) {
+      const n = farLOD ? 1 : 2;   // 远景只画 1 个小人
+      ctx.save();
+      for (let i = 0; i < n; i++) {
+        const sx = (i === 0 ? -r * 0.45 : r * 0.45);
+        const step = Math.abs(Math.sin(t * 5 + city.isoX + i * 2)) * 1.2 * s;
+        // 小兵身体（灰甲）
+        ctx.fillStyle = '#3a4a5a';
+        ctx.fillRect(sx - 1.4 * s, -r * 0.1 + step * 0.3, 2.8 * s, 3.6 * s);
+        // 头
+        ctx.fillStyle = '#e0c8a0';
+        ctx.beginPath(); ctx.arc(sx, -r * 0.1 - 1.6 * s + step * 0.3, 1.2 * s, 0, Math.PI * 2); ctx.fill();
+        // 长矛
+        ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 0.8 * s;
+        ctx.beginPath();
+        ctx.moveTo(sx + 1 * s, -r * 0.1 + 1 * s);
+        ctx.lineTo(sx + 3 * s, -r * 0.1 - 5 * s + step);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ---- 2) 锻造中的城市：铁匠炉烟囱冒烟 + 火花 ----
+    const ws = (city.buildings && city.buildings.workshop) || 0;
+    if (ws >= 1) {
+      ctx.save();
+      const cx = r * 0.5, cy = -r * 0.3;
+      // 小烟囱（梯形）
+      ctx.fillStyle = '#6a4a3a';
+      ctx.beginPath();
+      ctx.moveTo(cx - 2.5 * s, cy + 3 * s);
+      ctx.lineTo(cx + 2.5 * s, cy + 3 * s);
+      ctx.lineTo(cx + 1.5 * s, cy - 3 * s);
+      ctx.lineTo(cx - 1.5 * s, cy - 3 * s);
+      ctx.closePath(); ctx.fill();
+      // 炉口火光（脉动）
+      const glow = 0.6 + 0.4 * Math.sin(t * 6 + city.isoY);
+      ctx.fillStyle = `rgba(255,${140 + Math.floor(glow * 80)},40,0.95)`;
+      ctx.beginPath(); ctx.arc(cx, cy + 2.5 * s, (1.2 + glow) * s, 0, Math.PI * 2); ctx.fill();
+      if (!farLOD) {
+        // 烟囱白烟（循环上升变淡）
+        const smoke = (t * 0.5 + city.isoX) % 1;
+        ctx.fillStyle = `rgba(200,200,200,${0.45 * (1 - smoke)})`;
+        ctx.beginPath();
+        ctx.arc(cx, cy - 4 * s - smoke * 8 * s, (1.2 + smoke * 1.6) * s, 0, Math.PI * 2);
+        ctx.fill();
+        // 偶发锻造火花（橙金，周期）
+        const sparkPulse = (Math.sin(t * 9 + city.isoY) + 1) / 2;
+        if (sparkPulse > 0.7) {
+          ctx.fillStyle = '#ffd040';
+          ctx.beginPath();
+          ctx.arc(cx + (Math.sin(t * 13) * 2) * s, cy - 2 * s, 0.8 * s, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // ---- 3) 高军衔武将所在城市：金色将旗（脉动）----
+    if (this._v23HasHighRankGeneral(city.id)) {
+      ctx.save();
+      const pulse = 1 + 0.14 * Math.sin(t * 3 + city.isoX);
+      const fx = -r * 0.7;
+      const fy = -r * 0.2;
+      // 旗杆
+      ctx.strokeStyle = '#c4a55a';
+      ctx.lineWidth = 1.2 * s;
+      ctx.beginPath(); ctx.moveTo(fx, fy + 4 * s); ctx.lineTo(fx, fy - 12 * s * pulse); ctx.stroke();
+      // 将旗（金边红底，飘扬）
+      const wave = Math.sin(t * 5 + city.isoY) * 1.4 * s;
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = farLOD ? 0 : 5 * s;
+      ctx.fillStyle = '#c82828';
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - 12 * s * pulse);
+      ctx.lineTo(fx + 7 * s + wave, fy - 10 * s * pulse + wave * 0.5);
+      ctx.lineTo(fx, fy - 8 * s * pulse);
+      ctx.closePath(); ctx.fill();
+      ctx.shadowBlur = 0;
+      // 旗面金边
+      ctx.strokeStyle = '#FFD700';
+      ctx.lineWidth = 0.6 * s;
+      ctx.beginPath();
+      ctx.moveTo(fx, fy - 12 * s * pulse);
+      ctx.lineTo(fx + 7 * s + wave, fy - 10 * s * pulse + wave * 0.5);
+      ctx.lineTo(fx, fy - 8 * s * pulse);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   // 河流船只更新：定期从河流城市旁生成商船/战船，沿水平方向巡航

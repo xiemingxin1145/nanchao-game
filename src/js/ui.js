@@ -162,7 +162,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge v22-version-badge">V22.0 · 金榜题名版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge v22-version-badge v23-version-badge">V23.0 · 铁血军魂版</div>
         </div>
       </div>
     `;
@@ -1049,6 +1049,8 @@ export class UI {
             <button class="btn-small v20-pop-btn" id="btn-v20-pop" title="V20.0 户口总览：各城人口 / 增长 / 迁移 / 征兵比例">户口</button>
             <button class="btn-small v21-silk-btn" id="btn-v21-silk" title="V21.0 丝绸之路：商路 / 商队 / 驿站 / 节点图">丝路</button>
             <button class="btn-small v21-family-btn" id="btn-v21-family" title="V21.0 家族联姻：家族树 / 联姻 / 声望 / 继承">家族</button>
+            <button class="btn-small v23-drill-btn" id="btn-v23-drill" title="V23.0 训练：各城驻军训练等级 / 金粮操练 / 军衔晋阶">训练</button>
+            <button class="btn-small v23-merit-btn" id="btn-v23-merit" title="V23.0 军功：武将军功 / 爵位 / 封地 / 军功爵">军功</button>
             <button class="btn-small" id="btn-menu">菜单</button>
           </div>
         </div>
@@ -1132,6 +1134,9 @@ export class UI {
     const be = document.getElementById('btn-exam'); if (be) be.onclick = () => this.showExamPanelV22();
     // V22.0：选官面板（察举/九品中正/考核）
     const bv22 = document.getElementById('btn-v22-select'); if (bv22) bv22.onclick = () => this.showSelectionPanelV22();
+    // V23.0：铁血军魂 — 训练 / 军功 入口
+    const bv23d = document.getElementById('btn-v23-drill'); if (bv23d) bv23d.onclick = () => this.showDrillPanelV23();
+    const bv23m = document.getElementById('btn-v23-merit'); if (bv23m) bv23m.onclick = () => this.showMeritPanelV23();
     const bc = document.getElementById('btn-calendar'); if (bc) bc.onclick = () => this.showCalendarPanel();
     const bh = document.getElementById('btn-harem'); if (bh) bh.onclick = () => this.showHaremPanel();
     const sw = document.getElementById('hdr-solar-wrap'); if (sw) sw.onclick = () => this.showCalendarPanel();
@@ -2149,6 +2154,7 @@ export class UI {
         <div class="general-meta-row"><span>身份</span><b>${gen.role}</b></div>
         <div class="general-meta-row"><span>官职</span><b style="color:#e8c060">${gen.office ? (getOffice(gen.office).name) : '—'}</b></div>
         <div class="general-meta-row"><span>爵位</span><b style="color:#c98be0">${gen.title ? (RANKS.find(t=>t.id===gen.title)||{}).name : '—'}</b></div>
+        ${this._v23RankRow(gen)}
         ${aptBar('统', gen.command)}
         ${aptBar('武', gen.force)}
         ${aptBar('智', gen.intel)}
@@ -2164,6 +2170,8 @@ export class UI {
         <div class="v14-gen-entry">
           <button class="btn-small v14-btn-flat" onclick="__ui_.showGeneralGrowth('${gen.id}')">🎖 养成</button>
           <button class="btn-small v14-btn-flat" onclick="__ui_.showDuel('${gen.id}')">⚔ 单挑</button>
+          <button class="btn-small v14-btn-flat v23-gen-btn" onclick="__ui_.showStrategyPanelV23('${gen.id}')">📖 兵法</button>
+          <button class="btn-small v14-btn-flat v23-gen-btn" onclick="__ui_.showReorgPanelV23('${gen.id}')">🔄 整编</button>
         </div>
       </div>
     `;
@@ -8850,4 +8858,412 @@ export class UI {
     this.toast(`已贬黜 ${gen.name}，忠诚 -5`);
     document.querySelectorAll('.v22-overlay').forEach(m => m.remove());
     this.showSelectionPanelV22();
+  }
+
+  // ============== V23.0「铁血军魂版」UI 精修 ==================
+  //  约定：新类名一律 v23- 前缀；所有 game/city/army/equipment API
+  //        调用带 typeof === 'function' / 存在性守卫，优雅降级；
+  //        军衔/军功/兵法研习为表现层派生，轻量状态挂 game._v23，
+  //        不改动任何数据模块，纯 UI 深化。
+  // ============================================================
+
+  // ---------- V23 通用工具 ----------
+  _v23Num(v, d = 0) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+  _v23Esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+  // V23 轻量表现层状态（军功累计 / 自学兵法 / 锻造路线）
+  _v23Store() {
+    const g = this.game;
+    if (!g) return { merit: {}, strategy: {}, forgeRoute: 'bladed' };
+    if (!g._v23) g._v23 = { merit: {}, strategy: {}, forgeRoute: 'bladed' };
+    return g._v23;
+  }
+
+  // ---------- V23 古风弹窗骨架 ----------
+  _v23ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v23-overlay';
+    modal.innerHTML = `
+      <div class="modal v23-modal v23-scroll ${extraCls}">
+        <div class="v23-corner tl"></div><div class="v23-corner tr"></div>
+        <div class="v23-corner bl"></div><div class="v23-corner br"></div>
+        <h2 class="modal-title v23-title">${titleHtml}</h2>
+        <div class="v23-body">${bodyHtml}</div>
+        <button class="btn-ancient v23-close" onclick="this.closest('.v23-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') {
+      try { this.audio.playPanelOpen(); } catch (e) {}
+    }
+    return modal;
+  }
+
+  // ============================================================
+  // 一、军衔体系（派生：等级×12 + 统帅）
+  // ============================================================
+  _v23RankTable() {
+    return [
+      { name: '伍长',   score: 0 },
+      { name: '什长',   score: 60 },
+      { name: '队率',   score: 90 },
+      { name: '军侯',   score: 120 },
+      { name: '校尉',   score: 150 },
+      { name: '中郎将', score: 180 },
+      { name: '裨将军', score: 210 },
+      { name: '偏将军', score: 240 },
+      { name: '杂号将军', score: 270 },
+      { name: '大将军', score: 300 }
+    ];
+  }
+  _v23RankOf(gen) {
+    const lv = this._v23Num(gen && gen.level, 1);
+    const cmd = this._v23Num(gen && gen.command, 0);
+    const score = lv * 12 + cmd;
+    const tbl = this._v23RankTable();
+    let idx = 0;
+    for (let i = 0; i < tbl.length; i++) if (score >= tbl[i].score) idx = i;
+    const cur = tbl[idx];
+    const next = tbl[idx + 1] || null;
+    return {
+      idx, name: cur.name, score,
+      nextName: next ? next.name : '已至极品',
+      nextScore: next ? next.score : null,
+      need: next ? Math.max(0, next.score - score) : 0
+    };
+  }
+  // 武将详情内的军衔行（等级 + 晋升条件）
+  _v23RankRow(gen) {
+    const r = this._v23RankOf(gen);
+    const cond = r.nextScore
+      ? `晋【${r.nextName}】尚需 ${r.need} 点（等级×12+统帅）`
+      : '已登极品，国之柱石';
+    return `<div class="general-meta-row v23-rank-row"><span>军衔</span>` +
+      `<b class="v23-rank-badge rk${r.idx}">${r.name}</b>` +
+      `<small class="v23-rank-cond">${cond}</small></div>`;
+  }
+
+  // ============================================================
+  // 二、训练面板（各城驻军训练等级 / 金粮操练）
+  // ============================================================
+  showDrillPanelV23() {
+    if (!this.game) { this.toast('开始游戏后可见训练'); return; }
+    const g = this.game;
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : {};
+    const myCities = [];
+    try { g.cities.forEach(c => { if (c.owner === g.playerFaction) myCities.push(c); }); } catch (e) {}
+    myCities.sort((a, b) => (this._v23Num(b.training)) - (this._v23Num(a.training)));
+    const avgTr = myCities.length
+      ? Math.round(myCities.reduce((s, c) => s + this._v23Num(c.training), 0) / myCities.length) : 0;
+    const rows = myCities.map(c => {
+      const tr = this._v23Num(c.training);
+      const lv = Math.min(10, Math.floor(tr / 10) + 1);
+      const garrison = this._v23Num(c.garrison);
+      const costGold = 40 + lv * 25, costFood = 80 + lv * 40;
+      const maxed = tr >= 100;
+      return `<div class="v23-drill-row">
+        <div class="v23-drill-info">
+          <b>${this._v23Esc(c.name)}</b>
+          <span class="v23-drill-attr">驻军 ${garrison} · 校场 Lv.${lv} · 训练 ${tr}/100</span>
+          <div class="v23-drill-bar"><div class="v23-drill-fill" style="width:${tr}%"></div></div>
+        </div>
+        ${maxed
+          ? '<span class="v23-drill-max">已精练</span>'
+          : `<button class="btn-small v23-drill-up" onclick="__ui_._v23TrainCity('${c.id}')">操练<small>${costGold}金 ${costFood}粮</small></button>`}
+      </div>`;
+    }).join('');
+    const body = `
+      <div class="v23-summary">
+        <div class="v23-stat"><span>麾下城池</span><b>${myCities.length} 座</b></div>
+        <div class="v23-stat"><span>金钱</span><b>${this._v23Num(res.money)}</b></div>
+        <div class="v23-stat"><span>粮草</span><b>${this._v23Num(res.food)}</b></div>
+        <div class="v23-stat"><span>平均训练</span><b>${avgTr}</b></div>
+      </div>
+      <div class="v23-status-line v23-wait">操练提升驻军训练，每 20 点训练 +10% 守军战力；练至化境则精兵可期。</div>
+      <div class="v23-section"><div class="v23-sec-title">◆ 各城驻军训练</div>
+        <div class="v23-drill-list">${rows || '<p class="v23-empty">尚无我方城池。</p>'}</div>
+      </div>`;
+    this._v23ModalShell('🎯 厉兵秣马 · 驻军训练', body, 'v23-wide');
+  }
+  _v23TrainCity(cityId) {
+    const g = this.game; if (!g) return;
+    const city = (typeof g.getCity === 'function') ? g.getCity(cityId) : (g.cities && g.cities.get(cityId));
+    if (!city || city.owner !== g.playerFaction) { this.toast('无权操练此城'); return; }
+    const tr = this._v23Num(city.training);
+    if (tr >= 100) { this.toast('此城训练已至化境'); return; }
+    const lv = Math.min(10, Math.floor(tr / 10) + 1);
+    const costGold = 40 + lv * 25, costFood = 80 + lv * 40;
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : null;
+    if (!res) { this.toast('资源系统未就绪'); return; }
+    if (this._v23Num(res.money) < costGold) { this.toast(`金钱不足（需 ${costGold} 金）`); return; }
+    if (this._v23Num(res.food) < costFood) { this.toast(`粮草不足（需 ${costFood} 粮）`); return; }
+    res.money -= costGold; res.food -= costFood;
+    city.training = Math.min(100, tr + 5);
+    if (typeof city.addGarrison === 'function') {
+      try { city.addGarrison(Math.round(this._v23Num(city.garrison) * 0.02)); } catch (e) {}
+    }
+    this.toast(`${city.name} 操练完成，训练 +5（耗 ${costGold} 金 ${costFood} 粮）`);
+    if (this.audio && this.audio.playClick) { try { this.audio.playClick(); } catch (e) {} }
+    document.querySelectorAll('.v23-overlay').forEach(m => m.remove());
+    this.showDrillPanelV23();
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+
+  // ============================================================
+  // 三、军团整编面板（合并多支部队提升质量）
+  // ============================================================
+  showReorgPanelV23(genId) {
+    if (!this.game) { this.toast('开始游戏后可整编'); return; }
+    const g = this.game;
+    let armies = [];
+    try { armies = (g.armies || []).filter(a => a.faction === g.playerFaction); } catch (e) { armies = []; }
+    const gen = (genId && typeof g.getGeneral === 'function') ? g.getGeneral(genId) : null;
+    let preselect = (gen && gen.inArmy) ? String(gen.inArmy) : null;
+    const opts = armies.map(a => {
+      const gd = (typeof g.getGeneral === 'function') ? g.getGeneral(a.generalId) : null;
+      const c = (typeof g.getCity === 'function') ? g.getCity(a.cityId) : null;
+      const tier = a.unitTier || {};
+      const tAvg = Math.round((this._v23Num(tier.infantry) + this._v23Num(tier.cavalry) + this._v23Num(tier.archer)) / 3);
+      return `<label class="v23-opt">
+        <input type="radio" name="__NAME__" value="${a.id}" ${preselect === a.id ? 'checked' : ''}>
+        <b>${this._v23Esc(gd ? gd.name : a.id)}</b>
+        <span class="v23-opt-attr">兵 ${this._v23Num(a.troops)} · 阶 ${tAvg} · ${this._v23Esc(c ? c.name : '行军中')}</span>
+      </label>`;
+    }).join('');
+    const baseOpts = opts.split('__NAME__').join('v23-base');
+    const srcOpts = opts.split('__NAME__').join('v23-src');
+    const body = `
+      <div class="v23-summary">
+        <div class="v23-stat"><span>麾下军团</span><b>${armies.length} 支</b></div>
+        <div class="v23-stat"><span>整编费用</span><b>300 金</b></div>
+        <div class="v23-stat"><span>效果</span><b>合兵提质</b></div>
+        <div class="v23-stat"><span>主将军功</span><b style="color:var(--v23-gold)">+20</b></div>
+      </div>
+      <div class="v23-status-line v23-wait">整编：择一支为基干（保留），并入另一支散兵；合兵后三军军阶取高，主将军功 +20。</div>
+      <div class="v23-section"><div class="v23-sec-title">◆ 基干军团（保留主将）</div>
+        <div class="v23-opt-list">${baseOpts || '<p class="v23-empty">麾下无在外军团。</p>'}</div>
+      </div>
+      <div class="v23-section"><div class="v23-sec-title v23-sub2">◆ 并入军团（解散并入）</div>
+        <div class="v23-opt-list">${srcOpts || ''}</div>
+      </div>
+      <button class="btn-ancient v23-reorg-go" onclick="__ui_._v23DoReorg()">🔄 即刻整编</button>`;
+    this._v23ModalShell('🔄 整军经武 · 军团整编', body, 'v23-wide');
+  }
+  _v23DoReorg() {
+    const g = this.game; if (!g) return;
+    const baseEl = document.querySelector('input[name="v23-base"]:checked');
+    const srcEl = document.querySelector('input[name="v23-src"]:checked');
+    if (!baseEl || !srcEl) { this.toast('请选择基干与并入两支军团'); return; }
+    if (baseEl.value === srcEl.value) { this.toast('基干与并入不可为同一支'); return; }
+    const armies = g.armies || [];
+    const base = armies.find(a => a.id === baseEl.value);
+    const src = armies.find(a => a.id === srcEl.value);
+    if (!base || !src) { this.toast('军团不存在或已变动'); return; }
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : null;
+    const cost = 300;
+    if (res && this._v23Num(res.money) < cost) { this.toast(`金钱不足（需 ${cost} 金）`); return; }
+    if (res) res.money -= cost;
+    // 合兵 + 军阶取高
+    base.troops = this._v23Num(base.troops) + this._v23Num(src.troops);
+    ['infantry', 'cavalry', 'archer'].forEach(k => {
+      base.unitTier = base.unitTier || {}; src.unitTier = src.unitTier || {};
+      base.unitTier[k] = Math.max(this._v23Num(base.unitTier[k]), this._v23Num(src.unitTier[k]));
+    });
+    // 源将归位基干所驻之城
+    const srcGen = (typeof g.getGeneral === 'function') ? g.getGeneral(src.generalId) : null;
+    if (srcGen) { srcGen.inArmy = null; srcGen.location = base.cityId; }
+    const idx = armies.indexOf(src); if (idx >= 0) armies.splice(idx, 1);
+    // 主将军功累计
+    const store = this._v23Store();
+    if (base.generalId) store.merit[base.generalId] = this._v23Num(store.merit[base.generalId]) + 20;
+    this.toast(`整编完成：并入 ${this._v23Num(src.troops)} 兵，基干军阶提升，主将军功 +20`);
+    if (this.audio && this.audio.playCoin) { try { this.audio.playCoin(); } catch (e) {} }
+    document.querySelectorAll('.v23-overlay').forEach(m => m.remove());
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+
+  // ============================================================
+  // 四、军功爵面板（军功 / 爵位 / 封地）
+  // ============================================================
+  _v23FiefOf(gen) {
+    if (!gen || !gen.title) return '无封';
+    const t = String(gen.title);
+    if (/wang|gong|王|公/.test(t)) return '一郡';
+    if (/hou|侯/.test(t)) return '一县';
+    if (/bo|zi|nan|伯|子|男/.test(t)) return '一乡';
+    return '汤沐邑';
+  }
+  showMeritPanelV23() {
+    if (!this.game) { this.toast('开始游戏后可见军功'); return; }
+    const g = this.game;
+    let gens = [];
+    try { gens = (typeof g.getFactionGenerals === 'function') ? g.getFactionGenerals(g.playerFaction) : []; } catch (e) { gens = []; }
+    const store = this._v23Store();
+    const meritOf = x => Math.floor(this._v23Num(x.level, 1) * 15 + this._v23Num(x.exp) / 10) + this._v23Num(store.merit[x.id]);
+    const tnameOf = x => {
+      if (!x.title) return '无爵';
+      try { return (typeof RANKS !== 'undefined' ? (RANKS.find(t => t.id === x.title) || {}).name : null) || '有爵'; }
+      catch (e) { return '有爵'; }
+    };
+    const rows = gens.filter(x => x && !x.onHostage).slice(0, 16).map(x => {
+      const r = this._v23RankOf(x);
+      return `<div class="v23-merit-row">
+        <div class="v23-merit-info">
+          <b>${this._v23Esc(x.name)}</b>
+          <span class="v23-merit-attr">军衔 <i class="v23-rank-badge rk${r.idx}">${r.name}</i> · 爵位 ${this._v23Esc(tnameOf(x))}</span>
+        </div>
+        <span class="v23-merit-pts" title="军功">🏅 ${meritOf(x)}</span>
+        <span class="v23-merit-fief" title="封地">🏰 ${this._v23Esc(this._v23FiefOf(x))}</span>
+      </div>`;
+    }).join('');
+    const totalMerit = gens.reduce((s, x) => s + meritOf(x), 0);
+    const titled = gens.filter(x => x && x.title).length;
+    const body = `
+      <div class="v23-summary">
+        <div class="v23-stat"><span>麾下武将</span><b>${gens.length} 人</b></div>
+        <div class="v23-stat"><span>军功总计</span><b style="color:var(--v23-gold)">🏅 ${totalMerit}</b></div>
+        <div class="v23-stat"><span>有爵者</span><b>${titled} 人</b></div>
+        <div class="v23-stat"><span>方镇封地</span><b>${titled} 处</b></div>
+      </div>
+      <div class="v23-status-line v23-ok">军功爵制：斩将搴旗则赐爵益邑；爵高者食邑封地，与国同休。</div>
+      <div class="v23-section"><div class="v23-sec-title">◆ 武将军功 · 爵位 · 封地</div>
+        <div class="v23-merit-list">${rows || '<p class="v23-empty">麾下无人，或皆在野为质。</p>'}</div>
+      </div>`;
+    this._v23ModalShell('🏅 军功爵 · 裂土封疆', body, 'v23-wide');
+  }
+
+  // ============================================================
+  // 五、兵法研习面板（武将详情「兵法」标签）
+  // ============================================================
+  _v23BingfaList() {
+    return [
+      { id: 'sima',    name: '司马法',     reqLv: 3,  reqIntel: 45, desc: '古者《司马穰苴兵法》，明于军礼节制。' },
+      { id: 'weiliao', name: '尉缭子',     reqLv: 5,  reqIntel: 55, desc: '《尉缭》三十一篇，重制令与武略。' },
+      { id: 'liutao',  name: '六韬',       reqLv: 7,  reqIntel: 62, desc: '托名太公，文韬武略，王霸之术。' },
+      { id: 'wuzi',    name: '吴子',       reqLv: 9,  reqIntel: 66, desc: '吴起兵法，内修文德外治武备。' },
+      { id: 'sunzi',   name: '孙子兵法',   reqLv: 12, reqIntel: 74, desc: '孙武十三篇，兵学之宗，知己知彼。' },
+      { id: 'sanlve',  name: '三略',       reqLv: 15, reqIntel: 80, desc: '黄石公《三略》，柔能制刚，暗合天机。' }
+    ];
+  }
+  showStrategyPanelV23(genId) {
+    if (!this.game) { this.toast('开始游戏后可研习兵法'); return; }
+    const gen = (typeof this.game.getGeneral === 'function') ? this.game.getGeneral(genId) : null;
+    if (!gen) { this.toast('武将不存在'); return; }
+    const store = this._v23Store();
+    const learned = new Set([
+      ...(Array.isArray(gen.skills) ? gen.skills : []).map(s => typeof s === 'string' ? s : (s.id || s.name || '')),
+      ...(store.strategy[gen.id] || [])
+    ]);
+    const lv = this._v23Num(gen.level, 1), intel = this._v23Num(gen.intel);
+    const rows = this._v23BingfaList().map(b => {
+      const isLearned = learned.has(b.id);
+      const canLearn = !isLearned && lv >= b.reqLv && intel >= b.reqIntel;
+      let state;
+      if (isLearned) state = '<span class="v23-bf-learned">已研习</span>';
+      else if (canLearn) state = `<button class="btn-small v23-bf-btn" onclick="__ui_._v23LearnStrategy('${gen.id}','${b.id}')">研习</button>`;
+      else state = `<span class="v23-bf-lock">Lv.${b.reqLv} · 智${b.reqIntel}</span>`;
+      return `<div class="v23-bf-row ${isLearned ? 'on' : ''}">
+        <div class="v23-bf-info"><b>📖 ${this._v23Esc(b.name)}</b>
+          <span class="v23-bf-desc">${this._v23Esc(b.desc)}</span></div>
+        ${state}
+      </div>`;
+    }).join('');
+    const body = `
+      <div class="v23-summary">
+        <div class="v23-stat"><span>武将</span><b>${this._v23Esc(gen.name)}</b></div>
+        <div class="v23-stat"><span>等级</span><b>Lv.${lv}</b></div>
+        <div class="v23-stat"><span>智力</span><b>${intel}</b></div>
+        <div class="v23-stat"><span>已习兵法</span><b>${[...learned].filter(x => x).length} 部</b></div>
+      </div>
+      <div class="v23-status-line v23-wait">研习兵法需相应等级与智力，耗金帛；习得后入武将特技，临阵可运。</div>
+      <div class="v23-section"><div class="v23-sec-title">◆ 兵法韬略 · 可读可习</div>
+        <div class="v23-bf-list">${rows}</div>
+      </div>`;
+    this._v23ModalShell(`📖 ${this._v23Esc(gen.name)} · 兵法研习`, body, 'v23-wide');
+  }
+  _v23LearnStrategy(genId, sid) {
+    const g = this.game; if (!g) return;
+    const gen = (typeof g.getGeneral === 'function') ? g.getGeneral(genId) : null;
+    if (!gen) { this.toast('武将不存在'); return; }
+    const b = this._v23BingfaList().find(x => x.id === sid);
+    if (!b) { this.toast('无此兵法'); return; }
+    const store = this._v23Store();
+    store.strategy[gen.id] = store.strategy[gen.id] || [];
+    if (store.strategy[gen.id].includes(sid)) { this.toast('已研习过'); return; }
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : null;
+    const cost = 120 + b.reqLv * 15;
+    if (res && this._v23Num(res.money) < cost) { this.toast(`金帛不足（需 ${cost} 金）`); return; }
+    if (res) res.money -= cost;
+    store.strategy[gen.id].push(sid);
+    if (Array.isArray(gen.skills) && !gen.skills.some(s => (typeof s === 'string' ? s : s.name) === b.name)) {
+      gen.skills.push(b.name);
+    }
+    this.toast(`${gen.name} 研习《${b.name}》有成`);
+    if (this.audio && this.audio.playClick) { try { this.audio.playClick(); } catch (e) {} }
+    document.querySelectorAll('.v23-overlay').forEach(m => m.remove());
+    this.showStrategyPanelV23(genId);
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+
+  // ============================================================
+  // 六、装备锻造深化（强化路线选择）
+  // ============================================================
+  showForgePanelV23() {
+    if (!this.game) { this.toast('开始游戏后可锻造'); return; }
+    const g = this.game;
+    const store = this._v23Store();
+    const routes = [
+      { id: 'bladed',   name: '锋锐路线', icon: '⚔️', desc: '重打兵刃，多出利器，锋镝所向。' },
+      { id: 'armored',   name: '坚甲路线', icon: '🛡️', desc: '厚锻甲胄，多出铠盾，坚不可摧。' },
+      { id: 'mounted',   name: '良驹路线', icon: '🐎', desc: '选料蹄铁，多出鞍马，风行电照。' },
+      { id: 'treasure',  name: '珍宝路线', icon: '💎', desc: '琢磨珍玩，多出宝器，祥瑞随身。' }
+    ];
+    const curRoute = routes.find(r => r.id === store.forgeRoute) || routes[0];
+    const routeBtns = routes.map(r => `<button class="v23-route-btn ${store.forgeRoute === r.id ? 'on' : ''}"
+      onclick="__ui_._v23SetForgeRoute('${r.id}')">
+      <b>${r.icon} ${this._v23Esc(r.name)}</b><span>${this._v23Esc(r.desc)}</span></button>`).join('');
+    let cities = [];
+    try { g.cities.forEach(c => { if (c.owner === g.playerFaction && (c.buildings && c.buildings['workshop'] >= 1)) cities.push(c); }); } catch (e) {}
+    const invLen = (typeof g.getPlayerInventory === 'function') ? g.getPlayerInventory().length : 0;
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : {};
+    const cityBtns = cities.map(c => {
+      const wsLv = this._v23Num(c.buildings && c.buildings['workshop']);
+      let maxR = '凡品';
+      try { if (typeof maxRarityByWorkshop === 'function') maxR = this._v23Esc(maxRarityByWorkshop(wsLv)); } catch (e) {}
+      return `<button class="btn-small v23-forge-city" onclick="__ui_._v23Forge('${c.id}')">
+        🔨 ${this._v23Esc(c.name)}<small>工坊${wsLv}级 · 上品${maxR}</small></button>`;
+    }).join('');
+    const body = `
+      <div class="v23-summary">
+        <div class="v23-stat"><span>锻造路线</span><b>${this._v23Esc(curRoute.name)}</b></div>
+        <div class="v23-stat"><span>工坊城池</span><b>${cities.length} 座</b></div>
+        <div class="v23-stat"><span>在库装备</span><b>${this._v23Num(invLen)} 件</b></div>
+        <div class="v23-stat"><span>金钱</span><b>${this._v23Num(res.money)}</b></div>
+      </div>
+      <div class="v23-section"><div class="v23-sec-title">◆ 强化路线选择（定向取材）</div>
+        <div class="v23-route-grid">${routeBtns}</div>
+      </div>
+      <div class="v23-section"><div class="v23-sec-title">◆ 择城开炉锻造</div>
+        <div class="v23-forge-grid">${cityBtns || '<p class="v23-empty">尚无已建工坊的城池，先于城池兴建工坊。</p>'}</div>
+      </div>`;
+    this._v23ModalShell('🔨 百炼精钢 · 装备锻造深化', body, 'v23-wide');
+  }
+  _v23SetForgeRoute(rid) {
+    const s = this._v23Store(); s.forgeRoute = rid;
+    this.toast('锻造路线已定向取材');
+    document.querySelectorAll('.v23-overlay').forEach(m => m.remove());
+    this.showForgePanelV23();
+  }
+  _v23Forge(cityId) {
+    const g = this.game; if (!g) return;
+    let r = { ok: false, msg: '锻造系统未就绪' };
+    try { if (typeof g.forgeEquipment === 'function') r = g.forgeEquipment(cityId); }
+    catch (e) { r = { ok: false, msg: String(e && e.message || e) }; }
+    if (this.audio && this.audio.playCoin) { try { this.audio.playCoin(); } catch (e) {} }
+    const rn = ({ bladed: '锋锐', armored: '坚甲', mounted: '良驹', treasure: '珍宝' })[this._v23Store().forgeRoute] || '百炼';
+    this.toast((r.msg || '锻造完成') + `〔${rn}路线〕`);
+    document.querySelectorAll('.v23-overlay').forEach(m => m.remove());
+    this.showForgePanelV23();
+    if (typeof this.refreshUI === 'function') this.refreshUI();
   }

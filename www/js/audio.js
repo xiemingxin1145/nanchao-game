@@ -267,6 +267,25 @@ const BGM_TRACKS = {
     //   stepMs=1091(=55BPM四分音符)，density 0.42，营造崇文馆校书、书卷丹青的学术氛围）。
     bpm: 55, scale: ['D3', 'E3', 'F3s', 'A3', 'B3', 'D4', 'E4', 'F4s', 'A4', 'B4', 'D5'],
     wave: 'sine', bassWave: 'sine', stepMs: 1091, hasDrum: false, density: 0.42
+  },
+
+  // ============================================================
+  // V23.0「音效扩充」新增 2 首 BGM（军营号角 / 炉火纯青）
+  // ============================================================
+  militaryCamp: { // 军营号角：C小调，85BPM，雄壮威武——号角(锯齿主奏)+军鼓+方波低音
+    // C 自然小调五声化：C D Eb F G Bb C D Eb（降三级/降七级的肃杀军乐感，
+    //   锯齿波主奏模拟铜角吹鸣的金属质感、方波低音持续轰鸣，战鼓列阵行进，
+    //   stepMs=706(=85BPM四分音符)，density 0.85，营造校场点兵、铁甲林立的雄壮军氛围）。
+    bpm: 85, scale: ['C3', 'D3', 'Eb3', 'F3', 'G3', 'Bb3', 'C4', 'D4', 'Eb4', 'F4', 'G4', 'Bb4'],
+    wave: 'sawtooth', bassWave: 'square', stepMs: 706, hasDrum: true, density: 0.85
+  },
+  forge: { // 炉火纯青：D小调，70BPM，锻造节奏——金属泛音(三角主奏)+打铁鼓点+方波低音
+    // D 自然小调五声化：D F G A Bb C D F G（小三度暗调 + 沉稳锤打节奏，
+    //   三角主奏模拟铁器淬火后的金属泛音、方波低音模拟风箱低频搏动，
+    //   战鼓按打铁"叮-当"节奏落拍，stepMs=857(=70BPM四分音符)，
+    //   density 0.6，营造熔炉烈焰、锤声叮当的冶铸氛围）。
+    bpm: 70, scale: ['D3', 'F3', 'G3', 'A3', 'Bb3', 'C4', 'D4', 'F4', 'G4', 'A4', 'Bb4'],
+    wave: 'triangle', bassWave: 'square', stepMs: 857, hasDrum: true, density: 0.6
   }
 };
 
@@ -315,7 +334,10 @@ export const BGM_INFO = {
   familyReunion:  { name: '天伦之乐', desc: '家族团圆·C大调80BPM古筝竹笛' },
   // V22.0 新增（科举殿试 / 翰林院）
   examFinal:      { name: '金銮策对', desc: '科举殿试·G大调60BPM编钟古筝' },
-  academy:        { name: '崇文校书', desc: '翰林院·D大调55BPM古琴竹笛' }
+  academy:        { name: '崇文校书', desc: '翰林院·D大调55BPM古琴竹笛' },
+  // V23.0 新增（军营号角 / 炉火纯青）
+  militaryCamp:   { name: '沙场点兵', desc: '军营号角·C小调85BPM号角军鼓' },
+  forge:          { name: '炉火纯青', desc: '锻造冶炼·D小调70BPM打铁金属泛音' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -334,7 +356,9 @@ const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'end
   // V21.0：丝路异域/家族团圆两首新 BGM 默认解锁（商路与皇室场景随版本开放即可用）
   'silkRoad', 'familyReunion',
   // V22.0：科举殿试/翰林院两首新 BGM 默认解锁（殿试与崇文馆场景随版本开放即可用）
-  'examFinal', 'academy'];
+  'examFinal', 'academy',
+  // V23.0：军营号角/炉火纯青两首新 BGM 默认解锁（校场练兵与工坊锻造场景随版本开放即可用）
+  'militaryCamp', 'forge'];
 
 export class AudioManager {
   constructor() {
@@ -3090,6 +3114,163 @@ export class AudioManager {
   }
 
   // ============================================================
+  // V23.0「音效扩充」新增 军事训练/军团整编/装备锻造 深化音效
+  // （全部 Web Audio 程序化合成；总线走 sfxGain，与既有军事/内政音效风格一致）
+  // 技术参考：MDN Web Audio——
+  //   脚步/鼓点=drum 低频敲击；金属碰撞/火花/蒸汽/布帛=_noiseBurst 滤波白噪声；
+  //   号角=horn 锯齿长音；编钟=bell 基音+非谐泛音长尾；金光泛音=tone 高音琶音。
+  // 注：训练「晋升」音效 playRankUp 已存在（V15.0 段位升级：号角三连+和弦上行+
+  //   金光共鸣+军鼓），语义与本版「晋升」要求完全吻合，故复用不重复定义，避免
+  //   历史上曾出现的重复方法定义/死代码问题。
+  // ============================================================
+
+  // ---- 训练音效 ----
+
+  // 1a. 操练：整齐脚步 + 武器碰撞 + 口令呼喝
+  //   整齐脚步——低频鼓点左右脚交替规律落拍；
+  //   武器碰撞——中高频金属噪声短促连响（刀枪磕碰）；
+  //   口令呼喝——中低频锯齿滑音序列（模拟教头"一-二-一"呼号）。
+  playTrainingDrill() {
+    this.resume(); if (!this.ctx || !this._sfxGate('training_drill', 700)) return;
+    const BUS = 'sfx';
+    // 整齐脚步：左右脚交替规律鼓点（"踏-踏、踏-踏"，8 步）
+    for (let i = 0; i < 8; i++) {
+      this.drum(0.28, i * 0.18, 88 - (i % 2) * 8, BUS);
+      this._noiseBurst({ dur: 0.03, freq: 1500, q: 1.4, type: 'highpass', vol: 0.05,
+        offset: i * 0.18, bus: BUS, pan: (i % 2 ? 0.35 : -0.35) });
+    }
+    // 武器碰撞：中高频金属噪声短促连响（刀枪入鞘/磕碰，间隔 ~120ms）
+    for (let i = 0; i < 4; i++) {
+      this._noiseBurst({ dur: 0.05, freq: 3200 + i * 300, q: 1.6, type: 'bandpass', vol: 0.09,
+        offset: 0.3 + i * 0.12, bus: BUS, pan: (i % 2 ? 0.4 : -0.4) });
+    }
+    // 口令呼喝：中低频锯齿滑音（"一-二-一"，三声呼号）
+    const chant = [196.0, 174.61, 196.0];
+    chant.forEach((f, i) => this.tone(f, 0.18, 'sawtooth', 0.10, 0.2 + i * 0.28, f * 1.08, BUS));
+  }
+
+  // 1b. 授勋：编钟 + 礼炮 + 欢呼
+  //   编钟列阵——编钟(C4/E4/G4/C5)定调庄重；
+  //   礼炮——低频重击+宽频噪声轰鸣（鸣炮告捷）；
+  //   欢呼——宽频带通噪声浪潮（三军山呼）。
+  playMeritAward() {
+    this.resume(); if (!this.ctx || !this._sfxGate('merit_award', 800)) return;
+    const BUS = 'sfx';
+    // 编钟列阵（授勋金声）
+    this.bell(261.63, 1.8, 0.18, 0, 0);
+    this.bell(329.63, 1.6, 0.15, 0.25, -0.15);
+    this.bell(392.00, 1.8, 0.15, 0.5, 0.15);
+    this.bell(523.25, 2.0, 0.14, 0.75, 0);
+    // 礼炮：低频重击 + 宽频噪声轰鸣（两声炮响）
+    for (let i = 0; i < 2; i++) {
+      this.drum(0.55, 0.4 + i * 0.5, 60, BUS);
+      this._noiseBurst({ dur: 0.5, freq: 200, q: 0.8, type: 'lowpass', vol: 0.18,
+        offset: 0.4 + i * 0.5, bus: BUS, sweepTo: 60 });
+    }
+    // 三军欢呼：宽频噪声浪潮（左右声像散开）
+    this._noiseBurst({ dur: 1.0, freq: 750, q: 0.7, type: 'bandpass', vol: 0.15, offset: 0.6, bus: BUS, pan: -0.4 });
+    this._noiseBurst({ dur: 1.0, freq: 900, q: 0.7, type: 'bandpass', vol: 0.15, offset: 0.65, bus: BUS, pan: 0.4 });
+  }
+
+  // ---- 锻造音效 ----
+
+  // 2a. 锻造锤击：铁锤敲打铁砧 + 火花噼啪
+  //   锤击——金属重击（低频铁砧共鸣 + 高频金属泛音），连续四锤；
+  //   火花噼啪——高频高通噪声短促连响（火星迸溅）。
+  playForgeHammer() {
+    this.resume(); if (!this.ctx || !this._sfxGate('forge_hammer', 150)) return;
+    const BUS = 'sfx';
+    // 四锤：铁锤敲打铁砧（低频铁砧共鸣 + 高频金属泛音，间隔 ~160ms）
+    for (let i = 0; i < 4; i++) {
+      const t = i * 0.16;
+      this.drum(0.45, t, 110, BUS);                          // 铁砧低频"当"
+      this.tone(1900 + i * 120, 0.12, 'triangle', 0.10, t, null, BUS); // 金属高频泛音
+      // 火花噼啪：每锤 2~3 个火星迸溅
+      for (let j = 0; j < 2; j++) {
+        this._noiseBurst({ dur: 0.04, freq: 3800 + Math.random() * 1500, q: 1.5,
+          type: 'highpass', vol: 0.07, offset: t + 0.02 + j * 0.05, bus: BUS,
+          pan: (Math.random() - 0.5) * 0.8 });
+      }
+    }
+  }
+
+  // 2b. 淬火：冷水蒸汽嘶嘶 + 金属收缩
+  //   蒸汽嘶嘶——高通噪声持续+高频扫频（铁件入水蒸腾）；
+  //   金属收缩——低频短促金属泛音衰减（"滋"的收缩声）。
+  playForgeQuench() {
+    this.resume(); if (!this.ctx || !this._sfxGate('forge_quench', 600)) return;
+    const BUS = 'sfx';
+    // 冷水蒸汽嘶嘶：高通噪声持续 + 高频扫频（入水瞬间蒸腾扩散）
+    this._noiseBurst({ dur: 1.2, freq: 5000, q: 1.0, type: 'highpass', vol: 0.16,
+      offset: 0, bus: BUS, sweepTo: 2200 });
+    // 水体气泡翻滚：中低频带通噪声（水面沸腾）
+    this._noiseBurst({ dur: 1.0, freq: 600, q: 1.2, type: 'bandpass', vol: 0.10,
+      offset: 0.1, bus: BUS, sweepTo: 300 });
+    // 金属收缩：低频短促金属泛音（"滋——"的冷缩声，滑音下行）
+    this.tone(880, 0.9, 'triangle', 0.12, 0.1, 220, BUS);
+    this.tone(1760, 0.6, 'sine', 0.06, 0.15, 440, BUS);
+  }
+
+  // 2c. 锻造成功：金光泛音 + 编钟
+  //   金光泛音——高音分解和弦上行琶音（成品淬炼成型的灵光）；
+  //   编钟——编钟收尾（大功告成的金声玉振）。
+  playForgeSuccess() {
+    this.resume(); if (!this.ctx || !this._sfxGate('forge_success', 700)) return;
+    const BUS = 'sfx';
+    // 金光泛音：高音分解和弦上行琶音（C5-E5-G5-C6，淬炼成型）
+    const arp = [523.25, 659.25, 783.99, 1046.5];
+    arp.forEach((f, i) => {
+      this.tone(f, 0.4, 'triangle', 0.16, i * 0.1, null, BUS);
+      this.tone(f * 2, 0.3, 'sine', 0.07, i * 0.1, null, BUS); // 金光泛音
+    });
+    // 编钟收尾（金声玉振，大功告成）
+    this.bell(523.25, 1.8, 0.16, arp.length * 0.1, 0);
+    this.bell(783.99, 1.6, 0.12, arp.length * 0.1 + 0.2, 0.15);
+  }
+
+  // ---- 整编音效 ----
+
+  // 3a. 整编：军旗展开 + 士兵集合脚步声
+  //   军旗展开——中低频布帛噪声（"哗"的展旗声）；
+  //   士兵集合脚步——规律鼓点由疏到密（列队归建）。
+  playLegionMerge() {
+    this.resume(); if (!this.ctx || !this._sfxGate('legion_merge', 700)) return;
+    const BUS = 'sfx';
+    // 军旗展开：布帛噪声（"哗——"展旗，中低频带通渐强）
+    this._noiseBurst({ dur: 0.8, freq: 900, q: 0.9, type: 'bandpass', vol: 0.14,
+      offset: 0, bus: BUS, sweepTo: 1800 });
+    // 士兵集合脚步声：规律鼓点由疏到密（列队归建，间隔渐短）
+    let t = 0.5;
+    for (let i = 0; i < 10; i++) {
+      this.drum(0.22, t, 86 - (i % 2) * 6, BUS);
+      this._noiseBurst({ dur: 0.03, freq: 1400, q: 1.4, type: 'highpass', vol: 0.04,
+        offset: t, bus: BUS, pan: (i % 2 ? 0.3 : -0.3) });
+      t += 0.22 - i * 0.012; // 脚步渐密
+    }
+    // 整编定音：一记低沉军鼓（新旅成军）
+    this.drum(0.4, t + 0.1, 70, BUS);
+  }
+
+  // 3b. 阅兵：号角齐鸣 + 军鼓隆隆
+  //   号角齐鸣——多支号角叠加和声（G-C-G 军乐定调）；
+  //   军鼓隆隆——低频鼓列连续滚动（铁甲生辉的阅兵声势）。
+  playReviewStart() {
+    this.resume(); if (!this.ctx || !this._sfxGate('review_start', 800)) return;
+    const BUS = 'sfx';
+    // 号角齐鸣：G3→C4→G4 军乐定调（多角叠吹，带轻微声像散开）
+    this.horn(196.0, 0.9, 0.22, 0, null, -0.2);
+    this.horn(261.63, 0.9, 0.20, 0.05, null, 0.2);
+    this.horn(392.0, 1.1, 0.22, 0.1, null, 0);
+    // 军鼓隆隆：低频鼓列连续滚动（阅兵行进步伐，8 拍）
+    for (let i = 0; i < 8; i++) {
+      this.drum(0.32, 0.2 + i * 0.16, 80 - (i % 2) * 6, BUS);
+    }
+    // 收尾定音：一记重鼓 + 号角长音
+    this.drum(0.5, 0.2 + 8 * 0.16, 60, BUS);
+    this.horn(392.0, 1.0, 0.18, 0.5 + 8 * 0.16, null, 0);
+  }
+
+  // ============================================================
   // V15.0 结局 BGM：宏大交响（finale 曲目按评级变奏）。
   //   S：高密庆典（density 0.9 / 明亮 G 音阶 / 定音鼓）；
   //   B：温润和平（density 0.6 / C 宫 / 无鼓）；
@@ -3265,7 +3446,11 @@ export class AudioManager {
       'weatherCombat', 'winStreakHorn',
       // V21.0 新增：丝路商队 / 家族皇室 6 类音效
       'caravanMarch', 'silkTradeDone', 'caravanRobbed',
-      'marriageSuccess', 'familyBorn', 'familyDeath'
+      'marriageSuccess', 'familyBorn', 'familyDeath',
+      // V23.0 新增：军事训练/整编/锻造深化音效（晋升 playRankUp 复用既有）
+      'trainingDrill', 'meritAward',
+      'forgeHammer', 'forgeQuench', 'forgeSuccess',
+      'legionMerge', 'reviewStart'
     ];
   }
 

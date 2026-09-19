@@ -158,7 +158,10 @@ export function destroyPass(game, passId, factionId) {
   const sp = getPassById(passId);
   if (!rt || !rt.built) return { ok: false, msg: '关隘不存在或未建成' };
   if (rt.owner !== factionId) return { ok: false, msg: '非我方关隘' };
+  // BUG修复（pass.js #3 destroyPass 空指针）：模组卸载/旧存档残留运行时关隘条目后，
+  //   静态表 PASSES 已无该 passId（getPassById 返回 undefined），下一行 `sp.name`
+  //   拼日志会抛 TypeError，导致拆关流程中断、rt 已改却未成功返回。此处做空值兜底。
   rt.built = false; rt.owner = null; rt.garrison = 0;
-  game.pushLog(`${FACTIONS[factionId].name} 下令拆毁【${sp.name}】。`);
-  return { ok: true, msg: `已拆毁${sp.name}` };
+  game.pushLog(`${FACTIONS[factionId].name} 下令拆毁【${(sp && sp.name) || '关隘'}】。`);
+  return { ok: true, msg: `已拆毁${(sp && sp.name) || '关隘'}` };
 }

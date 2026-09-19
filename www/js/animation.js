@@ -181,6 +181,21 @@ export class CharacterAnimator {
     this._examFXCap = 8;            // 同时存活科举/选观点FX上限
     this._examParticleBudget = 90;  // 科举/选官专属粒子预算（_exam 标记）
     this._examEmitAcc = 0;          // 持续粒子生成累计器（游街欢呼/宴饮）
+
+    // ============================================================
+    // V23.0 — 动画与地图增强：军事训练/军团整编/装备锻造深化动画
+    // 设计：与 V21.0/V22.0 一致——play* 只写入 _v23FXs 状态机
+    //      + 触发一次性粒子；update(dt) 用真实时间推进 t；
+    //      drawV23FX(ctx) 按 t/dur 渲染（由 map.js 每帧调用）。
+    //      粒子走 _getParticle/_pushParticle 对象池 + 专属预算(_v23 标记)；
+    //      FX 列表硬上限 _v23FXCap=8（超出淘汰最老）；
+    //      锻造/操练等持续粒子按 dt 节流生成，受 _v23ParticleBudget=90 保护；
+    //      距离 LOD：远视野（map.js scale<0.7）简化绘制。
+    // ============================================================
+    this._v23FXs = [];              // V23 FX [{type,x,y,... ,t,dur,seed}]
+    this._v23FXCap = 8;             // 同时存活 V23 FX 上限
+    this._v23ParticleBudget = 90;   // V23 专属粒子预算（_v23 标记）
+    this._v23EmitAcc = 0;           // 持续粒子生成累计器（锻炉/操练尘土）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -588,6 +603,8 @@ export class CharacterAnimator {
       this._examResultFX.t += deltaTime;
       if (this._examResultFX.t >= this._examResultFX.dur) this._examResultFX = null;
     }
+    // ---- V23.0：军事训练/整编/锻造 FX 时间线推进（真实时间，不受慢动作影响）----
+    this._updateV23FXs(deltaTime);
     // 士气条淡入淡出推进
     for (const [k, m] of this._moraleBars) {
       m.t += deltaTime;
@@ -7044,6 +7061,670 @@ export class CharacterAnimator {
       ctx.font = 'bold 13px "STSong", serif';
       ctx.fillStyle = '#c0b8a8';
       ctx.fillText('贬官降职…', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V23.0 — 军事训练 / 军团整编 / 装备锻造 深化动画
+  // ============================================================
+
+  // 推入 V23 点 FX（带上限保护，超出淘汰最老）
+  _pushV23FX(fx) {
+    if (this._v23FXs.length >= this._v23FXCap) this._v23FXs.shift();
+    fx.t = 0;
+    if (fx.seed == null) fx.seed = Math.random() * 1000;
+    this._v23FXs.push(fx);
+  }
+
+  // V23 专属粒子爆发（对象池 + _v23 预算保护）
+  _v23Burst(x, y, count, opts) {
+    for (let i = 0; i < count; i++) {
+      if (this._countTaggedParticles('_v23') >= this._v23ParticleBudget) break;
+      const s = this._getParticle();
+      const a = Math.random() * Math.PI * 2;
+      const sp = (opts.minSpeed || 30) + Math.random() * (opts.spread || 120);
+      Object.assign(s, {
+        type: opts.type || 'v23_spark',
+        _v23: true,
+        x: x + (Math.random() - 0.5) * (opts.rangeX || 10),
+        y: y + (Math.random() - 0.5) * (opts.rangeY || 10),
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - (opts.upBias || 0),
+        gravity: opts.gravity != null ? opts.gravity : 60,
+        drag: opts.drag != null ? opts.drag : 0.4,
+        life: (opts.lifeMin || 0.6) + Math.random() * ((opts.lifeMax || 1.3) - (opts.lifeMin || 0.6)),
+        size: (opts.sizeMin || 1.6) + Math.random() * ((opts.sizeMax || 3.2) - (opts.sizeMin || 1.6)),
+        color: Array.isArray(opts.colors)
+          ? opts.colors[Math.floor(Math.random() * opts.colors.length)]
+          : (opts.color || '#FFD700'),
+        angle: Math.random() * Math.PI * 2,
+        seed: Math.random() * 10
+      });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 训练：士兵列队操练（挥矛/举盾/踏步）----
+  playTrainingDrill(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'drill', x, y, dur: 3.2 });
+    // 起步尘土 + 挥矛劲风
+    this._v23Burst(x, y + 6, 8, {
+      colors: ['#b89a6a', '#a88a5a', '#c8b088'],
+      minSpeed: 8, spread: 30, upBias: 6, gravity: 12,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.1, sizeMin: 1.8, sizeMax: 3
+    });
+    // 枪缨红绒碎屑
+    this._v23Burst(x, y - 8, 6, {
+      colors: ['#c83838', '#e05848'],
+      minSpeed: 18, spread: 50, upBias: 40, gravity: 50,
+      lifeMin: 0.5, lifeMax: 0.9, sizeMin: 1.2, sizeMax: 2.2
+    });
+  }
+
+  // ---- 晋升军衔：金光环绕 + 绶带展开 ----
+  playRankUp(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'rankup', x, y, dur: 2.8 });
+    // 晋升金光爆发（金/白金碎屑向上）
+    this._v23Burst(x, y - 6, 18, {
+      colors: ['#FFD700', '#FFF3B0', '#ffcf40', '#ffffff'],
+      minSpeed: 30, spread: 130, upBias: 110, gravity: 70,
+      lifeMin: 0.7, lifeMax: 1.5, sizeMin: 1.6, sizeMax: 3.2
+    });
+    // 绶带朱红飘带
+    this._v23Burst(x, y - 4, 10, {
+      colors: ['#d82828', '#ff6a5a'],
+      minSpeed: 14, spread: 60, upBias: 20, gravity: 30,
+      drag: 0.1, lifeMin: 1.4, lifeMax: 2.2, sizeMin: 2, sizeMax: 3
+    });
+  }
+
+  // ---- 军功授奖：奖章金光 + 礼炮 ----
+  playMeritAward(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'merit', x, y, dur: 3.0 });
+    // 奖章金光
+    this._v23Burst(x, y - 10, 14, {
+      colors: ['#FFD700', '#fff2b0', '#ffe9a8'],
+      minSpeed: 26, spread: 100, upBias: 120, gravity: 80,
+      lifeMin: 0.6, lifeMax: 1.2, sizeMin: 1.5, sizeMax: 2.8
+    });
+    // 礼炮彩屑（三色纸屑四散）
+    this._v23Burst(x - 18, y - 16, 6, {
+      colors: ['#d83a3a', '#3a8ad8', '#ffd700'],
+      minSpeed: 30, spread: 60, upBias: 90, gravity: 70,
+      drag: 0.1, lifeMin: 0.9, lifeMax: 1.6, sizeMin: 1.6, sizeMax: 2.6
+    });
+    this._v23Burst(x + 18, y - 16, 6, {
+      colors: ['#d83a3a', '#3a8ad8', '#ffd700'],
+      minSpeed: 30, spread: 60, upBias: 90, gravity: 70,
+      drag: 0.1, lifeMin: 0.9, lifeMax: 1.6, sizeMin: 1.6, sizeMax: 2.6
+    });
+  }
+
+  // ---- 锻造武器：铁锤敲打 + 火花飞溅 + 淬火蒸汽 ----
+  playForgeWeapon(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'forge_weapon', x, y, dur: 3.0 });
+    // 初始打铁火花（橙金）
+    this._v23Burst(x, y - 4, 12, {
+      colors: ['#ff8a2a', '#ffd040', '#fff0a0'],
+      minSpeed: 50, spread: 130, upBias: 60, gravity: 160,
+      lifeMin: 0.3, lifeMax: 0.7, sizeMin: 1.2, sizeMax: 2.4
+    });
+    // 淬火蒸汽（白雾上升）
+    this._v23Burst(x, y + 2, 5, {
+      type: 'v23_steam',
+      colors: ['rgba(230,235,240,0.7)'],
+      minSpeed: 6, spread: 14, upBias: 50, gravity: -8,
+      drag: 0.15, lifeMin: 1.0, lifeMax: 1.8, sizeMin: 3, sizeMax: 6
+    });
+  }
+
+  // ---- 锻造铠甲：甲片拼接 + 打磨光泽 ----
+  playForgeArmor(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'forge_armor', x, y, dur: 3.0 });
+    // 甲片金属碎屑（银灰）
+    this._v23Burst(x, y - 6, 12, {
+      colors: ['#c8ccd4', '#e8ecf0', '#9aa0aa'],
+      minSpeed: 30, spread: 90, upBias: 50, gravity: 120,
+      lifeMin: 0.5, lifeMax: 1.0, sizeMin: 1.4, sizeMax: 2.6
+    });
+    // 打磨闪光（白金）
+    this._v23Burst(x, y - 10, 6, {
+      colors: ['#ffffff', '#fff2b0'],
+      minSpeed: 40, spread: 60, upBias: 80, gravity: 40,
+      lifeMin: 0.3, lifeMax: 0.6, sizeMin: 1, sizeMax: 2
+    });
+  }
+
+  // ---- 战马披甲：马蹄铁 + 马具装配 ----
+  playForgeSteed(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'forge_steed', x, y, dur: 3.0 });
+    // 马蹄铁敲击火花
+    this._v23Burst(x, y + 6, 10, {
+      colors: ['#ff8a2a', '#ffd040'],
+      minSpeed: 40, spread: 90, upBias: 40, gravity: 140,
+      lifeMin: 0.35, lifeMax: 0.7, sizeMin: 1.2, sizeMax: 2.2
+    });
+    // 马具铜件光泽（金）
+    this._v23Burst(x, y - 8, 8, {
+      colors: ['#FFD700', '#fff2b0'],
+      minSpeed: 24, spread: 60, upBias: 70, gravity: 60,
+      lifeMin: 0.5, lifeMax: 0.9, sizeMin: 1.4, sizeMax: 2.4
+    });
+  }
+
+  // ---- 军团整编：军旗合拢 + 士兵汇聚 ----
+  playLegionMerge(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'merge', x, y, dur: 3.2 });
+    // 汇聚尘土（从四周收拢）
+    this._v23Burst(x, y + 4, 12, {
+      colors: ['#b89a6a', '#c8b088', '#9a8050'],
+      minSpeed: 20, spread: 70, upBias: 10, gravity: 20,
+      drag: 0.2, lifeMin: 0.7, lifeMax: 1.3, sizeMin: 2, sizeMax: 3.2
+    });
+    // 军旗合拢金光
+    this._v23Burst(x, y - 10, 10, {
+      colors: ['#FFD700', '#ffe9a8'],
+      minSpeed: 20, spread: 50, upBias: 60, gravity: 50,
+      lifeMin: 0.6, lifeMax: 1.1, sizeMin: 1.4, sizeMax: 2.6
+    });
+  }
+
+  // ---- 阅兵：方阵行进 + 旗帜飘扬 ----
+  playReviewTroops(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV23FX({ type: 'review', x, y, dur: 3.6 });
+    // 正步尘土
+    this._v23Burst(x, y + 6, 10, {
+      colors: ['#b89a6a', '#c8b088'],
+      minSpeed: 10, spread: 40, upBias: 8, gravity: 15,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.8, sizeMax: 3
+    });
+    // 旌旗红缨
+    this._v23Burst(x, y - 12, 8, {
+      colors: ['#c83838', '#ffd76a'],
+      minSpeed: 16, spread: 50, upBias: 50, gravity: 40,
+      lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.4, sizeMax: 2.4
+    });
+  }
+
+  // ---- V23 FX 时间线推进 + 持续粒子生成 ----
+  _updateV23FXs(dt) {
+    if (!dt || dt <= 0) return;
+    for (let i = this._v23FXs.length - 1; i >= 0; i--) {
+      const fx = this._v23FXs[i];
+      fx.t += dt;
+      if (fx.t >= fx.dur) { this._v23FXs.splice(i, 1); continue; }
+      // 锻炉类：持续敲火花 + 蒸汽（按 dt 节流，受预算保护）
+      if (fx.type === 'forge_weapon' || fx.type === 'forge_armor' || fx.type === 'forge_steed') {
+        this._v23EmitAcc += dt;
+        const step = 0.18;
+        if (this._v23EmitAcc >= step) {
+          this._v23EmitAcc = 0;
+          if (this._countTaggedParticles('_v23') < this._v23ParticleBudget) {
+            if (fx.type === 'forge_weapon') {
+              this._v23Burst(fx.x, fx.y - 4, 2, {
+                colors: ['#ff8a2a', '#ffd040'],
+                minSpeed: 50, spread: 90, upBias: 50, gravity: 160,
+                lifeMin: 0.25, lifeMax: 0.5, sizeMin: 1.2, sizeMax: 2
+              });
+            } else if (fx.type === 'forge_armor') {
+              this._v23Burst(fx.x, fx.y - 6, 1, {
+                colors: ['#c8ccd4', '#e8ecf0'],
+                minSpeed: 26, spread: 60, upBias: 40, gravity: 100,
+                lifeMin: 0.4, lifeMax: 0.7, sizeMin: 1.2, sizeMax: 2.2
+              });
+            } else {
+              this._v23Burst(fx.x, fx.y + 6, 1, {
+                colors: ['#ff8a2a', '#ffd040'],
+                minSpeed: 36, spread: 70, upBias: 30, gravity: 130,
+                lifeMin: 0.3, lifeMax: 0.55, sizeMin: 1.2, sizeMax: 2
+              });
+            }
+          }
+        }
+      }
+      // 操练/阅兵：踏步尘土
+      if (fx.type === 'drill' || fx.type === 'review') {
+        this._v23EmitAcc += dt;
+        const step = 0.25;
+        if (this._v23EmitAcc >= step) {
+          this._v23EmitAcc = 0;
+          if (this._countTaggedParticles('_v23') < this._v23ParticleBudget) {
+            this._v23Burst(fx.x + (Math.random() - 0.5) * 16, fx.y + 6, 1, {
+              colors: ['#b89a6a', '#c8b088'],
+              minSpeed: 6, spread: 18, upBias: 4, gravity: 10,
+              drag: 0.2, lifeMin: 0.5, lifeMax: 0.8, sizeMin: 1.6, sizeMax: 2.6
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // ---- 绘制所有激活的 V23 FX（map.js 每帧调用）----
+  drawV23FX(ctx) {
+    if (!ctx || this._v23FXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._v23FXs) {
+      const p = fx.t / fx.dur;
+      if (p < 0 || p > 1) continue;
+      switch (fx.type) {
+        case 'drill':         this._drawTrainingDrill(ctx, fx, p); break;
+        case 'rankup':        this._drawRankUp(ctx, fx, p); break;
+        case 'merit':         this._drawMeritAward(ctx, fx, p); break;
+        case 'forge_weapon':  this._drawForgeWeapon(ctx, fx, p); break;
+        case 'forge_armor':   this._drawForgeArmor(ctx, fx, p); break;
+        case 'forge_steed':   this._drawForgeSteed(ctx, fx, p); break;
+        case 'merge':         this._drawLegionMerge(ctx, fx, p); break;
+        case 'review':        this._drawReviewTroops(ctx, fx, p); break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 训练操练：三列小士兵，挥矛/举盾循环，踏步起伏
+  _drawTrainingDrill(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 三列士兵（5 列×2 排），随节拍挥矛/举盾交替
+    const beat = Math.floor(this.time * 3 + fx.seed) % 2; // 0=挥矛 1=举盾
+    for (let row = 0; row < 2; row++) {
+      for (let col = -2; col <= 2; col++) {
+        const sx = fx.x + col * 7;
+        const sy = fx.y + row * 7 + (row ? 2 : -2);
+        const step = Math.sin(this.time * 6 + fx.seed + col * 1.3 + row) * 1.2;
+        // 士兵身体（深灰甲）
+        ctx.fillStyle = row ? '#3a4a5a' : '#4a5a6a';
+        ctx.fillRect(sx - 1.6, sy - 4 + step * 0.3, 3.2, 5);
+        // 头
+        ctx.fillStyle = '#e0c8a0';
+        ctx.beginPath(); ctx.arc(sx, sy - 5.2 + step * 0.3, 1.5, 0, Math.PI * 2); ctx.fill();
+        // 头盔
+        ctx.fillStyle = '#6a6a72';
+        ctx.beginPath(); ctx.arc(sx, sy - 6 + step * 0.3, 1.5, Math.PI, 0); ctx.fill();
+        if (beat === 0) {
+          // 挥矛：长矛斜举
+          ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(sx + 1.5, sy - 3);
+          ctx.lineTo(sx + 4.5, sy - 9 + step);
+          ctx.stroke();
+          // 矛尖红缨
+          ctx.fillStyle = '#c83838';
+          ctx.beginPath(); ctx.arc(sx + 4.5, sy - 9 + step, 1, 0, Math.PI * 2); ctx.fill();
+        } else {
+          // 举盾：小圆盾
+          ctx.fillStyle = '#7a5a3a';
+          ctx.beginPath(); ctx.arc(sx + 2.8, sy - 2, 2.2, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = '#4a3a2a'; ctx.lineWidth = 0.6;
+          ctx.beginPath(); ctx.arc(sx + 2.8, sy - 2, 1.4, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
+    }
+    // 操练文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 12px "STSong", serif';
+      ctx.fillStyle = '#e0d8b0';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
+      ctx.fillText('操练', fx.x, fx.y - 22);
+    }
+    ctx.restore();
+  }
+
+  // 晋升军衔：武将金光环绕 + 绶带自两侧展开
+  _drawRankUp(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 金光旋转环（随时间公转）
+    const ringP = this._v15EaseOutCubic(Math.min(1, p / 0.3));
+    const ringR = 6 + ringP * 16;
+    const spin = this.time * 2.5 + fx.seed;
+    ctx.strokeStyle = `rgba(255,215,0,${0.7 * ringP})`;
+    ctx.lineWidth = 1.8;
+    for (let k = 0; k < 3; k++) {
+      const a = spin + (k / 3) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(fx.x, fx.y - 6, ringR, a, a + Math.PI * 0.7);
+      ctx.stroke();
+    }
+    // 绶带自两侧展开（easeOut 展开）
+    const ribbonP = this._v15EaseOutCubic((p - 0.1) / 0.5);
+    const ribbonW = ribbonP * 18;
+    for (const sgn of [-1, 1]) {
+      ctx.fillStyle = sgn < 0 ? '#d82828' : '#b82828';
+      ctx.beginPath();
+      ctx.moveTo(fx.x + sgn * 3, fx.y - 10);
+      ctx.quadraticCurveTo(fx.x + sgn * (3 + ribbonW * 0.6), fx.y - 14,
+                           fx.x + sgn * (3 + ribbonW), fx.y - 10);
+      ctx.lineTo(fx.x + sgn * (3 + ribbonW), fx.y - 7);
+      ctx.quadraticCurveTo(fx.x + sgn * (3 + ribbonW * 0.6), fx.y - 4,
+                           fx.x + sgn * 3, fx.y - 6);
+      ctx.closePath(); ctx.fill();
+    }
+    // 武将剪影（金袍）
+    ctx.fillStyle = '#d8a838';
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y - 2, 4.5, 4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#f0d090';
+    ctx.beginPath(); ctx.arc(fx.x, fx.y - 9, 2.4, 0, Math.PI * 2); ctx.fill();
+    // 头盔红缨
+    ctx.fillStyle = '#c83838';
+    ctx.beginPath(); ctx.arc(fx.x, fx.y - 11.5, 1.2, 0, Math.PI * 2); ctx.fill();
+    // 晋升文字
+    const textP = this._v15EaseOutCubic((p - 0.4) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 5;
+      ctx.fillText('晋升军衔', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 军功授奖：奖章（金质梅花）+ 两侧礼炮光晕
+  _drawMeritAward(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 奖章自上方落下（easeOutBack）
+    const dropP = this._easeOutBack(Math.min(1, p / 0.4));
+    const medalY = this._v15Lerp(fx.y - 30, fx.y - 10, dropP);
+    const medalS = Math.max(0.1, dropP);
+    ctx.save();
+    ctx.translate(fx.x, medalY);
+    ctx.scale(medalS, medalS);
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = p > 0.4 ? 10 : 0;
+    // 梅花奖章（五瓣）
+    ctx.fillStyle = '#ffd700';
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2 - Math.PI / 2;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * 2.6, Math.sin(a) * 2.6, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#b8860b';
+    ctx.beginPath(); ctx.arc(0, 0, 1.4, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    // 绶带
+    ctx.strokeStyle = '#d82828'; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-2, -4); ctx.lineTo(-4, -9);
+    ctx.moveTo(2, -4); ctx.lineTo(4, -9);
+    ctx.stroke();
+    ctx.restore();
+    // 礼炮光晕（左右两侧，0.4 后脉动）
+    if (p > 0.4) {
+      const boom = Math.sin(this.time * 6 + fx.seed);
+      for (const sgn of [-1, 1]) {
+        ctx.save();
+        ctx.globalAlpha = fade * (0.5 + 0.3 * boom);
+        ctx.shadowColor = '#ffcf40'; ctx.shadowBlur = 8;
+        ctx.fillStyle = '#ffd76a';
+        ctx.beginPath();
+        ctx.arc(fx.x + sgn * 20, fx.y - 14, 2.5 + boom, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    // 授奖文字
+    const textP = this._v15EaseOutCubic((p - 0.45) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('军功授奖', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 锻造武器：铁砧 + 铁锤上下敲打 + 火花 + 淬火蒸汽
+  _drawForgeWeapon(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 铁砧
+    ctx.fillStyle = '#4a4a52';
+    ctx.fillRect(fx.x - 8, fx.y + 2, 16, 4);
+    ctx.fillRect(fx.x - 4, fx.y + 6, 8, 3);
+    // 铁锤（随节拍上下敲打）
+    const hit = (Math.floor(this.time * 4 + fx.seed) % 2);
+    const hammerY = hit ? fx.y - 14 : fx.y - 6;
+    ctx.strokeStyle = '#6a4a2a'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(fx.x + 2, hammerY); ctx.lineTo(fx.x + 2, fx.y - 2); ctx.stroke();
+    ctx.fillStyle = '#8a8a92';
+    ctx.fillRect(fx.x - 1.5, hammerY - 2, 7, 3);
+    // 工件（暗红剑坯，随敲打变亮）
+    const glow = hit ? 1 : 0.4;
+    ctx.fillStyle = `rgba(${200 + glow * 55},${80 + glow * 60},40,0.95)`;
+    ctx.fillRect(fx.x - 2, fx.y - 2, 10, 1.8);
+    // 淬火蒸汽（上升白雾，循环）
+    const steam = (this.time * 0.8 + fx.seed) % 1;
+    ctx.fillStyle = `rgba(235,240,245,${0.5 * (1 - steam)})`;
+    ctx.beginPath();
+    ctx.arc(fx.x + 2, fx.y - 6 - steam * 10, 2.5 + steam * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    // 锻造文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 12px "STSong", serif';
+      ctx.fillStyle = '#ffd8a8';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
+      ctx.fillText('锻造兵器', fx.x, fx.y - 22);
+    }
+    ctx.restore();
+  }
+
+  // 锻造铠甲：胸甲自下方升起 + 甲片逐排拼接 + 打磨高光
+  _drawForgeArmor(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 胸甲（银灰，由下升起）
+    const riseP = this._v15EaseOutCubic(Math.min(1, p / 0.5));
+    const chestY = this._v15Lerp(fx.y + 8, fx.y - 4, riseP);
+    // 甲身
+    ctx.fillStyle = '#b8bcc4';
+    ctx.beginPath();
+    ctx.moveTo(fx.x - 6, chestY - 6);
+    ctx.quadraticCurveTo(fx.x, chestY - 9, fx.x + 6, chestY - 6);
+    ctx.lineTo(fx.x + 5, chestY + 4);
+    ctx.lineTo(fx.x - 5, chestY + 4);
+    ctx.closePath(); ctx.fill();
+    // 甲片横排（逐排亮起）
+    const rows = 3;
+    for (let r = 0; r < rows; r++) {
+      const rowP = Math.max(0, Math.min(1, (p - 0.2 - r * 0.12) / 0.2));
+      if (rowP <= 0) continue;
+      ctx.globalAlpha = fade * rowP;
+      ctx.fillStyle = r % 2 ? '#d8dce2' : '#a8acb4';
+      ctx.fillRect(fx.x - 5, chestY - 4 + r * 3, 10, 2.2);
+    }
+    ctx.globalAlpha = fade;
+    // 打磨高光（扫过）
+    const sweep = ((t_sweep(this.time, fx.seed)) % 1);
+    const hx = fx.x - 6 + sweep * 12;
+    ctx.fillStyle = `rgba(255,255,255,${0.5 * Math.sin(sweep * Math.PI)})`;
+    ctx.beginPath();
+    ctx.ellipse(hx, chestY - 2, 1.5, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 肩甲
+    ctx.fillStyle = '#c8ccd4';
+    ctx.beginPath(); ctx.arc(fx.x - 6, chestY - 5, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fx.x + 6, chestY - 5, 2.2, 0, Math.PI * 2); ctx.fill();
+    // 锻造文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 12px "STSong", serif';
+      ctx.fillStyle = '#e0e8f0';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
+      ctx.fillText('锻造铠甲', fx.x, fx.y - 22);
+    }
+    ctx.restore();
+
+    function t_sweep(t, seed) { return (t * 0.7 + seed) % 1; }
+  }
+
+  // 战马披甲：马身侧影 + 马蹄铁敲击 + 马具铜件装配
+  _drawForgeSteed(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 马身（棕色剪影，侧面）
+    ctx.fillStyle = '#6a4a2a';
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y - 2, 9, 3.6, 0, 0, Math.PI * 2); ctx.fill();
+    // 马头
+    ctx.beginPath(); ctx.ellipse(fx.x + 9, fx.y - 5, 2.8, 2, 0.3, 0, Math.PI * 2); ctx.fill();
+    // 四条腿
+    ctx.fillStyle = '#5a3a22';
+    for (const lx of [-6, -2, 3, 7]) {
+      ctx.fillRect(fx.x + lx, fx.y, 1.8, 4);
+    }
+    // 马蹄铁（随节拍敲上，逐蹄亮起）
+    const shoeP = Math.floor(this.time * 2 + fx.seed) % 4;
+    for (let s = 0; s <= shoeP; s++) {
+      const lx = [-6, -2, 3, 7][s];
+      ctx.fillStyle = '#c8ccd4';
+      ctx.fillRect(fx.x + lx - 0.5, fx.y + 3.5, 2.8, 1.2);
+    }
+    // 马具铜件（胸带 + 缰绳，金色）
+    ctx.strokeStyle = '#ffd700'; ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(fx.x - 4, fx.y - 4); ctx.lineTo(fx.x + 5, fx.y - 4);
+    ctx.moveTo(fx.x + 8, fx.y - 6); ctx.lineTo(fx.x + 10, fx.y - 4);
+    ctx.stroke();
+    // 铜扣
+    ctx.fillStyle = '#ffd700';
+    ctx.beginPath(); ctx.arc(fx.x, fx.y - 4, 1.1, 0, Math.PI * 2); ctx.fill();
+    // 锻造文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 12px "STSong", serif';
+      ctx.fillStyle = '#e8c88a';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
+      ctx.fillText('战马披甲', fx.x, fx.y - 22);
+    }
+    ctx.restore();
+  }
+
+  // 军团整编：多面军旗自四方向中央合拢 + 士兵剪影汇聚
+  _drawLegionMerge(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 四面军旗自四角向中央收拢
+    const gatherP = this._v15EaseInOut(Math.min(1, p / 0.6));
+    const corners = [[-20, -14], [20, -14], [-20, 8], [20, 8]];
+    for (let i = 0; i < 4; i++) {
+      const [cx, cy] = corners[i];
+      const fxPos = this._v15Lerp(cx, 0, gatherP);
+      const fyPos = this._v15Lerp(cy, -4, gatherP);
+      // 旗杆
+      ctx.strokeStyle = '#c4a55a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(fxPos, fyPos + 6); ctx.lineTo(fxPos, fyPos - 6); ctx.stroke();
+      // 旗面（朱红，随收拢摆动）
+      const wave = Math.sin(this.time * 5 + fx.seed + i) * 1.2;
+      ctx.fillStyle = '#c82828';
+      ctx.beginPath();
+      ctx.moveTo(fxPos, fyPos - 6);
+      ctx.lineTo(fxPos + 5, fyPos - 5 + wave);
+      ctx.lineTo(fxPos, fyPos - 3);
+      ctx.closePath(); ctx.fill();
+    }
+    // 中央聚拢的士兵剪影（3 人）
+    for (let i = -1; i <= 1; i++) {
+      const sx = fx.x + i * 4;
+      ctx.fillStyle = '#3a4a5a';
+      ctx.fillRect(sx - 1.4, fx.y - 2, 2.8, 5);
+      ctx.fillStyle = '#e0c8a0';
+      ctx.beginPath(); ctx.arc(sx, fx.y - 3.4, 1.3, 0, Math.PI * 2); ctx.fill();
+    }
+    // 整编金光环（收拢完成后扩散）
+    if (p > 0.6) {
+      const ringP = (p - 0.6) / 0.3;
+      ctx.strokeStyle = `rgba(255,215,0,${0.7 * (1 - ringP)})`;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(fx.x, fx.y - 2, 8 + ringP * 20, 0, Math.PI * 2); ctx.stroke();
+    }
+    // 整编文字
+    const textP = this._v15EaseOutCubic((p - 0.5) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('军团整编', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 阅兵：方阵横列行进 + 多旗飘扬
+  _drawReviewTroops(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 行进横向位移（小往返）
+    const travel = this._v15EaseInOut(p) * 24 - 12;
+    // 方阵士兵（一排 6 人，正步起伏）
+    for (let i = 0; i < 6; i++) {
+      const sx = fx.x - 14 + i * 6 + travel;
+      const step = Math.abs(Math.sin(this.time * 8 + i * 0.8)) * 1.5;
+      ctx.fillStyle = i % 2 ? '#3a4a5a' : '#4a5a6a';
+      ctx.fillRect(sx - 1.5, fx.y - 4 + step * 0.3, 3, 5);
+      ctx.fillStyle = '#e0c8a0';
+      ctx.beginPath(); ctx.arc(sx, fx.y - 5.2 + step * 0.3, 1.4, 0, Math.PI * 2); ctx.fill();
+      // 长枪扛肩
+      ctx.strokeStyle = '#8a6a3a'; ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(sx + 1, fx.y - 3);
+      ctx.lineTo(sx + 4, fx.y - 9 + step);
+      ctx.stroke();
+    }
+    // 三面旌旗（上方飘扬）
+    for (let i = -1; i <= 1; i++) {
+      const px = fx.x + i * 12 + travel;
+      ctx.strokeStyle = '#c4a55a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px, fx.y - 6); ctx.lineTo(px, fx.y - 16); ctx.stroke();
+      const wave = Math.sin(this.time * 6 + fx.seed + i * 1.5) * 1.5;
+      ctx.fillStyle = i === 0 ? '#c82828' : '#d84848';
+      ctx.beginPath();
+      ctx.moveTo(px, fx.y - 16);
+      ctx.lineTo(px + 6 + wave, fx.y - 14 + wave * 0.5);
+      ctx.lineTo(px, fx.y - 12);
+      ctx.closePath(); ctx.fill();
+    }
+    // 阅兵文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('阅兵', fx.x, fx.y - 26);
     }
     ctx.restore();
   }

@@ -165,7 +165,12 @@ export class DynastySystem {
     if (!rec || !rec.emperorId) return {};
     const emperor = game.getGeneral(rec.emperorId);
     if (!emperor) return {};
-    const charm = (emperor.command + emperor.force + emperor.intel + emperor.politics) / 4;
+    // BUG修复（dynasty.js getEmperorBag NaN 污染）：旧存档/模组武将四维可能为 undefined 或非数。
+    //   原 `(emperor.command + emperor.force + ...)/4` 遇 undefined 得 NaN，
+    //   `charm >= 85` 恒为 false → 皇帝 buff 永久静默失效（与本文件 calcLegitimacy 已修的
+    //   同源 NaN 问题一致，但此处漏修）。修复：四维缺失/非数时回退基准 60，保证 charm 恒为有限数。
+    const _n = (v) => { const x = Number(v); return Number.isFinite(x) ? x : 60; };
+    const charm = (_n(emperor.command) + _n(emperor.force) + _n(emperor.intel) + _n(emperor.politics)) / 4;
     const bag = {};
     if (charm >= 85) { bag.moraleFlat = 3; bag.incomeMult = 0.05; }
     else if (charm >= 70) { bag.moraleFlat = 1; }

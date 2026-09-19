@@ -5805,3 +5805,155 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
 .v22-cj-btn { border-color: rgba(240,192,96,0.5); color: var(--v22-gold); }
 .v22-rk-9, .v22-rk-10 { background: rgba(120,120,120,0.16); color: #a8a8a8; }
 .v22-rk-11, .v22-rk-12 { background: rgba(120,90,60,0.18); color: #b89878; }
+
+/* ==============================================================
+   V23.0「铁血军魂版」— 军事训练/军团整编/军衔/军功爵/兵法/锻造深化
+   新类名一律 v23- 前缀；铁血红 + 钢青配色，区别于 V22 金榜金。
+   ============================================================== */
+:root {
+  --v23-blood: #c0392b;
+  --v23-steel: #b8c0cc;
+  --v23-gold: #e0b060;
+  --v23-paper: #ece0d0;
+  --v23-ink: #120a0a;
+  --v23-line: rgba(192,57,43,0.38);
+  --v23-panel: rgba(18,10,10,0.96);
+  --v23-jade: #4f8a6a;
+  --v23-warn: #e0a555;
+  --v23-safe: #6fcf6f;
+  --v23-danger: #e05555;
+  --v23-radius: 10px;
+}
+
+@keyframes v23Enter { from { opacity: 0; transform: translateY(12px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes v23March { 0%,100% { transform: translateX(0); } 50% { transform: translateX(3px); } }
+@keyframes v23Ribs { 0%,100% { background-position: 0 0; } 100% { background-position: 48px 0; } }
+@keyframes v23RankGlow { 0%,100% { box-shadow: 0 0 4px rgba(192,57,43,0.4); } 50% { box-shadow: 0 0 14px rgba(224,176,96,0.7); } }
+@keyframes v23BadgePulse { 0%,100% { text-shadow: 0 0 6px rgba(192,57,43,0.5); } 50% { text-shadow: 0 0 20px rgba(224,176,96,0.9); } }
+
+/* ---------- 主菜单版本徽章 ---------- */
+.v23-version-badge {
+  animation: v23BadgePulse 2.6s ease-in-out infinite;
+  border: 1px solid var(--v23-blood);
+}
+
+/* ---------- 顶栏入口按钮 ---------- */
+.v23-drill-btn { border-color: rgba(192,57,43,0.55); color: #e08878; }
+.v23-merit-btn { border-color: rgba(224,176,96,0.5); color: var(--v23-gold); }
+
+/* ---------- 弹窗骨架 ---------- */
+.v23-overlay {
+  position: fixed; inset: 0; z-index: 9200;
+  background: rgba(6,3,3,0.76); display: flex; align-items: center; justify-content: center; padding: 16px;
+}
+.v23-modal {
+  position: relative; width: 92%; max-width: 660px; max-height: 86vh;
+  background: var(--v23-panel); color: var(--v23-paper);
+  border: 1px solid var(--v23-line); border-radius: var(--v23-radius);
+  padding: 18px 18px 16px; box-shadow: 0 10px 48px rgba(0,0,0,0.7), inset 0 0 30px rgba(192,57,43,0.06);
+  animation: v23Enter 0.28s ease-out;
+}
+.v23-modal.v23-wide { max-width: 780px; }
+.v23-scroll { overflow-y: auto; }
+.v23-scroll::-webkit-scrollbar { width: 8px; }
+.v23-scroll::-webkit-scrollbar-thumb { background: rgba(192,57,43,0.4); border-radius: 4px; }
+.v23-corner { position: absolute; width: 14px; height: 14px; border-color: var(--v23-blood); border-style: solid; }
+.v23-corner.tl { top: 6px; left: 6px; border-width: 2px 0 0 2px; }
+.v23-corner.tr { top: 6px; right: 6px; border-width: 2px 2px 0 0; }
+.v23-corner.bl { bottom: 6px; left: 6px; border-width: 0 0 2px 2px; }
+.v23-corner.br { bottom: 6px; right: 6px; border-width: 0 2px 2px 0; }
+.v23-title { text-align: center; color: #f0c8a0; letter-spacing: 3px; margin-bottom: 14px; font-size: 20px; text-shadow: 0 0 12px rgba(192,57,43,0.45); }
+.v23-body { font-size: 13px; line-height: 1.6; }
+.v23-close { display: block; margin: 14px auto 0; }
+
+/* ---------- 汇总 / 区块 ---------- */
+.v23-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.v23-stat { background: rgba(0,0,0,0.4); border: 1px solid var(--v23-line); border-radius: 8px; padding: 8px 6px; text-align: center; }
+.v23-stat span { display: block; font-size: 10.5px; color: #b09a80; }
+.v23-stat b { font-size: 14px; color: var(--v23-paper); }
+.v23-status-line { text-align: center; font-size: 12.5px; margin: 6px 0 10px; padding: 6px; border-radius: 8px; }
+.v23-status-line.v23-ok { color: var(--v23-safe); background: rgba(111,207,111,0.10); }
+.v23-status-line.v23-wait { color: #c0a888; background: rgba(0,0,0,0.28); }
+.v23-section { margin-bottom: 14px; }
+.v23-sec-title { font-size: 13.5px; color: #e08878; letter-spacing: 2px; border-left: 3px solid var(--v23-blood); padding-left: 8px; margin: 10px 0 8px; }
+.v23-sub2 { margin-top: 12px; }
+.v23-hint, .v23-empty { font-size: 11.5px; color: #9a8a72; padding: 8px 4px; }
+
+/* ---------- 军衔徽记 ---------- */
+.v23-rank-row { align-items: center; gap: 6px; }
+.v23-rank-badge { display: inline-block; font-style: normal; font-size: 11.5px; padding: 1px 8px; border-radius: 4px; border: 1px solid; white-space: nowrap; }
+.v23-rank-cond { font-size: 10px; color: #a89270; margin-left: 2px; }
+.v23-rank-badge.rk0, .v23-rank-badge.rk1 { background: rgba(150,150,150,0.16); color: #b0b0b0; border-color: rgba(150,150,150,0.4); }
+.v23-rank-badge.rk2, .v23-rank-badge.rk3 { background: rgba(120,150,110,0.18); color: #9cc8a8; border-color: rgba(120,150,110,0.4); }
+.v23-rank-badge.rk4, .v23-rank-badge.rk5 { background: rgba(90,138,208,0.18); color: #8ab0e0; border-color: rgba(90,138,208,0.4); }
+.v23-rank-badge.rk6, .v23-rank-badge.rk7 { background: rgba(184,115,58,0.20); color: #e0b070; border-color: rgba(184,115,58,0.45); }
+.v23-rank-badge.rk8 { background: rgba(192,57,43,0.26); color: #f0a090; border-color: var(--v23-blood); }
+.v23-rank-badge.rk9 { background: rgba(224,176,96,0.28); color: var(--v23-gold); border-color: var(--v23-gold); animation: v23RankGlow 2s ease-in-out infinite; }
+
+/* ---------- 训练面板 ---------- */
+.v23-drill-list { display: flex; flex-direction: column; gap: 6px; max-height: 34vh; overflow-y: auto; }
+.v23-drill-row { display: flex; align-items: center; gap: 10px; border: 1px solid rgba(192,57,43,0.22); border-radius: 8px; padding: 6px 8px; background: rgba(0,0,0,0.3); }
+.v23-drill-info { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.v23-drill-attr { font-size: 11px; color: #a89270; }
+.v23-drill-bar { height: 6px; background: rgba(0,0,0,0.5); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+.v23-drill-fill { height: 100%; background: linear-gradient(90deg, #8a2a1e, var(--v23-blood), #e08878); transition: width 0.4s ease; }
+.v23-drill-up { display: flex; flex-direction: column; align-items: center; border-color: rgba(192,57,43,0.5); color: #e08878; }
+.v23-drill-up small { font-size: 9px; color: #b09a70; }
+.v23-drill-max { font-size: 11px; color: var(--v23-gold); padding: 4px 8px; border: 1px dashed rgba(224,176,96,0.4); border-radius: 6px; }
+
+/* ---------- 整编面板 ---------- */
+.v23-opt-list { display: flex; flex-direction: column; gap: 6px; max-height: 26vh; overflow-y: auto; }
+.v23-opt { display: flex; align-items: center; gap: 8px; font-size: 12.5px; border: 1px solid rgba(192,57,43,0.2); border-radius: 8px; padding: 6px 8px; background: rgba(0,0,0,0.28); cursor: pointer; }
+.v23-opt:has(input:checked) { border-color: var(--v23-blood); background: rgba(192,57,43,0.14); }
+.v23-opt input { accent-color: var(--v23-blood); }
+.v23-opt-attr { margin-left: auto; font-size: 11px; color: #a89270; }
+.v23-reorg-go { display: block; width: 100%; margin-top: 10px; }
+
+/* ---------- 军功爵面板 ---------- */
+.v23-merit-list { display: flex; flex-direction: column; gap: 6px; max-height: 36vh; overflow-y: auto; }
+.v23-merit-row { display: flex; align-items: center; gap: 10px; border: 1px solid rgba(192,57,43,0.2); border-radius: 8px; padding: 6px 8px; background: rgba(0,0,0,0.28); font-size: 12.5px; }
+.v23-merit-info { flex: 1; display: flex; flex-direction: column; }
+.v23-merit-attr { font-size: 11px; color: #a89270; }
+.v23-merit-pts { color: var(--v23-gold); font-weight: bold; white-space: nowrap; }
+.v23-merit-fief { color: #c9a06a; font-size: 11.5px; white-space: nowrap; }
+
+/* ---------- 兵法研习 ---------- */
+.v23-bf-list { display: flex; flex-direction: column; gap: 6px; }
+.v23-bf-row { display: flex; align-items: center; gap: 10px; border: 1px solid rgba(192,57,43,0.2); border-radius: 8px; padding: 7px 8px; background: rgba(0,0,0,0.28); }
+.v23-bf-row.on { border-color: rgba(224,176,96,0.45); background: rgba(224,176,96,0.08); }
+.v23-bf-info { flex: 1; display: flex; flex-direction: column; }
+.v23-bf-desc { font-size: 11px; color: #a89270; }
+.v23-bf-learned { font-size: 11px; color: var(--v23-safe); border: 1px solid rgba(111,207,111,0.4); padding: 2px 8px; border-radius: 4px; }
+.v23-bf-btn { border-color: rgba(224,176,96,0.5); color: var(--v23-gold); }
+.v23-bf-lock { font-size: 10.5px; color: #8a7c62; }
+
+/* ---------- 锻造深化 / 强化路线 ---------- */
+.v23-route-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.v23-route-btn { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid var(--v23-line); border-radius: 8px; background: rgba(0,0,0,0.3); color: var(--v23-paper); cursor: pointer; text-align: left; }
+.v23-route-btn b { font-size: 13px; color: #e08878; }
+.v23-route-btn span { font-size: 11px; color: #a89270; }
+.v23-route-btn.on { border-color: var(--v23-gold); background: rgba(224,176,96,0.12); }
+.v23-route-btn.on b { color: var(--v23-gold); }
+.v23-forge-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.v23-forge-city { display: flex; flex-direction: column; align-items: center; border-color: rgba(192,57,43,0.5); color: #e08878; }
+.v23-forge-city small { font-size: 9px; color: #b09a70; }
+
+/* ---------- 武将详情内新增按钮 ---------- */
+.v23-gen-btn { border-color: rgba(192,57,43,0.45); color: #e08878; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .v23-modal { width: 96%; padding: 14px; }
+  .v23-summary { grid-template-columns: repeat(2, 1fr); }
+  .v23-merit-row { flex-wrap: wrap; }
+  .v23-opt-attr { margin-left: 0; width: 100%; }
+  .v23-route-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .v23-title { font-size: 17px; }
+  .v23-stat b { font-size: 13px; }
+  .v23-drill-row { flex-direction: column; align-items: stretch; }
+  .v23-drill-up { flex-direction: row; justify-content: center; gap: 6px; }
+  .v23-opt { font-size: 12px; }
+  .v23-merit-pts, .v23-merit-fief { font-size: 11px; }
+}

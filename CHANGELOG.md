@@ -19,7 +19,29 @@
 - **v23_military_hegemon 铁血霸主（S）**：大将军衔+彻侯爵+军功第一+5 级整编
 - **v23_forge_master 锻造大师（A）**：锻造 10 件极品（+8 及以上）装备
 
-### 四、约束遵守
+### 四、音效扩充（audio.js，Web Audio 程序化合成）
+- **训练音效（3）**：playTrainingDrill 操练（整齐脚步+武器碰撞+口令呼喝）、playRankUp 晋升（复用既有号角+金器鸣响+鼓点）、playMeritAward 授勋（编钟+礼炮+欢呼）
+- **锻造音效（3）**：playForgeHammer 锤击（铁锤打铁砧+火花噼啪）、playForgeQuench 淬火（冷水蒸汽嘶嘶+金属收缩）、playForgeSuccess 锻造成功（金光泛音+编钟）
+- **整编音效（2）**：playLegionMerge 整编（军旗展开+集合脚步声）、playReviewStart 阅兵（号角齐鸣+军鼓隆隆）
+- **新 BGM（2）**：militaryCamp「沙场点兵」C小调85BPM 军鼓号角雄壮威武；forge「炉火纯青」D小调70BPM 打铁节奏金属泛音；均注册 BGM_TRACKS/BGM_INFO/默认解锁
+
+### 五、BUG 修复（6 个真实缺陷）
+- **pass.js destroyPass**：模组卸载后 getPassById 返回 undefined 时 sp.name 抛 TypeError，做空值兜底
+- **game.js forgeEquipment**：getPlayerRes() 未判空就 res.money 比较，补 !res 防护（同 buildGrotto/buildNavy）
+- **game.js grantTitle**：封赏时 getPlayerRes() 未判空就 res.money，补 !res 防护
+- **game.js moveArmy**：行军/占领无主城两处 res.food 未判空，补 !res 防护
+- **game.js forgeEquipment 日志**：`item.name ? '' : ''` 无意义三元死代码（恒为空），改为输出真实品质阶名
+- **dynasty.js getEmperorBag**：君主四维未做 NaN 防护（与 calcLegitimacy 同源但漏修），旧档/模组武将四维缺失时皇帝 buff 静默失效，补有限数回退
+
+### 六、性能优化（4 项）
+- **fog.js computeVisibleCities 同盟视野**：原对每个同盟势力全表 filter（O(A×C)），改为先建同盟集合再单次遍历城市（O(F+C)）
+- **game.js getTechBag 武将遍历**：复用 runAITurns 入口 _roundFactionGenerals 分桶索引，避免全表 filter
+- **game.js getBondBag/getActiveBonds**：同样复用 _roundFactionGenerals 分桶，消除同势力一次科技袋计算内的两次全表 filter
+- **game.js _completeResearch**：moraleFlat/prosperityFlat 两次 getFactionCities 全表遍历合并为一次
+
+### 七、约束遵守
+- 仅修改 audio.js/game.js/dynasty.js/pass.js/fog.js；未改 data.js/ui.js/animation.js/map.js/style.css/events.js 等禁改文件
+- 未提交 git、未构建、未改 www；node --check 全部修改文件通过；全程中文
 - 仅新建 military_training.js、修改 achievements.js / ending.js；未改 game.js/ui.js/animation.js/map.js
 - 新数据统一 v23_ 前缀；node --check 全部通过；既有冒烟测试无回归
 
