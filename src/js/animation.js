@@ -4387,12 +4387,579 @@ export class CharacterAnimator {
     }
   }
 
+  // ============================================================
+  // V18.0 — 动画与地图增强：战斗动画继续深化
+  // 单挑新动作(横劈/直刺/闪避/反击) / 溃逃收尾 / 攻城(云梯·撞槌·墙裂·攀爬) /
+  // 水战深化(对冲·接舷·火船) / 伏兵突袭 / 援军到达
+  // 设计：play* 触发对象池粒子爆发 + 一次性 ctx 即时绘制；
+  //      连续形变走 _battleFXs（drawBattleFX 渲染），受 _battleFXCap 上限保护；
+  //      所有粒子经 _getParticle/_pushParticle（对象池+统一上限）。
+  // ============================================================
+
+  // ---- 单挑·横劈：宽大横扫斩弧 + 刀风速度线 + 刃风火花 ----
+  // dir: 1 向右 / -1 向左。在 (x,y) 挥出一道横向横扫弧光
+  playDuelSlash(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    // 1) 横扫斩弧（复用 slash 粒子，沿水平大半圆扫过）
+    const arc = this._getParticle();
+    Object.assign(arc, { type: 'slash',
+      x, y: y - 18, vx: 0, vy: 0, gravity: 0, drag: 0,
+      life: 0.22, maxLife: 0.22, size: 26, color: '#ffffff',
+      angle: dir > 0 ? Math.PI * 0.15 : Math.PI * 0.85 });
+    this._pushParticle(arc);
+    // 2) 刀风速度线（3 条，沿横劈方向向后）
+    for (let i = 0; i < 3; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'speedline',
+        x: x - dir * (14 + Math.random() * 10),
+        y: y - 22 - Math.random() * 10,
+        vx: dir * (260 + Math.random() * 80), vy: 0,
+        gravity: 0, drag: 0, life: 0.16, maxLife: 0.2,
+        size: 14, color: 'rgba(255,255,255,0.7)',
+        angle: dir > 0 ? 0 : Math.PI });
+      this._pushParticle(s);
+    }
+    // 3) 刃风火花（劈砍末端溅出）
+    const tipX = x + dir * 26;
+    for (let i = 0; i < 5; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'spark_burst',
+        x: tipX, y: y - 18,
+        vx: Math.cos(a) * 60, vy: Math.sin(a) * 60 - 20,
+        gravity: 160, drag: 0.8,
+        life: 0.25 + Math.random() * 0.15, maxLife: 0.4,
+        size: 1.4, color: Math.random() < 0.5 ? '#ffffff' : '#FFD700' });
+      this._pushParticle(s);
+    }
+    // 4) 即时绘制一帧宽刀光（横向扫过）
+    if (ctx) {
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = '#ffe9a8'; ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.arc(x, y - 18, 24,
+        dir > 0 ? Math.PI * 0.2 : Math.PI * 0.8,
+        dir > 0 ? Math.PI * 0.8 : Math.PI * 1.6);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ---- 单挑·直刺：前突穿刺光枪 + 剑尖穿透火花 ----
+  playDuelThrust(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    // 1) 前冲刺位移（小步前送）
+    this.lunges.push({ x, y, dir, distance: 10 + Math.random() * 4, life: 0.22, maxLife: 0.22 });
+    // 2) 穿刺光枪（细长白色直线，沿 dir 方向）
+    if (ctx) {
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = '#cfe8ff'; ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.moveTo(x - dir * 4, y - 22);
+      ctx.lineTo(x + dir * 30, y - 22);
+      ctx.stroke();
+      ctx.restore();
+    }
+    // 3) 剑尖穿透火花（在枪尖处迸射，沿前方扇形）
+    const tipX = x + dir * 30;
+    for (let i = 0; i < 6; i++) {
+      const a = dir > 0 ? (Math.PI * 0.1 + Math.random() * Math.PI * 0.8)
+                        : (Math.PI * 1.1 + Math.random() * Math.PI * 0.8);
+      const s = this._getParticle();
+      Object.assign(s, { type: 'spark_burst',
+        x: tipX, y: y - 22,
+        vx: Math.cos(a) * (80 + Math.random() * 60),
+        vy: Math.sin(a) * (80 + Math.random() * 60),
+        gravity: 120, drag: 0.7,
+        life: 0.22 + Math.random() * 0.15, maxLife: 0.37,
+        size: 1.3, color: '#eaf6ff' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 单挑·闪避：侧移残影 + 脚下尘土 ----
+  playDuelDodge(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 侧移残影（渐隐半透明人影虚影）
+    for (let i = 0; i < 3; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'afterimage',
+        x: x + (Math.random() - 0.5) * 20, y: y - 16,
+        vx: (Math.random() - 0.5) * 30, vy: 0,
+        gravity: 0, drag: 1.5,
+        life: 0.3 + i * 0.08, maxLife: 0.3 + i * 0.08,
+        size: 6, color: 'rgba(200,220,255,0.5)' });
+      this._pushParticle(s);
+    }
+    // 2) 脚下闪避尘土
+    this.spawnParticle(x, y, 'dust');
+  }
+
+  // ---- 单挑·反击：闪避后立刻反手快斩 + 重火花 + 「反击!」 ----
+  playDuelCounter(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    // 反手横劈（方向反向以体现反击）
+    this.playDuelSlash(ctx, x, y, -dir);
+    // 反击重击火花（更密）
+    for (let i = 0; i < 6; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'spark_burst',
+        x: x - dir * 20, y: y - 20,
+        vx: Math.cos(a) * 90, vy: Math.sin(a) * 90 - 30,
+        gravity: 160, drag: 0.8,
+        life: 0.3 + Math.random() * 0.2, maxLife: 0.5,
+        size: 1.6, color: Math.random() < 0.5 ? '#FFD700' : '#ffffff' });
+      this._pushParticle(s);
+    }
+    if (ctx) {
+      ctx.save();
+      ctx.font = 'bold 16px "STSong", serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3; ctx.strokeStyle = '#7a4a00';
+      ctx.strokeText('反击!', x, y - 46);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText('反击!', x, y - 46);
+      ctx.restore();
+    }
+  }
+
+  // ---- 军队溃逃收尾：败军四散 + 丢弃旗帜 + 盔甲兵器掉落 ----
+  playRoutComplete(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 更多败兵四散（12~16 个，朝外圈逃窜渐隐）
+    const N = 12 + Math.floor(Math.random() * 4);
+    for (let i = 0; i < N; i++) {
+      const ang = (i / N) * Math.PI * 2 + Math.random() * 0.4;
+      const sp = 70 + Math.random() * 110;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'rout_soldier',
+        x: x + (Math.random() - 0.5) * 24,
+        y: y + (Math.random() - 0.5) * 10,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 40,
+        gravity: 90, drag: 0.6,
+        life: 1.0 + Math.random() * 0.6, maxLife: 1.6,
+        size: 2 + Math.random() * 1.5,
+        color: Math.random() < 0.5 ? '#6a5a4a' : '#8a7a6a' });
+      this._pushParticle(s);
+    }
+    // 2) 丢弃的旗帜（倒地红布，2~3 面抛物线落地）
+    for (let i = 0; i < 3; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'form_soldier',
+        x: x + (Math.random() - 0.5) * 30,
+        y: y + (Math.random() - 0.5) * 8 + 2,
+        vx: (Math.random() - 0.5) * 20, vy: -20 - Math.random() * 10,
+        gravity: 180, drag: 0.5,
+        life: 0.8 + Math.random() * 0.4, maxLife: 1.2,
+        size: 4, color: '#a03030', angle: Math.random() * Math.PI });
+      this._pushParticle(s);
+    }
+    // 3) 盔甲/兵器掉落（灰褐碎片，抛物线落地）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'armor_bit',
+        x: x + (Math.random() - 0.5) * 16, y: y - 6,
+        vx: Math.cos(Math.random() * Math.PI * 2) * (30 + Math.random() * 50),
+        vy: -60 - Math.random() * 40,
+        gravity: 220, drag: 0.2,
+        life: 0.7 + Math.random() * 0.4, maxLife: 1.1,
+        size: 1.8 + Math.random() * 1.5,
+        color: Math.random() < 0.5 ? '#8a8a8a' : '#6a6a5a' });
+      this._pushParticle(s);
+    }
+    // 4) 卷起尘土 + 一面旗帜倒下 FX + 败溃尘土扩散环
+    this.spawnParticle(x, y, 'dust');
+    this._pushBattleFX({ type: 'flag_fall', x, y, dur: 1.2 });
+    this._pushBattleFX({ type: 'rout_dust_ring', x, y, dur: 1.0 });
+  }
+
+  // ---- 攻城动画：云梯搭建 + 攻城槌撞击 + 城墙碎裂 + 士兵攀爬 ----
+  playSiegeWall(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 云梯搭建 FX（梯子从竖直放倒到斜靠城墙，1.0s）
+    const ladderDir = Math.random() < 0.5 ? 1 : -1;
+    this._pushBattleFX({ type: 'siege_ladder', x, y, dur: 1.0, dir: ladderDir });
+    // 2) 攻城槌撞击 FX（往复撞击 + 墙根尘土，0.4s）
+    this._pushBattleFX({ type: 'siege_ram', x, y, dur: 0.45 });
+    // 3) 城墙碎裂 FX（裂纹随撞击蔓延，1.4s）
+    this._pushBattleFX({ type: 'wall_crack', x, y, dur: 1.4, seed: Math.random() * 100 });
+    // 4) 攀爬士兵（5~6 个小卒沿云梯向上攀）
+    for (let i = 0; i < 6; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'form_soldier',
+        x: x + (Math.random() - 0.5) * 6,
+        y: y + 6 + Math.random() * 4,
+        vx: (Math.random() - 0.5) * 6, vy: -(30 + Math.random() * 20),
+        gravity: 0, drag: 0.5,
+        life: 1.0 + Math.random() * 0.5, maxLife: 1.5,
+        size: 2, color: Math.random() < 0.5 ? '#c0a060' : '#a08050',
+        seed: Math.random() * 100 });
+      this._pushParticle(s);
+    }
+    // 5) 飞石碎屑撞击飞溅（灰色碎石，重力下落）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'stone_chunk',
+        x: x + (Math.random() - 0.5) * 20, y: y - 10,
+        vx: (Math.random() - 0.5) * 80, vy: -40 - Math.random() * 60,
+        gravity: 260, drag: 0.15,
+        life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+        size: 1.6 + Math.random() * 1.6,
+        color: Math.random() < 0.5 ? '#9a9a9a' : '#7a7a7a' });
+      this._pushParticle(s);
+    }
+    // 6) 撞击震屏 + 地面尘土
+    this._shakeFX(4, 0.25);
+    this.spawnParticle(x, y, 'battle_dust');
+    // 7) 立即绘制第一帧斜靠云梯
+    if (ctx) this._drawSiegeLadder(ctx, x, y, 0, 1.0, ladderDir);
+  }
+
+  // 云梯绘制：从竖直放倒到斜靠（p: 0→1）
+  _drawSiegeLadder(ctx, x, y, t, dur, dir = 1) {
+    const p = Math.min(1, t / dur);
+    const alpha = 1 - Math.max(0, (p - 0.85) / 0.15);
+    const len = 36 * this._v17EaseOutCubic(p);
+    const lean = 0.5 * p * dir;             // 倾斜角（弧度）
+    const topX = Math.sin(lean) * len;
+    const topY = -Math.cos(lean) * len;
+    ctx.save();
+      ctx.translate(x, y);
+      ctx.globalAlpha = alpha;
+      // 两轨
+      ctx.strokeStyle = '#7a5a30';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(-2.5, 0);
+      ctx.lineTo(topX - 2.5 * Math.cos(lean), topY + 2.5 * Math.sin(lean));
+      ctx.moveTo(2.5, 0);
+      ctx.lineTo(topX + 2.5 * Math.cos(lean), topY - 2.5 * Math.sin(lean));
+      ctx.stroke();
+      // 横档
+      ctx.lineWidth = 1;
+      for (let i = 1; i <= 5; i++) {
+        const f = i / 6;
+        ctx.beginPath();
+        ctx.moveTo(topX * f - 2.5, topY * f);
+        ctx.lineTo(topX * f + 2.5, topY * f);
+        ctx.stroke();
+      }
+    ctx.restore();
+  }
+
+  // 攻城槌撞击绘制：横梁往复前伸 + 墙根尘土
+  _drawSiegeRam(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    const alpha = 1 - Math.max(0, (p - 0.7) / 0.3);
+    const reach = Math.sin(p * Math.PI) * 8;   // 前伸再弹回
+    ctx.save();
+      ctx.translate(x, y);
+      ctx.globalAlpha = alpha;
+      // 横梁
+      ctx.strokeStyle = '#6a4a28';
+      ctx.lineWidth = 4;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-14, 0); ctx.lineTo(14 + reach, 0);
+      ctx.stroke();
+      // 槌头金属包头
+      ctx.fillStyle = '#9a9a8a';
+      ctx.beginPath(); ctx.arc(14 + reach, 0, 3.5, 0, Math.PI * 2); ctx.fill();
+      // 撞击点尘土
+      if (p > 0.4 && p < 0.7) {
+        ctx.globalAlpha = alpha * 0.6;
+        ctx.fillStyle = '#8B7355';
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.arc(18 + Math.sin(t * 30 + i) * 4, -2 - i * 3, 2 + i, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    ctx.restore();
+  }
+
+  // 城墙碎裂绘制：撞击点向外蔓延的锯齿裂纹
+  _drawWallCrack(ctx, x, y, t, dur, seed = 0) {
+    const p = Math.min(1, t / dur);
+    const alpha = (1 - p) * 0.8;
+    const maxLen = 30;
+    ctx.save();
+      ctx.translate(x, y - 12);
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = 'rgba(40,30,20,0.9)';
+      ctx.lineWidth = 1.5;
+      for (let b = 0; b < 3; b++) {
+        const ang = -Math.PI / 2 + (b - 1) * 0.7 + Math.sin(seed + b) * 0.2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        for (let i = 1; i <= 4; i++) {
+          const f = (i / 4) * p;
+          const cx = Math.cos(ang) * maxLen * f + Math.sin(seed + b * 3 + i * 1.7) * 3;
+          const cy = Math.sin(ang) * maxLen * f + Math.cos(seed + b * 2 + i) * 2;
+          ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
+      }
+    ctx.restore();
+  }
+
+  // ---- 伏兵突袭：从森林/山地杀出 + 烟尘 + 「!」突袭标识 ----
+  playAmbush(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 伏击烟尘 FX（棕色烟尘从地面腾起扩散）
+    this._pushBattleFX({ type: 'ambush_smoke', x, y, dur: 1.2 });
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'mist',
+        x: x + (Math.random() - 0.5) * 24,
+        y: y + (Math.random() - 0.5) * 8,
+        vx: (Math.random() - 0.5) * 30, vy: -20 - Math.random() * 15,
+        gravity: -6, drag: 0.3,
+        life: 0.9 + Math.random() * 0.5, maxLife: 1.4,
+        size: 8 + Math.random() * 8, color: '#7a6a4a' });
+      this._pushParticle(s);
+    }
+    // 2) 伏兵杀出（士兵从中心向四周冲出）
+    for (let i = 0; i < 10; i++) {
+      const ang = (i / 10) * Math.PI * 2;
+      const sp = 80 + Math.random() * 70;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'form_soldier',
+        x, y: y - 6,
+        vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30,
+        gravity: 60, drag: 0.7,
+        life: 0.7 + Math.random() * 0.4, maxLife: 1.1,
+        size: 2.4, color: '#3a5a3a', seed: Math.random() * 100 });
+      this._pushParticle(s);
+    }
+    // 3) 地面尘土爆
+    this.spawnParticle(x, y, 'dust');
+    // 4) 突袭震屏
+    this._shakeFX(3, 0.18);
+    // 5) 突袭标识「!」（脉冲放大）
+    if (ctx) {
+      ctx.save();
+        const pop = 1 + 0.3 * Math.sin(this.time * 10);
+        ctx.translate(x, y - 44);
+        ctx.scale(pop, pop);
+        ctx.font = 'bold 26px "STSong", serif';
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.lineWidth = 4; ctx.strokeStyle = '#5a1a1a';
+        ctx.strokeText('!', 0, 0);
+        ctx.fillStyle = '#ff4a3a';
+        ctx.fillText('!', 0, 0);
+      ctx.restore();
+    }
+  }
+
+  // ---- 援军到达：远方尘土 + 军旗升起 + 号角声波纹 ----
+  playReinforcementArrive(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 1) 远方尘土 FX（烟尘升起并扩散，由淡到浓）
+    this._pushBattleFX({ type: 'reinforce_dust', x, y, dur: 1.6 });
+    for (let i = 0; i < 10; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'dust',
+        x: x + (Math.random() - 0.5) * 40,
+        y: y + (Math.random() - 0.5) * 6,
+        vx: (Math.random() - 0.5) * 20, vy: -18 - Math.random() * 12,
+        gravity: 6, drag: 0.5,
+        life: 1.2 + Math.random() * 0.6, maxLife: 1.8,
+        size: 4 + Math.random() * 5, color: '#9a8a6a' });
+      this._pushParticle(s);
+    }
+    // 2) 军旗出现 FX（旗杆升起 + 旗帜展开）
+    this._pushBattleFX({ type: 'reinforce_banner', x, y, dur: 1.4 });
+    // 3) 号角声波纹（同心圆弧向外扩散，3 圈错峰）
+    for (let i = 0; i < 3; i++) {
+      const horn = { type: 'reinforce_horn', x, y: y - 30, dur: 1.0 };
+      this._pushBattleFX(horn);
+      horn.t = -0.25 * i;   // 负起点实现错峰
+    }
+    // 4) 到达金光点缀
+    for (let i = 0; i < 6; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'victory_gold',
+        x: x + (Math.random() - 0.5) * 24, y: y - 10,
+        vx: (Math.random() - 0.5) * 20, vy: -30 - Math.random() * 20,
+        gravity: -8, drag: 0.3,
+        life: 0.8 + Math.random() * 0.4, maxLife: 1.2,
+        size: 2, color: '#FFD700' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 水战深化·战船对冲撞击：船首对撞 + 大水花 + 碎木片 ----
+  playNavalRamming(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    // 撞击冲击环
+    this._pushBattleFX({ type: 'naval_ring', x, y, dur: 0.7 });
+    // 大水花
+    for (let i = 0; i < 14; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'splash',
+        x: x + dir * 6, y: y,
+        vx: (Math.random() - 0.5) * 160, vy: -60 - Math.random() * 100,
+        gravity: 280, drag: 0.3,
+        life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+        size: 2 + Math.random() * 2.5,
+        color: Math.random() < 0.5 ? '#6ab0e8' : '#c8e8f8' });
+      this._pushParticle(s);
+    }
+    // 碎木片
+    for (let i = 0; i < 6; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'form_soldier',
+        x: x + dir * 6, y: y - 4,
+        vx: (Math.random() - 0.5) * 120, vy: -30 - Math.random() * 40,
+        gravity: 240, drag: 0.2,
+        life: 0.5 + Math.random() * 0.3, maxLife: 0.8,
+        size: 2.5, color: '#7a5a30', angle: Math.random() * Math.PI });
+      this._pushParticle(s);
+    }
+    this._shakeFX(3, 0.18);
+  }
+
+  // ---- 水战深化·接舷战：士兵跳帮跃过 + 甲板短兵相接火花 ----
+  playBoarding(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    // 跳帮士兵（抛物线跃向敌船）
+    for (let i = 0; i < 6; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'form_soldier',
+        x: x - 10, y: y - 6,
+        vx: 40 + Math.random() * 30, vy: -70 - Math.random() * 30,
+        gravity: 160, drag: 0.1,
+        life: 0.7 + Math.random() * 0.3, maxLife: 1.0,
+        size: 2.2, color: '#c0a060', seed: Math.random() * 100 });
+      this._pushParticle(s);
+    }
+    // 甲板短兵相接金属火花
+    for (let i = 0; i < 8; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'spark_burst',
+        x: x + 10, y: y - 8,
+        vx: Math.cos(a) * 70, vy: Math.sin(a) * 70 - 20,
+        gravity: 150, drag: 0.8,
+        life: 0.25 + Math.random() * 0.15, maxLife: 0.4,
+        size: 1.3, color: Math.random() < 0.5 ? '#fff' : '#FFD700' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 水战深化·火船冲撞：火船拖焰冲撞 + 火焰爆燃 ----
+  playFireShip(ctx, x, y, dir = 1) {
+    x = x || 0; y = y || 0;
+    // 拖焰尾迹（一串火球向后）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'fire',
+        x: x - dir * i * 6, y: y - 2 - Math.random() * 4,
+        vx: -dir * (30 + Math.random() * 20), vy: -10 - Math.random() * 10,
+        gravity: -30, drag: 0.4,
+        life: 0.5 + Math.random() * 0.3, maxLife: 0.8,
+        size: 3 + Math.random() * 3,
+        color: Math.random() < 0.5 ? '#ff5a2a' : '#ffaa22' });
+      this._pushParticle(s);
+    }
+    // 撞击爆燃 + 水花
+    this.spawnParticle(x + dir * 8, y - 4, 'fire');
+    this.spawnParticle(x + dir * 8, y, 'splash');
+    this._pushBattleFX({ type: 'fire_ring', x: x + dir * 8, y: y - 4, dur: 0.7, maxR: 36 });
+    this._shakeFX(4, 0.22);
+  }
+
+  // ============================================================
+  // V18.0 — 新增战斗 FX 绘制辅助
+  // ============================================================
+  _drawRoutDustRing(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.6;
+      ctx.strokeStyle = '#8B7355';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, 10 + p * 40, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  _drawAmbushSmoke(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.6;
+      ctx.fillStyle = '#7a6a4a';
+      for (let i = 0; i < 3; i++) {
+        const r = (8 + p * 22) * (1 + i * 0.4);
+        ctx.beginPath(); ctx.arc(x, y - p * 10, r, 0, Math.PI * 2); ctx.fill();
+      }
+    ctx.restore();
+  }
+  _drawReinforceDust(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.5;
+      ctx.fillStyle = '#9a8a6a';
+      for (let i = 0; i < 4; i++) {
+        const off = i * 5;
+        const r = 10 + p * 18 + off;
+        ctx.beginPath();
+        ctx.ellipse(x + Math.sin(t * 3 + i) * 4, y - p * 14 - off * 0.5, r, r * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    ctx.restore();
+  }
+  _drawReinforceBanner(ctx, x, y, t, dur) {
+    const p = Math.min(1, t / dur);
+    const rise = this._v17EaseOutCubic(p);
+    ctx.save();
+      ctx.translate(x, y);
+      ctx.globalAlpha = Math.min(1, p * 2);
+      const hgt = 26 * rise;
+      // 旗杆（升起）
+      ctx.strokeStyle = '#C4A55A';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -hgt); ctx.stroke();
+      // 旗帜展开
+      ctx.fillStyle = '#d8b040';
+      const w = 12 * Math.min(1, p * 2);
+      ctx.beginPath();
+      ctx.moveTo(0, -hgt);
+      ctx.quadraticCurveTo(w, -hgt + 2, w, -hgt + 4);
+      ctx.quadraticCurveTo(w, -hgt + 8, 0, -hgt + 8);
+      ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  _drawReinforceHorn(ctx, x, y, t, dur) {
+    const p = Math.min(1, Math.max(0, t / dur));
+    ctx.save();
+      ctx.globalAlpha = (1 - p) * 0.7;
+      ctx.strokeStyle = '#ffe9a8';
+      ctx.lineWidth = 2;
+      for (let side = -1; side <= 1; side += 2) {
+        ctx.beginPath();
+        ctx.arc(x, y, 10 + p * 40,
+          side > 0 ? -Math.PI * 0.8 : Math.PI * 0.2,
+          side > 0 ? -Math.PI * 0.2 : Math.PI * 0.8);
+        ctx.stroke();
+      }
+    ctx.restore();
+  }
+
   // ---- 每帧绘制所有激活的战斗 FX（外部 render 循环调用）----
   drawBattleFX(ctx) {
     if (!ctx || this._battleFXs.length === 0) return;
     ctx.save();
     for (const fx of this._battleFXs) {
       const p = fx.t / fx.dur;
+      if (p < 0) continue;   // 负起点（错峰音效环）尚未到达
       switch (fx.type) {
         case 'formation_ring':
           this._drawFormationRing(ctx, fx.x, fx.y, fx.t, fx.dur, fx.color, fx.maxR);
@@ -4446,6 +5013,31 @@ export class CharacterAnimator {
           ctx.globalAlpha = 1;
           break;
         }
+        // ---- V18.0 新增战斗 FX ----
+        case 'rout_dust_ring':
+          this._drawRoutDustRing(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'siege_ladder':
+          this._drawSiegeLadder(ctx, fx.x, fx.y, fx.t, fx.dur, fx.dir || 1);
+          break;
+        case 'siege_ram':
+          this._drawSiegeRam(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'wall_crack':
+          this._drawWallCrack(ctx, fx.x, fx.y, fx.t, fx.dur, fx.seed || 0);
+          break;
+        case 'ambush_smoke':
+          this._drawAmbushSmoke(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'reinforce_dust':
+          this._drawReinforceDust(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'reinforce_banner':
+          this._drawReinforceBanner(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
+        case 'reinforce_horn':
+          this._drawReinforceHorn(ctx, fx.x, fx.y, fx.t, fx.dur);
+          break;
       }
     }
     ctx.restore();

@@ -102,12 +102,25 @@ export function saveGame(game, slot = 0) {
     if (Array.isArray(data.log) && data.log.length > 500) {
       data.log = data.log.slice(-500);
     }
+    // 性能优化（save.js 大存档写入）：84城+189将规模下，序列化后的 JSON 字符串
+    //   已比 72城/144将 大 ~30%。原实现「先按 500 条日志打包→失败再截到 100 条重打包」
+    //   在长局场景常触发重试，意味着同一份数据要做两次 LZ77 压缩 + 两次 JSON.stringify
+    //   （每次都是主线程阻塞的同步重活，84 城规模下单次可达数十毫秒）。
+    //   优化：首次 pack 后预估字符串长度；已逼近 localStorage 5MB 上限（预留 ~15% 余量
+    //   给键名/信封）时，在写盘前主动把日志再压到 200 条，避免「打包→失败→再打包」的
+    //   双倍开销。日志仅展示用途，截断不影响玩法。
+    let packed = _pack(data);
+    if (typeof packed === 'string' && packed.length > 4_200_000 &&
+        Array.isArray(data.log) && data.log.length > 200) {
+      data.log = data.log.slice(-200);
+      packed = _pack(data);
+    }
     // 性能优化（save.js）：大存档序列化/写入容错——
     //   144将+72城+长局日志已逼近 localStorage 5MB 上限，首次 setItem 偶发 QuotaExceededError。
     //   优化：写入失败时自动把日志进一步截断到最近 100 条再试一次，
     //   长局存档成功率显著提升（日志仅展示用途，截断不影响玩法）。
     try {
-      localStorage.setItem(key, _pack(data));
+      localStorage.setItem(key, packed);
     } catch (e1) {
       if (e1 && (e1.name === 'QuotaExceededError' || /quota/i.test(e1.name))) {
         if (Array.isArray(data.log) && data.log.length > 100) {

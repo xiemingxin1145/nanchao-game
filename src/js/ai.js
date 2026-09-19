@@ -20,6 +20,8 @@ import { attackBarbarian, recruitBarbarian, tradeBarbarian } from './barbarian.j
 // V8.0：赋税/徭役系统
 import { aiAdjustTax } from './tax.js';
 import { aiStartCorvee } from './corvee.js';
+// V18.0：AI 战略规划系统
+import { strategyPlanner } from './ai_strategy.js';
 
 export class AIPlayer {
   constructor(factionId) {
@@ -35,6 +37,12 @@ export class AIPlayer {
     this._cacheWeak = null;
     this._cacheStrong = null;
     this._turnStart = 0;   // takeTurn 开始时间戳（超时保护）
+    // V18.0：难度等级 'easy' | 'normal' | 'hard'
+    //  - easy  ：决策更慢更保守（进攻阈值高、少主动结盟）
+    //  - hard  ：决策更激进更精准（进攻阈值低、优先最优目标）
+    this.difficulty = 'normal';
+    // V18.0：本回合战略包（takeTurn 入口计算一次）
+    this._strategy = null;
   }
 
   // 该势力已研究科技的效果包
@@ -68,6 +76,12 @@ export class AIPlayer {
     const _cc = {};
     for (const fid of Object.keys(FACTIONS)) _cc[fid] = game.getFactionCities(fid).length;
     this._turnCityCounts = _cc;
+
+    // ---- V18.0：本回合战略规划（入口计算一次，供各决策复用） ----
+    try {
+      strategyPlanner.invalidate(game);
+      this._strategy = strategyPlanner.planStrategy(this.factionId, game);
+    } catch (e) { this._strategy = null; }
 
     // 0) 科技研究推进
     this.researchTech(game, res);
@@ -179,6 +193,10 @@ export class AIPlayer {
     this.aiBuildPass(game, res);            // 建造关键关隘
     this.aiBarbarianActions(game, res);     // 征讨/招安邻近蛮族
 
+    // ---- V18.0：AI 智能深化 ----
+    this.manageGenerals(game);              // 武将分配：良将镇关键方向
+    this.seekPeaceIfWeary(game);            // 消耗过大时主动求和
+
     // 6) 招募在野武将
     const idleGens = game.getIdleGenerals();
     const recruitBonus = (this.techBag().recruitBonus || 0) + 0.2;
@@ -285,14 +303,61 @@ export class AIPlayer {
     }
   }
 
+  // V18.0：难度对应的进攻兵力阈值（easy 保守 1.6 / normal 1.3 / hard 激进 1.1）
+  _attackRatio() {
+    if (this.difficulty === 'easy') return 1.6;
+    if (this.difficulty === 'hard') return 1.1;
+    return 1.3;
+  }
+
+  // V18.0：综合战场修正系数（地形/季节/士气/补给/援军）
+  _battleModifiers(army, target, game) {
+    let mod = 1.0;
+    const reasons = [];
+    // 1) 地形：山地/森林防守方有利 → 进攻方折减
+    if (target.terrain === 'mountain') { mod *= 0.85; reasons.push('山地难攻'); }
+    else if (target.terrain === 'forest') { mod *= 0.9; reasons.push('林密难进'); }
+    else if (target.terrain === 'river') { mod *= 0.95; reasons.push('江河阻隔'); }
+    // 2) 季节：冬季进攻补给困难
+    const season = (game.getSeason && game.getSeason()) || '春';
+    if (season === '冬') { mod *= 0.92; reasons.push('冬日补给艰难'); }
+    else if (season === '秋') { mod *= 1.05; reasons.push('秋高马肥'); }
+    // 3) 目标城市民心：民心低则易下
+    const morale = Number(target.morale) || 50;
+    if (morale < 30) { mod *= 1.15; reasons.push('敌城民心涣散'); }
+    else if (morale > 70) { mod *= 0.95; reasons.push('敌城人心固守'); }
+    // 4) 补给：军队所在城是否我方（远离本土则补给线长）
+    const home = game.cities.get(army.cityId);
+    if (!home || home.owner !== this.factionId) { mod *= 0.9; reasons.push('孤军深入'); }
+    // 5) 援军：目标城相邻是否有友军/强邻
+    const tLinks = CITY_LINKS[target.id] || [];
+    let relief = 0;
+    for (const nid of tLinks) {
+      const n = game.cities.get(nid);
+      if (n && n.owner && n.owner === target.owner) relief += Number(n.garrison) || 0;
+    }
+    if (relief > 3000) { mod *= 0.85; reasons.push('敌有援军可恃'); }
+    return { mod, reasons };
+  }
+
   tryAttack(game, army) {
     const links = CITY_LINKS[army.cityId] || [];
-    for (const targetId of links) {
+    // V18.0：用战略规划的扩张优先级给候选目标排序（hard 模式精准择敌）
+    const expansion = (this._strategy && this._strategy.expansion) || [];
+    const prioMap = {};
+    for (const e of expansion) prioMap[e.targetId] = e.score;
+
+    // V18.0：候选目标按优先级排序
+    const candidates = links.slice().sort((a, b) => (prioMap[b] || 0) - (prioMap[a] || 0));
+
+    for (const targetId of candidates) {
       const target = game.cities.get(targetId);
       if (!target || target.owner === this.factionId) continue;
       // 同盟不攻
       const rel = game.diplomacy.getRelation(this.factionId, target.owner);
       if (rel && rel.alliance) continue;
+      // V18.0：有停战则不撕约（除非 hard 模式且目标极弱）
+      if (rel && rel.ceasefire && this.difficulty !== 'hard') continue;
 
       if (target.owner === null) {
         target.owner = this.factionId;
@@ -315,14 +380,21 @@ export class AIPlayer {
       //   原 `1 + target.defense/100` 得 NaN → defPow 为 NaN → 后续 `defPow * 1.1 > atkPow`
       //   恒为 false，AI「明明能打却不打」。修复：缺失时按默认防御 10 兜底。
       const defPow = target.garrison * (1 + (Number(target.defense) || 10) / 100);
+
+      // V18.0：综合战场修正
+      const { mod, reasons } = this._battleModifiers(army, target, game);
+      const adjustedAtk = atkPow * mod;
+      const ratio = this._attackRatio();
+
       // V4.0: AI进攻阈值 1.5→1.3（原值1.5，新值1.3，调整原因: 让AI更积极进攻但不过于鲁莽）
       // V4.0: 防御检查 — 若己方城市少于3座则优先防守，不主动攻城
       // 性能优化（ai.js #2）：改用本回合入口缓存的势力城市数 _turnCityCounts，
       //   替代此处再次全表 getFactionCities 扫描。
       const myCityCount = (this._turnCityCounts && this._turnCityCounts[this.factionId]) ||
         game.getFactionCities(this.factionId).length;
-      if (myCityCount >= 3 && atkPow > defPow * 1.3) {
+      if (myCityCount >= 3 && adjustedAtk > defPow * ratio) {
         game.attackCity(army, target);
+        if (reasons.length) game.pushLog(`【${this.name}】攻 ${target.name}：${reasons.join('、')}`);
         return;
       }
     }
@@ -352,9 +424,16 @@ export class AIPlayer {
   // ============================================================
   // V2.0 AI 强化
   // ============================================================
-  // 建造建筑：优先 农田→市集→兵营→城墙→校场→工坊
+  // 建造建筑：V18.0 根据战略阶段动态决定优先级
+  //   初期农业→中期商业→后期军事
   buildBuildings(game, res) {
-    const priority = ['farm', 'market', 'barracks', 'walls', 'drill', 'workshop', 'temple'];
+    // V18.0：从战略规划器取阶段化优先级
+    let priority = ['farm', 'market', 'barracks', 'walls', 'drill', 'workshop', 'temple'];
+    try {
+      const sp = (this._strategy && this._strategy.build) ||
+        strategyPlanner.getBuildPriority(this.factionId, game);
+      if (Array.isArray(sp) && sp.length) priority = sp;
+    } catch (e) {}
     // 性能优化（ai.js #2）：复用本回合缓存城市表，替代每次 getFactionCities 全表扫描
     for (const city of (this._turnCities || game.getFactionCities(this.factionId))) {
       if (res.money < 200 || city.buildingThisTurn) continue;
@@ -454,6 +533,7 @@ export class AIPlayer {
   // V2.5 AI 行为
   // ============================================================
   // 弱势外交：若有强邻，尝试送人质求和或提议联姻
+  // V18.0：深化为调用 DiplomacySystem.getAIProposal 获取智能提案
   weakDiplomacy(game, res, isWeak) {
     if (!isWeak) return;
     // 性能优化#3：使用本回合缓存的势力城市数
@@ -470,13 +550,39 @@ export class AIPlayer {
     // BUG修复#5：防御性校验——getRelation 可能返回 null（势力关系未初始化），
     // 直接访问 rel.alliance 会导致 TypeError 崩溃。此处做空值兜底。
     const rel = game.diplomacy.getRelation(this.factionId, strongest);
-    if (!rel) return;
-    if (rel.alliance) return;
+    if (!rel || rel.alliance) return;
 
-    // 70% 概率送人质求和；否则尝试联姻
-    // 性能优化（ai.js）：_pickIdleGeneral 内部对本势力武将全表 filter 一次。
-    //   原实现按 70/30 分支各调一次（两分支互斥，但仍有一次冗余扫描）；
-    //   优化后只调用一次并复用结果。144 将规模下每回合省一次 O(将数) 扫描。
+    // V18.0：调用外交AI智能提案（联姻/人质/和亲/停战）
+    try {
+      if (typeof game.diplomacy.getAIProposal === 'function') {
+        const proposal = game.diplomacy.getAIProposal(this.factionId, strongest, game);
+        if (proposal && proposal.type) {
+          const idleGen = this._pickIdleGeneral(game);
+          if (proposal.type === 'hostage' && idleGen) {
+            const r = game.diplomacy.sendHostage(game, this.factionId, strongest, idleGen.id);
+            if (r.ok) game.pushLog(`【${this.name}】遣 ${idleGen.name} 入 ${FACTIONS[strongest].name} 为质以求苟安`);
+            return;
+          }
+          if (proposal.type === 'marriage' && idleGen) {
+            const r = game.diplomacy.proposeMarriage(game, this.factionId, strongest, idleGen.id);
+            if (r.ok) game.pushLog(`【${this.name}】与 ${FACTIONS[strongest].name} 议亲结好`);
+            return;
+          }
+          if (proposal.type === 'heqin') {
+            const r = game.diplomacy.proposeHeqin(game, this.factionId, strongest);
+            if (r.ok) game.pushLog(`【${this.name}】以宗女和亲 ${FACTIONS[strongest].name}，以求苟安`);
+            return;
+          }
+          if (proposal.type === 'ceasefire') {
+            const r = game.diplomacy.proposeCeasefire(this.factionId, strongest);
+            if (r.ok) game.pushLog(`【${this.name}】与 ${FACTIONS[strongest].name} 停战求和`);
+            return;
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 兜底：70% 概率送人质求和；否则尝试联姻
     const idleGen = this._pickIdleGeneral(game);
     if (Math.random() < 0.7) {
       if (idleGen) {
@@ -488,6 +594,72 @@ export class AIPlayer {
         const r = game.diplomacy.proposeMarriage(game, this.factionId, strongest, idleGen.id);
         if (r.ok) game.pushLog(`【${this.name}】与 ${FACTIONS[strongest].name} 议亲结好`);
       }
+    }
+  }
+
+  // ============================================================
+  // V18.0：AI 智能深化新方法
+  // ============================================================
+
+  // V18.0：武将管理——把最好的武将放到最关键方向
+  //   提拔：高统帅/武力武将分配到高威胁边境城市/首都
+  //   罢免：低忠诚庸才不分配到关键位置
+  manageGenerals(game) {
+    try {
+      const assignment = strategyPlanner.getGeneralAssignment(this.factionId, game);
+      const gens = this._turnGenerals || game.getFactionGenerals(this.factionId);
+      for (const gen of gens) {
+        if (gen.inArmy || gen.onHostage || gen.role === '君主') continue;
+        const newCityId = assignment[gen.id];
+        if (!newCityId) continue;
+        // 低忠诚者不放到前线（避免被策反）
+        if ((Number(gen.loyalty) || 0) < 35) continue;
+        const targetCity = game.cities.get(newCityId);
+        if (targetCity && gen.location !== newCityId) {
+          gen.location = newCityId;
+        }
+      }
+    } catch (e) {}
+  }
+
+  // V18.0：消耗过大时主动求和
+  //   条件：与某势力交战中、己方兵力/经济明显透支
+  seekPeaceIfWeary(game) {
+    try {
+      if (this.difficulty === 'hard') return; // hard 模式不轻易求和
+      let shouldSeek = false;
+      let target = null;
+      // 调用外交AI：shouldAISeekPeace
+      if (typeof game.diplomacy.shouldAISeekPeace === 'function') {
+        const result = game.diplomacy.shouldAISeekPeace(this.factionId, game);
+        shouldSeek = !!(result && result.seek);
+        target = result && result.target;
+      }
+      if (!shouldSeek || !target) return;
+      const rel = game.diplomacy.getRelation(this.factionId, target);
+      if (!rel || rel.ceasefire || rel.alliance) return;
+      const r = game.diplomacy.proposeCeasefire(this.factionId, target);
+      if (r.ok) game.pushLog(`【${this.name}】国力疲敝，与 ${FACTIONS[target].name} 停战休兵`);
+    } catch (e) {}
+  }
+
+  // V18.0：防守决策——判断某城该守还是该弃
+  //   返回 { hold: bool, reason: string }
+  shouldDefendCity(city, game) {
+    if (!city || city.owner !== this.factionId) return { hold: true, reason: '非本势力' };
+    try {
+      const th = strategyPlanner.getThreatLevel(this.factionId, city.owner, game);
+      // 首都必守
+      const capId = (FACTIONS[this.factionId] || {}).capital;
+      if (capId && city.id === capId) return { hold: true, reason: '宗庙所在，必守' };
+      // 高威胁且守军薄弱 → 考虑弃城（收缩防线）
+      const garrison = Number(city.garrison) || 0;
+      if (th >= 80 && garrison < 1500 && this.difficulty !== 'hard') {
+        return { hold: false, reason: '孤城难守，暂避锋芒' };
+      }
+      return { hold: true, reason: th >= 60 ? '重镇必守' : '照常驻守' };
+    } catch (e) {
+      return { hold: true, reason: '默认驻守' };
     }
   }
 

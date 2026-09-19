@@ -20,14 +20,21 @@ const PASS_VISION_BONUS = 1;   // 己方关隘 +1 格
 const INTEL_VISION_TURNS = 3;  // 谍报视野持续回合
 
 // BFS：返回 { cityId: dist }（从 starts 出发的最短跳数）
+// 性能优化（fog.js 渲染优化·更多城市后）：
+//   基准：原实现用 `queue.shift()` 弹出队首——shift 是 O(n) 数组搬移，
+//   84 城规模下 BFS 每城 1~3 个邻居、队列峰值几十条，每回合每势力一次 BFS
+//   （己方/同盟/军队/关隘共 4 次），shift 累计 O(n²) 搬移。
+//   优化：改用队首读指针 head，只前移不搬移；队列自然增长到本回合结束即释放。
+//   复杂度降为 O(城市数)，84 城规模下每回合视野计算省一次全表搬移。
 function bfsDistances(starts, maxDist) {
   const dist = {};
   const queue = [];
   for (const s of starts) {
     if (dist[s] === undefined) { dist[s] = 0; queue.push(s); }
   }
-  while (queue.length) {
-    const cur = queue.shift();
+  let head = 0;
+  while (head < queue.length) {
+    const cur = queue[head++];
     const d = dist[cur];
     if (d >= maxDist) continue;
     for (const n of (CITY_LINKS[cur] || [])) {

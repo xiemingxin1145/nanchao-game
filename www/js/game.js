@@ -2503,6 +2503,10 @@ export class Game {
       harem: this.harem ? this.harem.serialize() : null,
       // V9.0: 军团会战系统
       legions: [...this.legions.entries()].map(([k, v]) => [k, v.serialize()]),
+      // BUG修复#1（game.js 新系统存档覆盖）：formationExp（阵型经验，散兵）此前只在
+      //   deserialize 中读取（line ~2655），serialize() 却从未写入——导致玩家辛苦练出的
+      //   阵型经验每次读档全部归零。此处补齐序列化字段。
+      formationExp: this.formationExp,
       // V9.5: 音乐系统状态
       musicState: this.musicState
     };
@@ -2519,7 +2523,10 @@ export class Game {
     g.cities = new Map(Array.isArray(data.cities) ? data.cities.map(([k, v]) => [k, City.deserialize(v)]) : []);
     g.generals = new Map(Array.isArray(data.generals) ? data.generals.map(([k, v]) => [k, General.deserialize(v)]) : []);
     g.armies = Array.isArray(data.armies) ? data.armies.map(a => Army.deserialize(a)) : [];
-    g.factionRes = new Map(data.factionRes);
+    // BUG修复#2（game.js 新系统/旧存档边界）：data.factionRes 为 null/undefined 或非数组时
+    //   `new Map(null)` 会抛 TypeError（Map 构造器要求可迭代对象）。损坏存档/跨版本迁移
+    //   偶发此字段缺失。此处做防御：非数组时退化为空 Map，由后续 AI 初始化兜底补建。
+    g.factionRes = Array.isArray(data.factionRes) ? new Map(data.factionRes) : new Map();
     g.diplomacy = DiplomacySystem.deserialize(data.diplomacy);
     g.log = data.log || [];
     g.gameOver = data.gameOver;

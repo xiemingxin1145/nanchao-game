@@ -86,6 +86,11 @@ export function settlePasses(game) {
     rt.pending--;
     if (rt.pending <= 0) {
       const staticPass = getPassById(pid);
+      // BUG修复（pass.js #2）：存档/模组被移除后，game.passes 里可能残留一个当前
+      //   PASSES 静态表已不存在的 pid（旧档热加载模组场景）。getPassById 返回 undefined
+      //   时直接取 staticPass.locationCity 会抛 TypeError，导致整回合结算中断。
+      //   修复：静态关隘表查不到时，把这条残留运行时记录清掉并跳过本回合结算。
+      if (!staticPass) { delete game.passes[pid]; continue; }
       rt.built = true;
       rt.owner = game.cities.get(staticPass.locationCity)?.owner;
       rt.garrison = staticPass.defense * PASS_GARRISON_PER_DEFENSE;

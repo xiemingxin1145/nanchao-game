@@ -255,6 +255,10 @@ export class DynastySystem {
     const s = new DynastySystem();
     if (data && typeof data === 'object') {
       for (const [fid, rec] of Object.entries(data)) {
+        // BUG修复（dynasty.js #4）：损坏存档/跨版本迁移中某势力的王朝记录 rec
+        //   可能为 null 或非对象，直接取 rec.dynastyId 会抛 TypeError。此处做防御：
+        //   非法记录跳过，用默认值兜底，不阻塞其余势力的恢复。
+        if (!rec || typeof rec !== 'object') continue;
         s.factions[fid] = {
           dynastyId: rec.dynastyId || 'liang',
           eraName: rec.eraName || '承光',

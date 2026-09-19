@@ -235,6 +235,10 @@ export class HaremSystem {
     const s = new HaremSystem();
     if (data && typeof data === 'object') {
       for (const [fid, rec] of Object.entries(data)) {
+        // BUG修复（harem.js #3）：损坏存档/跨版本迁移中某势力的 rec 可能为 null 或
+        //   非对象，直接取 rec.consorts 会抛 TypeError，导致整个读档失败。
+        //   修复：rec 非法时该势力跳过（保持空后宫），不影响其余势力恢复。
+        if (!rec || typeof rec !== 'object') continue;
         s.factions[fid] = {
           consorts: Array.isArray(rec.consorts) ? rec.consorts : [],
           children: Array.isArray(rec.children) ? rec.children : [],

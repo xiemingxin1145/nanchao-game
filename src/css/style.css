@@ -4759,3 +4759,177 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
   .v17-map-search { right: 4px; top: 110px; width: 96px; }
   .v17-minimap { display: none; } /* 极窄屏隐藏小地图 */
 }
+
+/* ============================================================
+   ============== V18.0「智计天下」UI 精修 ======================
+   新类名统一 v18- 前缀；新增 CSS 变量与 keyframes。
+   ============================================================ */
+:root {
+  --v18-gold: #c8a54a;
+  --v18-jade: #3f7a66;
+  --v18-cinnabar: #c0503a;
+  --v18-ink: #1a1710;
+  --v18-paper: #e8d5a3;
+  --v18-line: rgba(200,165,74,0.35);
+  --v18-panel: rgba(24,20,12,0.96);
+  --v18-radius: 10px;
+}
+
+@keyframes v18FadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes v18Pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(200,165,74,0.5); } 50% { box-shadow: 0 0 12px 3px rgba(200,165,74,0.35); } }
+@keyframes v18Glow { 0%,100% { text-shadow: 0 0 6px rgba(255,215,0,0.3); } 50% { text-shadow: 0 0 16px rgba(255,215,0,0.7); } }
+@keyframes v18ThreatPulse { 0%,100% { opacity: 0.85; } 50% { opacity: 1; } }
+
+/* ---------- V18 弹窗骨架 ---------- */
+.v18-overlay { position: fixed; inset: 0; z-index: 9000; background: rgba(0,0,0,0.72); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+.v18-modal {
+  position: relative; width: min(720px, 92vw); max-height: 86vh;
+  background: var(--v18-panel); border: 1px solid var(--v18-line); border-radius: var(--v18-radius);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.7), inset 0 0 60px rgba(200,165,74,0.06);
+  padding: 18px 20px 20px; color: var(--v18-paper);
+  animation: v18FadeUp .32s ease;
+}
+.v18-modal.v18-wide { width: min(960px, 94vw); }
+.v18-scroll { overflow-y: auto; }
+.v18-scroll::-webkit-scrollbar { width: 8px; }
+.v18-scroll::-webkit-scrollbar-thumb { background: rgba(200,165,74,0.4); border-radius: 4px; }
+.v18-corner { position: absolute; width: 14px; height: 14px; border: 2px solid var(--v18-gold); opacity: .7; }
+.v18-corner.tl { top: 6px; left: 6px; border-right: 0; border-bottom: 0; }
+.v18-corner.tr { top: 6px; right: 6px; border-left: 0; border-bottom: 0; }
+.v18-corner.bl { bottom: 6px; left: 6px; border-right: 0; border-top: 0; }
+.v18-corner.br { bottom: 6px; right: 6px; border-left: 0; border-top: 0; }
+.v18-title { text-align: center; color: #f0d98a; letter-spacing: 3px; margin-bottom: 14px; font-size: 20px; text-shadow: 0 0 12px rgba(255,215,0,0.25); }
+.v18-body { margin-bottom: 12px; }
+.v18-close { display: block; margin: 0 auto; }
+.v18-sec-title { font-size: 14px; color: var(--v18-gold); margin: 12px 0 6px; border-left: 3px solid var(--v18-gold); padding-left: 8px; }
+.v18-empty { color: #8a7a55; font-size: 12px; padding: 6px 0; }
+.v18-good { color: #6fbf6a !important; }
+.v18-bad { color: #e06050 !important; }
+
+/* ---------- V18 顶栏情报按钮 / 版本徽章 ---------- */
+.v18-intel-btn { animation: v18Pulse 2.6s ease-in-out infinite; }
+.v18-version-badge { animation: v18Glow 3.2s ease-in-out infinite; border-color: var(--v18-gold) !important; }
+
+/* ---------- 实力对比条 ---------- */
+.v18-intel-list { display: flex; flex-direction: column; gap: 6px; }
+.v18-intel-row {
+  display: grid; grid-template-columns: 120px 1fr; gap: 4px 10px;
+  padding: 8px 10px; border: 1px solid var(--v18-line); border-radius: 8px;
+  background: rgba(0,0,0,0.25); border-left: 4px solid var(--v18-fc, var(--v18-gold));
+}
+.v18-intel-row.v18-mine { background: rgba(200,165,74,0.10); }
+.v18-intel-name { font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.v18-intel-name small { color: #9a8b6a; font-size: 11px; }
+.v18-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.v18-bar-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.v18-bar-label { width: 18px; color: #b8a060; }
+.v18-bar-track { flex: 1; height: 9px; background: rgba(0,0,0,0.4); border-radius: 5px; overflow: hidden; border: 1px solid var(--v18-line); }
+.v18-bar-fill { display: block; height: 100%; transition: width .6s ease; }
+.v18-bar-val { width: 46px; text-align: right; color: #e8d5a3; }
+.v18-intel-acts { grid-column: 1 / -1; text-align: right; }
+.v18-link { background: none; border: none; color: var(--v18-gold); cursor: pointer; font-size: 12px; text-decoration: underline; }
+
+/* ---------- 分栏 ---------- */
+.v18-split { display: flex; gap: 16px; flex-wrap: wrap; }
+.v18-half { flex: 1; min-width: 260px; }
+
+/* ---------- 威胁罗盘 ---------- */
+.v18-compass { display: block; margin: 4px auto; }
+.v18-compass-t { fill: #c8b890; font-size: 11px; }
+.v18-compass-note { font-size: 12px; color: #c8b890; line-height: 1.7; margin-top: 4px; }
+.v18-legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11px; color: #b8a060; margin-top: 6px; }
+.v18-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.v18-lg { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* ---------- AI 预测 ---------- */
+.v18-predict-list { display: flex; flex-direction: column; gap: 6px; }
+.v18-predict { font-size: 12.5px; line-height: 1.5; padding: 7px 9px; border-radius: 6px; border: 1px solid var(--v18-line); background: rgba(0,0,0,0.25); }
+.v18-predict b { color: #e8c060; }
+.v18-p-safe { border-left: 3px solid #6fbf6a; }
+.v18-p-neutral { border-left: 3px solid #8a8a8a; }
+.v18-p-tense { border-left: 3px solid #c9c24a; }
+.v18-p-warn { border-left: 3px solid #e04a4a; animation: v18ThreatPulse 1.6s ease-in-out infinite; }
+
+/* ---------- 势力详情 ---------- */
+.v18-fac-head { border-bottom: 1px solid var(--v18-line); padding-bottom: 8px; margin-bottom: 8px; }
+.v18-fac-name { font-size: 18px; color: var(--v18-fc, #e8c060); }
+.v18-fac-name small { color: #9a8b6a; font-size: 12px; margin-left: 8px; }
+.v18-trend { font-size: 12px; color: #c8b890; margin-top: 2px; }
+.v18-radar-wrap { display: flex; justify-content: center; margin: 4px 0; }
+.v18-metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+.v18-metric { text-align: center; padding: 6px 2px; border: 1px solid var(--v18-line); border-radius: 6px; background: rgba(0,0,0,0.25); }
+.v18-metric span { display: block; font-size: 11px; color: #9a8b6a; }
+.v18-metric b { font-size: 16px; color: #f0d98a; }
+.v18-gen-list { display: flex; flex-direction: column; gap: 3px; }
+.v18-gen-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 6px; border-radius: 5px; background: rgba(0,0,0,0.22); }
+.v18-gen-rank { width: 18px; text-align: center; color: var(--v18-gold); }
+.v18-gen-name { flex: 1; color: #e8d5a3; }
+.v18-gen-role { color: #9a8b6a; font-size: 11px; }
+.v18-gen-stats { color: #b8a060; font-size: 11px; }
+.v18-dp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }
+.v18-dp-row { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 4px 8px; border-radius: 5px; background: rgba(0,0,0,0.22); }
+.v18-dp-dot { width: 9px; height: 9px; border-radius: 50%; }
+.v18-dp-lvl { margin-left: auto; font-size: 11px; }
+.v18-dp-allied { border-left: 3px solid #6fbf6a; } .v18-dp-allied .v18-dp-lvl { color: #6fbf6a; }
+.v18-dp-friend { border-left: 3px solid #8ecb8a; } .v18-dp-friend .v18-dp-lvl { color: #8ecb8a; }
+.v18-dp-neutral { border-left: 3px solid #9a9a9a; } .v18-dp-neutral .v18-dp-lvl { color: #b8b8b8; }
+.v18-dp-tense { border-left: 3px solid #d0a040; } .v18-dp-tense .v18-dp-lvl { color: #d0a040; }
+.v18-dp-war { border-left: 3px solid #e04a4a; } .v18-dp-war .v18-dp-lvl { color: #e04a4a; }
+.v18-intent-box { margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--v18-gold); border-radius: 8px; background: rgba(200,165,74,0.08); font-size: 13px; line-height: 1.6; }
+.v18-intent-box b { color: #e8c060; }
+
+/* ---------- 战报详析 ---------- */
+.v18-battle-actions { text-align: center; margin: 8px 0; }
+.v18-btn-flat { border-color: var(--v18-gold) !important; color: #f0d98a !important; }
+.v18-banner { text-align: center; font-size: 16px; letter-spacing: 2px; padding: 8px; border-radius: 6px; margin-bottom: 8px; }
+.v18-banner.v18-win { color: #ffe9b0; background: rgba(200,165,74,0.15); border: 1px solid var(--v18-gold); }
+.v18-banner.v18-draw { color: #d8d8d8; background: rgba(150,150,150,0.12); border: 1px solid #888; }
+.v18-banner.v18-lose { color: #ffb0a0; background: rgba(200,60,40,0.12); border: 1px solid #a04030; }
+.v18-curve { width: 100%; max-width: 560px; display: block; margin: 0 auto; background: rgba(0,0,0,0.3); border-radius: 6px; }
+.v18-round-list { display: flex; flex-direction: column; gap: 3px; }
+.v18-round { display: flex; gap: 8px; font-size: 12px; padding: 3px 6px; border-radius: 4px; background: rgba(0,0,0,0.22); }
+.v18-round-no { color: var(--v18-gold); min-width: 16px; }
+.v18-score-row { display: flex; align-items: center; justify-content: center; gap: 14px; }
+.v18-score-card { text-align: center; }
+.v18-score-name { font-size: 12px; color: #c8b890; }
+.v18-score-grade { font-size: 30px; font-weight: bold; line-height: 1.1; }
+.v18-g-S { color: #ffd54f; } .v18-g-A { color: #9ccc65; } .v18-g-B { color: #4fc3f7; }
+.v18-g-C { color: #b0bec5; } .v18-g-D { color: #e06050; }
+.v18-score-num { font-size: 11px; color: #9a8b6a; }
+.v18-score-vs { font-size: 18px; color: #8a7a55; }
+.v18-cause-box { padding: 8px; border: 1px solid var(--v18-line); border-radius: 6px; background: rgba(0,0,0,0.22); }
+.v18-cause-row { display: flex; gap: 10px; font-size: 12.5px; padding: 3px 0; }
+.v18-cause-k { color: var(--v18-gold); min-width: 36px; }
+.v18-exp-box, .v18-loot-box { padding: 6px 8px; border: 1px solid var(--v18-line); border-radius: 6px; background: rgba(0,0,0,0.22); }
+.v18-exp-row { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; border-bottom: 1px dashed rgba(200,165,74,0.15); }
+.v18-exp-row b { color: #e8d5a3; }
+.v18-exp { color: #ffd54f !important; }
+.v18-loot-chip { display: inline-block; margin: 3px 4px 3px 0; padding: 4px 10px; border: 1px solid var(--v18-gold); border-radius: 14px; font-size: 12px; background: rgba(200,165,74,0.1); }
+
+/* ---------- V18 响应式 ---------- */
+@media (max-width: 768px) {
+  .v18-modal { padding: 14px; }
+  .v18-title { font-size: 17px; }
+  .v18-intel-row { grid-template-columns: 1fr; }
+  .v18-half { min-width: 100%; }
+  .v18-metric-grid { grid-template-columns: repeat(2, 1fr); }
+  .v18-compass { width: 160px; height: 160px; }
+}
+@media (max-width: 480px) {
+  .v18-dp-grid { grid-template-columns: 1fr; }
+  .v18-score-row { gap: 8px; }
+  .v18-curve { max-width: 100%; }
+}
+
+/* ---------- V18 主菜单背景继续打磨（CSS 氛围层） ---------- */
+.title-screen::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background:
+    radial-gradient(circle at 20% 15%, rgba(200,165,74,0.10), transparent 45%),
+    radial-gradient(circle at 82% 85%, rgba(63,122,102,0.12), transparent 50%);
+  mix-blend-mode: screen; z-index: 0;
+}
+.title-overlay { z-index: 1; }
+/* V18 战报详析按钮 / 画布 id 兜底 */
+#v18-battle-detail-btn { margin-top: 4px; }
+#v18-fac-radar, #v18-troop-curve { max-width: 100%; }

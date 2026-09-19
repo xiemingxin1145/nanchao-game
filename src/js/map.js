@@ -160,6 +160,17 @@ export class IsometricMap {
     this._mMouseY = 0;
     this._hoverPulse = 0;                 // 悬停脉冲计时
 
+    // ============================================================
+    // V18.0 — 动画与地图增强：城市规模建筑 / 势力边境虚线 / 道路系统 /
+    //        河上商船战船 / 季节森林细节 / 夜间灯笼 / 交战城市火焰烟雾
+    // 设计：河流船只对象池定期生成；交战火焰按 setBattles 城市 stateless 渲染；
+    //      视觉细节按距离视口中心 LOD 降级；夜间效果仅 _isNight() 时绘制。
+    // ============================================================
+    this._riverShips = [];          // 河上船只 [{x,y,dir,speed,type,life,seed}]
+    this._riverShipPool = [];       // 船只对象池
+    this._RIVER_SHIP_CAP = 8;       // 同时存在河船上限
+    this._riverShipTimer = 0;       // 船只生成节流计时
+
     this._bindEvents();
     this._initView();
   }
@@ -682,6 +693,9 @@ export class IsometricMap {
 
     // V16.0：战役庆祝粒子 / 萤火虫 / 交战火花 更新
     this._updateCampaignFX(dt);
+
+    // V18.0：河上商船/战船 生成与移动（对象池）
+    this._updateRiverShips(dt);
   }
 
   // V8.1：城市炊烟（仅白天）
@@ -1511,8 +1525,14 @@ export class IsometricMap {
     this._drawMountainShadows(ctx);
     // V16.0：森林三层（近深/中/远浅）
     this._drawForestLayers(ctx);
+    // V18.0：势力边境虚线（不同归属城市间流动虚线）
+    this._drawFactionBorders(ctx);
+    // V18.0：河上商船/战船（河流城市附近定期经过）
+    this._drawRiverShips(ctx);
 
     this._drawCities();
+    // V18.0：交战城市周围火焰/烟雾
+    this._drawCityBattleFire(ctx);
     this._drawArmies();
     this._drawSelection();
 
@@ -1650,6 +1670,27 @@ export class IsometricMap {
   _drawLinks(ctx) {
     const c = ctx || this.ctx;
     c.save();
+    // V18.0：道路系统——先画一条柔和土黄道路底（细线），再叠原有虚线连线
+    c.strokeStyle = 'rgba(150,120,70,0.30)';
+    c.lineWidth = 3.5 * this.scale;
+    c.setLineDash([]);
+    for (const city of this.game.cities.values()) {
+      const links = CITY_LINKS[city.id] || [];
+      for (const targetId of links) {
+        if (city.id >= targetId) continue; // 只画一次
+        const target = this.game.cities.get(targetId);
+        if (!target) continue;
+        const p1 = this.isoToScreen(city.isoX, city.isoY);
+        const p2 = this.isoToScreen(target.isoX, target.isoY);
+        if (!this._onScreen((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, 160)) continue;
+        c.beginPath();
+        c.moveTo(p1.x, p1.y);
+        c.lineTo(p2.x, p2.y);
+        c.stroke();
+      }
+    }
+
+    // 原有连线（金色虚线）
     c.strokeStyle = 'rgba(200, 180, 120, 0.2)';
     c.lineWidth = 1.5 * this.scale;
     c.setLineDash([5, 5]);
@@ -1672,6 +1713,9 @@ export class IsometricMap {
     }
     c.restore();
   }
+
+  // V18.0：道路行军速度加成（沿 CITY_LINKS 道路行军更快；供外部移动计算读取）
+  getRoadSpeedMultiplier() { return 1.25; }
 
   // ============================================================
   // V8.1：动态氛围绘制
@@ -1946,6 +1990,9 @@ export class IsometricMap {
 
       // V15.0：城防等级可视化（城墙高度随 defense 变化）
       this._drawCityWall(ctx, r, city.defense);
+
+      // V18.0：城市规模可视化——大城市多几栋建筑，小城市精简
+      this._drawCityBuildings(ctx, r, this.getCitySizeLevel(city));
 
       // V15.0：冬季白雪覆盖（城市底座一层薄雪）
       if (this._seasonIdx() === 3) {
@@ -2951,24 +2998,45 @@ export class IsometricMap {
     const t = this._animTime;
     ctx.save();
     const cx = this.canvas.width / 2, cy = this.canvas.height / 2;
+    const si = this._seasonIdx();   // 0春 1夏 2秋 3冬
     for (const city of this.game.cities.values()) {
       if (city.terrain !== 'forest') continue;
       const pos = this.isoToScreen(city.isoX, city.isoY);
       if (!this._onScreen(pos.x, pos.y, 120)) continue;
       const dist = Math.hypot(pos.x - cx, pos.y - cy);
-      let baseColor, size;
-      if (dist < 260) { baseColor = '#1f4a1a'; size = 5; }      // 近景深
-      else if (dist < 520) { baseColor = '#3a7a2a'; size = 4; }  // 中景中
-      else { baseColor = '#6aa050'; size = 3; }                   // 远景浅
-      // 树冠（2~3 个圆簇）
+      // V18.0：距离 LOD 决定绘制数量，远景只画 1 簇
+      const clusters = dist < 520 ? 3 : 1;
+      const size = dist < 260 ? 5 : dist < 520 ? 4 : 3;
+      // V18.0：季节森林色彩——春嫩绿/夏浓绿/秋金黄/冬灰青
+      let baseColor;
+      if (si === 0) {          // 春：嫩绿
+        baseColor = dist < 260 ? '#3a7a2a' : dist < 520 ? '#5a9a4a' : '#8ac070';
+      } else if (si === 2) {   // 秋：黄褐
+        baseColor = dist < 260 ? '#8a6a20' : dist < 520 ? '#a88a30' : '#c8a850';
+      } else if (si === 3) {   // 冬：灰青（落叶稀疏）
+        baseColor = dist < 260 ? '#4a5a5a' : dist < 520 ? '#6a7a7a' : '#9aa8a8';
+      } else {                 // 夏：浓绿
+        baseColor = dist < 260 ? '#1f4a1a' : dist < 520 ? '#3a7a2a' : '#6aa050';
+      }
+      // 树冠（近/中景 2~3 簇，远景 1 簇；冬季稀疏）
       const sway = Math.sin(t * 1.5 + city.isoX) * 1;
       ctx.fillStyle = baseColor;
-      for (let k = 0; k < 3; k++) {
-        const ox = (k - 1) * size * 1.2;
+      for (let k = 0; k < clusters; k++) {
+        const ox = (k - (clusters - 1) / 2) * size * 1.2;
         const oy = (k % 2) * -2;
         ctx.beginPath();
         ctx.arc(pos.x + ox + sway, pos.y + oy, size, 0, Math.PI * 2);
         ctx.fill();
+      }
+      // V18.0：春季花开——树冠点缀粉色小花（仅近/中景）
+      if (si === 0 && dist < 520) {
+        ctx.fillStyle = 'rgba(255,170,200,0.9)';
+        for (let k = 0; k < clusters; k++) {
+          const ox = (k - (clusters - 1) / 2) * size * 1.2;
+          ctx.beginPath();
+          ctx.arc(pos.x + ox + sway - size * 0.3, pos.y - 1, size * 0.35, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
     ctx.restore();
@@ -2991,6 +3059,22 @@ export class IsometricMap {
         const wy = pos.y - 4 + ((Math.cos(seed + i * 7) + 1) / 2 - 0.5) * 10;
         ctx.fillStyle = 'rgba(255,220,120,0.85)';
         ctx.fillRect(wx, wy, 2.5, 2.5);
+      }
+      // V18.0：夜间灯笼——城市下方悬挂 1~2 盏暖黄灯笼，轻微摇曳
+      const lanternN = (city.capital || (city.size || 1) >= 4) ? 2 : 1;
+      const flicker = 0.8 + 0.2 * Math.sin(this._animTime * 6 + seed);
+      for (let i = 0; i < lanternN; i++) {
+        const lx = pos.x + (i === 0 ? -6 : 6) * this.scale;
+        const ly = pos.y + (8 + i * 3) * this.scale;
+        // 灯笼光晕
+        const lg = ctx.createRadialGradient(lx, ly, 0, lx, ly, 7 * this.scale);
+        lg.addColorStop(0, `rgba(255,200,90,${0.8 * flicker})`);
+        lg.addColorStop(1, 'rgba(255,160,50,0)');
+        ctx.fillStyle = lg;
+        ctx.beginPath(); ctx.arc(lx, ly, 7 * this.scale, 0, Math.PI * 2); ctx.fill();
+        // 灯笼本体
+        ctx.fillStyle = '#ffd060';
+        ctx.beginPath(); ctx.arc(lx, ly, 2 * this.scale, 0, Math.PI * 2); ctx.fill();
       }
     }
     ctx.restore();
@@ -3150,6 +3234,195 @@ export class IsometricMap {
       ctx.lineTo(ax + Math.cos(ang + 2.5) * 6, ay + Math.sin(ang + 2.5) * 6);
       ctx.lineTo(ax + Math.cos(ang - 2.5) * 6, ay + Math.sin(ang - 2.5) * 6);
       ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V18.0 — 动画与地图增强：城市规模建筑 / 势力边境 / 河上船只 / 交战火焰
+  // ============================================================
+
+  // 城市规模可视化：大城市多几栋小建筑，小城市精简
+  // sizeLevel: 1小 / 2中 / 3大 / 4都城
+  _drawCityBuildings(ctx, r, sizeLevel) {
+    const count = [0, 0, 2, 4, 6][sizeLevel] || 0;
+    if (count === 0) return;
+    ctx.save();
+      for (let i = 0; i < count; i++) {
+        const ang = (i / count) * Math.PI * 2 + 0.5;
+        const bx = Math.cos(ang) * r * 0.45;
+        const by = Math.sin(ang) * r * 0.3;
+        // 房身
+        ctx.fillStyle = '#caa96a';
+        ctx.fillRect(bx - 2.5 * this.scale, by - 2.5 * this.scale, 5 * this.scale, 4 * this.scale);
+        // 屋顶
+        ctx.fillStyle = '#8a5a3a';
+        ctx.beginPath();
+        ctx.moveTo(bx - 3 * this.scale, by - 2.5 * this.scale);
+        ctx.lineTo(bx, by - 5 * this.scale);
+        ctx.lineTo(bx + 3 * this.scale, by - 2.5 * this.scale);
+        ctx.closePath(); ctx.fill();
+      }
+    ctx.restore();
+  }
+
+  // 河流船只更新：定期从河流城市旁生成商船/战船，沿水平方向巡航
+  _updateRiverShips(dt) {
+    this._riverShipTimer -= dt;
+    if (this._riverShipTimer > 0 || !this.game) {
+      // 仍需更新在途船只位置
+      this._stepRiverShips(dt);
+      return;
+    }
+    this._riverShipTimer = 2.5 + Math.random() * 2.5;   // 2.5~5s 一艘
+    if (this._riverShips.length < this._RIVER_SHIP_CAP) {
+      // 收集可见的河流城市作为生成点
+      const riverCities = [];
+      for (const c of this.game.cities.values()) {
+        if (c.terrain !== 'river') continue;
+        const pos = this.isoToScreen(c.isoX, c.isoY);
+        if (this._onScreen(pos.x, pos.y, 200)) riverCities.push(c);
+      }
+      if (riverCities.length) {
+        const city = riverCities[Math.floor(Math.random() * riverCities.length)];
+        const pos = this.isoToScreen(city.isoX, city.isoY);
+        // 复用对象池
+        const sh = this._riverShipPool.pop() || {};
+        const dir = Math.random() < 0.5 ? 1 : -1;
+        Object.assign(sh, {
+          x: pos.x - dir * (40 + Math.random() * 30),
+          y: pos.y + (Math.random() - 0.5) * 8,
+          dir, speed: 14 + Math.random() * 10,
+          type: Math.random() < 0.7 ? 'merchant' : 'warship',
+          life: 0, maxLife: 6 + Math.random() * 3,
+          seed: Math.random() * 100
+        });
+        this._riverShips.push(sh);
+      }
+    }
+    this._stepRiverShips(dt);
+  }
+
+  _stepRiverShips(dt) {
+    for (let i = this._riverShips.length - 1; i >= 0; i--) {
+      const sh = this._riverShips[i];
+      sh.x += sh.dir * sh.speed * dt;
+      sh.life += dt;
+      if (sh.life >= sh.maxLife || !this._onScreen(sh.x, sh.y, 120)) {
+        this._riverShips.splice(i, 1);
+        if (this._riverShipPool.length < 40) this._riverShipPool.push(sh);
+      }
+    }
+  }
+
+  // 绘制河上商船/战船（小船身 + 桅杆/帆，随波轻微起伏）
+  _drawRiverShips(ctx) {
+    if (!this._riverShips.length) return;
+    const t = this._animTime;
+    ctx.save();
+    for (const sh of this._riverShips) {
+      const bob = Math.sin(t * 3 + sh.seed) * 1.5 * this.scale;
+      ctx.save();
+        ctx.translate(sh.x, sh.y + bob);
+        if (sh.dir < 0) ctx.scale(-1, 1);   // 朝左则翻转船向
+        // 船身
+        ctx.fillStyle = sh.type === 'warship' ? '#5a3a2a' : '#7a5a30';
+        ctx.beginPath();
+        ctx.moveTo(-6 * this.scale, 0);
+        ctx.lineTo(6 * this.scale, 0);
+        ctx.lineTo(4 * this.scale, 2.5 * this.scale);
+        ctx.lineTo(-4 * this.scale, 2.5 * this.scale);
+        ctx.closePath(); ctx.fill();
+        // 桅杆
+        ctx.strokeStyle = '#8a6a3a';
+        ctx.lineWidth = 1 * this.scale;
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -7 * this.scale); ctx.stroke();
+        if (sh.type === 'merchant') {
+          // 商船：白帆
+          ctx.fillStyle = 'rgba(240,230,200,0.9)';
+          ctx.beginPath();
+          ctx.moveTo(0, -7 * this.scale);
+          ctx.lineTo(4 * this.scale, -5 * this.scale);
+          ctx.lineTo(0, -3 * this.scale);
+          ctx.closePath(); ctx.fill();
+        } else {
+          // 战船：红旗
+          ctx.fillStyle = '#b03030';
+          ctx.fillRect(1 * this.scale, -6 * this.scale, 3 * this.scale, 2 * this.scale);
+        }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // 势力边境：相邻不同归属城市间画势力色流动虚线
+  _drawFactionBorders(ctx) {
+    if (!this.game) return;
+    const t = this._animTime;
+    ctx.save();
+    let drawn = 0;
+    for (const city of this.game.cities.values()) {
+      if (drawn >= 40) break;
+      if (!city.owner) continue;
+      const links = CITY_LINKS[city.id] || [];
+      for (const tid of links) {
+        if (city.id >= tid) continue;
+        const target = this.game.cities.get(tid);
+        if (!target || !target.owner) continue;
+        if (target.owner === city.owner) continue;   // 同势力不画边界
+        const p1 = this.isoToScreen(city.isoX, city.isoY);
+        const p2 = this.isoToScreen(target.isoX, target.isoY);
+        if (!this._onScreen((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, 200)) continue;
+        const col = (FACTIONS[city.owner] && FACTIONS[city.owner].color) || '#888';
+        ctx.strokeStyle = this._factionColorWithAlpha(col, 0.6);
+        ctx.lineWidth = 1.5 * this.scale;
+        ctx.setLineDash([6, 5]);
+        ctx.lineDashOffset = -t * 6;   // 边界虚线缓慢流动
+        ctx.beginPath(); ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y); ctx.stroke();
+        drawn++;
+        if (drawn >= 40) break;
+      }
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  // 交战城市周围火焰/烟雾（按 setBattles 推导城市；LOD 控制火焰数量）
+  _drawCityBattleFire(ctx) {
+    if (!this.game || this._battleMarkers.length === 0) return;
+    const t = this._animTime;
+    const cx = this.canvas.width / 2, cy = this.canvas.height / 2;
+    ctx.save();
+    for (const b of this._battleMarkers) {
+      const armyA = this.game.armies.find(a => a.id === b.armyIdA);
+      if (!armyA) continue;
+      const city = this.game.cities.get(armyA.cityId);
+      if (!city) continue;
+      const pos = this.isoToScreen(city.isoX, city.isoY);
+      if (!this._onScreen(pos.x, pos.y, 140)) continue;
+      // LOD：距离视口中心越远，火焰点越少
+      const dist = Math.hypot(pos.x - cx, pos.y - cy);
+      const flames = dist < 300 ? 3 : dist < 600 ? 2 : 1;
+      const r = (10 + (city.size || 1) * 4) * this.scale;
+      for (let i = 0; i < flames; i++) {
+        const fx = pos.x + Math.sin(t * 5 + i * 2.1 + city.isoX) * r * 0.7;
+        const fy = pos.y - r * 0.4 - (i % 2) * 4;
+        const fl = 0.6 + 0.4 * Math.sin(t * 9 + i * 3 + city.isoY);
+        const g = ctx.createRadialGradient(fx, fy, 0, fx, fy, 8 * this.scale);
+        g.addColorStop(0, `rgba(255,${140 + Math.floor(fl * 80)},40,0.85)`);
+        g.addColorStop(1, 'rgba(255,80,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(fx, fy, 8 * this.scale, 0, Math.PI * 2); ctx.fill();
+      }
+      // 烟雾（灰黑上升，仅中近景）
+      if (dist < 500) {
+        ctx.globalAlpha = 0.3 + 0.1 * Math.sin(t * 2 + city.isoX);
+        ctx.fillStyle = '#555';
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y - r - 6 - Math.sin(t * 1.5) * 3, 5 * this.scale, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
     }
     ctx.restore();
   }

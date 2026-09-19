@@ -97,7 +97,13 @@ export function lz77Decompress(compressed) {
       const off = item[0], len = item[1];
       const start = out.length - off;
       if (start < 0) continue;
-      for (let k = 0; k < len; k++) out += out[start + k];
+      // BUG修复#7（network.js 逻辑错误）：压缩数据损坏/被篡改时，回引 [off,len] 的 len
+      //   可能大于 off（回引用起点到结尾的剩余长度），导致 start+k 越界访问 out[]。
+      //   字符串越界取字符返回 undefined，`out += undefined` 会把 "undefined" 字面
+      //   字符串拼进解压结果，污染存档/状态快照。修复：钳制实际可拷贝长度为
+      //   out.length - start，越界部分直接丢弃，保证解压结果干净。
+      const copyLen = Math.min(len, out.length - start);
+      for (let k = 0; k < copyLen; k++) out += out[start + k];
     }
   }
   return out;

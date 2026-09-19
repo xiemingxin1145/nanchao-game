@@ -7,6 +7,8 @@
 // ============================================================
 import { FACTIONS, MARRIAGE_REL_BONUS, MARRIAGE_BREAK_REL_PENALTY,
          HOSTAGE_RANSOM_COST, HOSTAGE_RECALL_REL_MIN } from './data.js';
+// V18.0：AI 智能深化——战略规划器（均势/威胁评估）
+import { strategyPlanner } from './ai_strategy.js';
 
 // V15.0：外交关系五级定义（基于 relation 数值 -100~100 映射）
 export const RELATION_LEVELS = [
@@ -129,7 +131,20 @@ export class DiplomacySystem {
 
     // AI 自动决定是否应允：关系 + 实力对比
     if (targetFid !== game.playerFaction) {
-      const acceptProb = 0.35 + rel.relation / 200; // 关系越好越易应允
+      let acceptProb = 0.35 + rel.relation / 200; // 关系越好越易应允
+      // V18.0：实力外交——强国提亲弱国更易接受；弱国攀强国更积极
+      try {
+        const sp = strategyPlanner;
+        const mePow = sp.getFactionStrength(proposerFid, game);
+        const themPow = sp.getFactionStrength(targetFid, game);
+        const ratio = themPow.military > 0 ? mePow.military / themPow.military : 1;
+        if (ratio >= 1.5) acceptProb += 0.25;        // 我方（提亲方）显著更强 → 对方更易接受
+        else if (ratio <= 0.6) acceptProb += 0.15;   // 对方更强 → 攀附亦易成
+        // 恩怨扣分：刚被攻击过则拒婚
+        const g = (rel.grievance || 0);
+        if (g >= 30) acceptProb -= 0.30;
+      } catch (e) {}
+      acceptProb = Math.max(0.05, Math.min(0.95, acceptProb));
       if (Math.random() < acceptProb) {
         this.acceptMarriage(game, marriage.id);
         return { ok: true, msg: `${FACTIONS[targetFid].name} 欣然应允与 ${FACTIONS[proposerFid].name} 联姻！`, marriage };
@@ -274,7 +289,19 @@ export class DiplomacySystem {
   }
 
   // 撕毁盟约/开战时处置人质：50% 处决（武将死亡），50% 释放
+  // V18.0：同时记录历史恩怨（grievance）——刚被攻击过的势力更难和解
+  //   fid1=进攻方，fid2=防守方（由 game.attackCity 传入）
   onWarDeclared(game, fid1, fid2) {
+    // ---- V18.0：恩怨系统 ----
+    try {
+      const rel = this.getRelation(fid2, fid1); // 防守方对进攻方
+      if (rel) {
+        rel.grievance = Math.min(100, (Number(rel.grievance) || 0) + 30);
+        rel.lastAttackTurn = game.turn;
+        rel.relation = Math.max(-100, (Number(rel.relation) || 0) - 10);
+      }
+    } catch (e) {}
+
     const survivors = [];
     for (const h of (game.hostages || [])) {
       const between =
@@ -456,6 +483,170 @@ export class DiplomacySystem {
   //    既有 bribeGeneral 保留不变；此为 V15.0 强化接口
   proposeDefection(game, targetFid, generalId, cost) {
     return this.bribeGeneral(game, targetFid, generalId, cost);
+  }
+
+  // ============================================================
+  // V18.0：AI 智能深化——外交决策深化
+  // ============================================================
+
+  // 1) AI 外交提案：根据实力/关系/恩怨，决定 AI 主动向对方提议什么
+  //    返回 { type: 'hostage'|'marriage'|'heqin'|'ceasefire'|'none', reason }
+  getAIProposal(factionA, factionB, game) {
+    if (!factionA || !factionB || factionA === factionB) {
+      return { type: 'none', reason: '无外交对象' };
+    }
+    const rel = this.getRelation(factionA, factionB);
+    if (!rel) return { type: 'none', reason: '无外交关系' };
+    if (rel.alliance) return { type: 'none', reason: '已为同盟' };
+
+    try {
+      const sp = strategyPlanner;
+      const me = sp.getFactionStrength(factionA, game);
+      const them = sp.getFactionStrength(factionB, game);
+      const ratio = them.military > 0 ? me.military / them.military : 1;
+      const grievance = Number(rel.grievance) || 0;
+
+      // 弱国对强国：优先送人质求和 → 其次联姻/和亲
+      if (ratio < 0.6) {
+        if (grievance >= 30) {
+          // 刚结怨：先停战
+          return { type: 'ceasefire', reason: '新败乞和，先止干戈' };
+        }
+        if (rel.relation > 0) {
+          return { type: Math.random() < 0.5 ? 'marriage' : 'heqin', reason: '弱国攀援，结亲固好' };
+        }
+        return { type: 'hostage', reason: '弱国送质以求苟安' };
+      }
+      // 势均力敌：关系好则联姻
+      if (ratio >= 0.8 && ratio <= 1.2 && rel.relation >= 20) {
+        return { type: 'marriage', reason: '势均力敌，结秦晋之好' };
+      }
+      // 强国对弱国：关系尚可则和亲笼络
+      if (ratio > 1.5 && rel.relation >= 0) {
+        return { type: 'heqin', reason: '大国怀柔，宗女和亲' };
+      }
+      return { type: 'none', reason: '当前局势无合适提案' };
+    } catch (e) {
+      return { type: 'none', reason: '评估失败' };
+    }
+  }
+
+  // 2) AI 是否应主动求和：遍历交战势力，若己方明显透支则求和
+  //    返回 { seek: bool, target: factionId, reason: string }
+  shouldAISeekPeace(factionId, game) {
+    if (!factionId) return { seek: false, reason: '无效势力' };
+    try {
+      const sp = strategyPlanner;
+      const me = sp.getFactionStrength(factionId, game);
+      const res = game.factionRes.get(factionId) || {};
+      const alive = Object.keys(FACTIONS).filter(f => {
+        if (f === factionId) return false;
+        return game.getFactionCities(f).length > 0;
+      });
+      // 找交战中（关系<0 且未停战）且最强者
+      let best = null, bestGap = 0;
+      for (const f of alive) {
+        const rel = this.getRelation(factionId, f);
+        if (!rel || rel.ceasefire || rel.alliance) continue;
+        if ((Number(rel.relation) || 0) >= 0) continue;
+        const them = sp.getFactionStrength(f, game);
+        // 对方显著强于我，且我经济透支
+        const gap = them.military - me.military;
+        const broke = (Number(res.money) || 0) < 300;
+        if (gap > 2000 && (broke || me.cityCount <= 2) && gap > bestGap) {
+          best = f; bestGap = gap;
+        }
+      }
+      if (best) {
+        return { seek: true, target: best, reason: '国力疲敝，难以为继' };
+      }
+      return { seek: false, reason: '尚可支撑' };
+    } catch (e) {
+      return { seek: false, reason: '评估失败' };
+    }
+  }
+
+  // 3) AI 外交态度：综合实力对比/恩怨/均势压力，返回态度
+  //    返回 { attitude: 'warm'|'neutral'|'cold'|'hostile', strengthRatio, grievance, balancePressure, note }
+  getAIDiplomacyAttitude(factionA, factionB, game) {
+    if (!factionA || !factionB || factionA === factionB) {
+      return { attitude: 'neutral', strengthRatio: 1, grievance: 0, balancePressure: 0, note: '无外交对象' };
+    }
+    const rel = this.getRelation(factionA, factionB) || {};
+    try {
+      const sp = strategyPlanner;
+      const me = sp.getFactionStrength(factionA, game);
+      const them = sp.getFactionStrength(factionB, game);
+      const ratio = me.military > 0 ? them.military / me.military : 1;
+      const grievance = Number(rel.grievance) || 0;
+      // 均势压力：factionB 是否过强（占比 > 35%）
+      const totalCities = game.cities.size || 1;
+      const theirRatio = them.cityCount / totalCities;
+      const balancePressure = theirRatio > 0.35 ? 1 : 0;
+
+      let score = 0;
+      if (rel.alliance) score += 50;
+      if (rel.ceasefire) score += 10;
+      score += (Number(rel.relation) || 0) / 2;
+      if (grievance >= 30) score -= 30;
+      if (balancePressure && factionB !== factionA) score -= 20; // 均势：对霸者敌意
+      if (ratio > 1.5) score -= 10;   // 对方显著更强
+      else if (ratio < 0.6) score += 5; // 对方弱小
+
+      let attitude = 'neutral';
+      if (score >= 40) attitude = 'warm';
+      else if (score >= 10) attitude = 'neutral';
+      else if (score >= -20) attitude = 'cold';
+      else attitude = 'hostile';
+
+      return {
+        attitude,
+        strengthRatio: Math.round(ratio * 100) / 100,
+        grievance,
+        balancePressure,
+        note: attitude === 'hostile' ? '敌对相向'
+          : attitude === 'cold' ? '心存戒心'
+          : attitude === 'neutral' ? '不亲不疏'
+          : '友善相向'
+      };
+    } catch (e) {
+      return { attitude: 'neutral', strengthRatio: 1, grievance: 0, balancePressure: 0, note: '评估失败' };
+    }
+  }
+
+  // 4) 均势外交压力查询：某势力是否过强（其他势力应联合对抗）
+  //    返回 { dominant: factionId|null, ratio: number, note: string }
+  getBalancePressure(game) {
+    try {
+      const alive = Object.keys(FACTIONS).filter(f => game.getFactionCities(f).length > 0);
+      const total = game.cities.size || 1;
+      let dominant = null, maxRatio = 0;
+      for (const f of alive) {
+        const n = game.getFactionCities(f).length;
+        const r = n / total;
+        if (r > maxRatio) { maxRatio = r; dominant = f; }
+      }
+      return {
+        dominant,
+        ratio: Math.round(maxRatio * 100) / 100,
+        note: maxRatio > 0.35
+          ? `${FACTIONS[dominant].name}势大，诸侯当共图之`
+          : '天下均分，暂无独霸'
+      };
+    } catch (e) {
+      return { dominant: null, ratio: 0, note: '评估失败' };
+    }
+  }
+
+  // 5) 每回合恩怨衰减（由 game 回合推进时调用）
+  _decayGrievance(game) {
+    try {
+      for (const rel of Object.values(this.relations)) {
+        if (rel.grievance && rel.grievance > 0) {
+          rel.grievance = Math.max(0, rel.grievance - 2);
+        }
+      }
+    } catch (e) {}
   }
 
   serialize() {

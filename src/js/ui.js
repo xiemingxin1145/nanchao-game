@@ -154,7 +154,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge">V17.0 · 血战沙场版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge">V18.0 · 智计天下版</div>
         </div>
       </div>
     `;
@@ -1030,6 +1030,7 @@ export class UI {
             <button class="btn-small" id="btn-save">存档</button>
             <button class="btn-small" id="btn-diplomacy">外交</button>
             <button class="btn-small" id="btn-espionage">谍报</button>
+            <button class="btn-small v18-intel-btn" id="btn-intel" title="V18.0 战略情报：实力对比 / 威胁热力 / 敌行动预测">情报</button>
             <button class="btn-small" id="btn-religion">宗教</button>
             <button class="btn-small" id="btn-recruit">招募</button>
             <button class="btn-small" id="btn-menu">菜单</button>
@@ -1077,6 +1078,9 @@ export class UI {
     document.getElementById('btn-diplomacy').onclick = () => this.showDiplomacyV15();
     const v15SpyBtn = document.getElementById('btn-espionage');
     if (v15SpyBtn) v15SpyBtn.onclick = () => this.showEspionagePanel();
+    // V18.0：战略情报面板
+    const v18IntelBtn = document.getElementById('btn-intel');
+    if (v18IntelBtn) v18IntelBtn.onclick = () => this.showIntelPanelV18();
     const v15RelBtn = document.getElementById('btn-religion');
     if (v15RelBtn) v15RelBtn.onclick = () => this.showReligionPanel();
     document.getElementById('btn-recruit').onclick = () => this.showRecruitPanel();
@@ -2462,7 +2466,21 @@ export class UI {
     }
     const actionsEl = document.getElementById('bt-actions');
     if (actionsEl) {
-      actionsEl.innerHTML = `<button class="btn-ancient v13-btn" onclick="__ui_.closeBattle()">继续</button>`;
+      // V18.0：多回合战报追加「战报详析」入口
+      const v18Rpt = {
+        attackerWin: !!win, draw: !!(result.draw || st.draw), conquered: !!result.conquered,
+        attackerLoss: result.attackerLoss || 0, defenderLoss: result.defenderLoss || 0,
+        battleLog: Array.isArray(st.log) ? st.log.slice() : [],
+        tactics: Array.isArray(st.log) ? st.log.filter(l => /奇袭|破城|★|绝技|火攻|克制|阵型|士气|天气|地形/.test(l)) : [],
+        attackerName: st.attackerName || '我军', defenderName: st.defenderName || '守军',
+        attackerFaction: st.attackerFaction || this.game.playerFaction,
+        defenderFaction: st.defenderFaction || null,
+        targetCityName: st.cityName || '战场'
+      };
+      actionsEl.innerHTML =
+        `<button class="btn-small v18-btn-flat" onclick="__ui_.showBattleReportV18(__v18rpt)">🔍 战报详析</button>` +
+        `<button class="btn-ancient v13-btn" onclick="__ui_.closeBattle()">继续</button>`;
+      try { window.__v18rpt = v18Rpt; } catch (e) {}
     }
     // V13.0：胜利金色粒子爆发 / 失败灰色余烬飘落 / 平局中性
     this._v13BattleResultFX(modal, win, result.draw || st.draw);
@@ -2497,10 +2515,17 @@ export class UI {
           ${(result.battleLog || []).map(l => `<p>${l}</p>`).join('')}
           ${result.conquered ? '<p class="conquer">★ 城池已陷落！</p>' : ''}
         </div>
+        <!-- V18.0：战报深度分析入口 -->
+        <div class="v18-battle-actions">
+          <button class="btn-small v18-btn-flat" id="v18-battle-detail-btn">🔍 战报详析</button>
+        </div>
         <button class="btn-ancient" onclick="__ui_.closeBattle()">继续</button>
       </div>
     `;
     document.body.appendChild(modal);
+    // V18.0：绑定「战报详析」按钮
+    const v18DetailBtn = modal.querySelector('#v18-battle-detail-btn');
+    if (v18DetailBtn) v18DetailBtn.onclick = () => this.showBattleReportV18(result);
     // V13.0：旧版战报也加胜利/失败动态粒子特效
     const inner = modal.querySelector('.battle-modal');
     if (inner) { inner.classList.add('v13-battle-modal'); this._v13BattleResultFX(inner, !!result.attackerWin, !!result.draw); }
@@ -6637,4 +6662,591 @@ export class UI {
     while (box.children.length > 4) box.removeChild(box.firstChild);
     setTimeout(() => { item.classList.add('out'); setTimeout(() => item.remove(), 400); }, 3200);
   }
-}
+
+  // ============================================================
+  // ============== V18.0「智计天下」UI 精修 ======================
+  //  约定：所有新类名使用 v18- 前缀；所有模型 API 调用带
+  //        typeof === 'function' / 存在性守卫，优雅降级。
+  //  模块：战略情报面板 / 势力详情深化 / 战斗结算深化 / 通用提升。
+  // ============================================================
+
+  // ---------- 通用：V18 古风弹窗骨架 ----------
+  _v18ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v18-overlay';
+    modal.innerHTML = `
+      <div class="modal v18-modal v18-scroll ${extraCls}">
+        <div class="v18-corner tl"></div><div class="v18-corner tr"></div>
+        <div class="v18-corner bl"></div><div class="v18-corner br"></div>
+        <h2 class="modal-title v18-title">${titleHtml}</h2>
+        <div class="v18-body">${bodyHtml}</div>
+        <button class="btn-ancient v18-close" onclick="this.closest('.v18-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') {
+      try { this.audio.playPanelOpen(); } catch (e) {}
+    }
+    return modal;
+  }
+
+  // ---------- V18：存活势力列表 ----------
+  _v18AliveFactions() {
+    if (!this.game || typeof this.game.getFactionCities !== 'function') return [];
+    return Object.values(FACTIONS).filter(f => {
+      try { return this.game.getFactionCities(f.id).length > 0; }
+      catch (e) { return false; }
+    });
+  }
+
+  // ---------- V18：计算某势力七维实力（原始值 + 0~100 归一化） ----------
+  _v18FactionMetrics(fid) {
+    const g = this.game;
+    if (!g) return null;
+    let cities = [], armies = [], gens = [];
+    try { cities = g.getFactionCities(fid) || []; } catch (e) { cities = []; }
+    try { armies = g.getFactionArmies(fid) || []; } catch (e) { armies = []; }
+    try { gens = g.getFactionGenerals(fid) || []; } catch (e) { gens = []; }
+
+    const garrison = cities.reduce((s, c) => s + (c.garrison || 0), 0);
+    const fieldTroops = armies.reduce((s, a) => s + (a.troops || 0), 0);
+    const military = garrison + fieldTroops;
+
+    const res = (g.factionRes && g.factionRes.get && g.factionRes.get(fid)) || { money: 0, food: 0 };
+    const wealth = cities.reduce((s, c) => s + ((c.prosperity || 0) * 10) + ((c.pop || 0) / 1000), 0);
+    const economy = (res.money || 0) + (res.food || 0) * 0.2 + wealth;
+
+    const territory = cities.length;
+    const generalCount = gens.length;
+    const politics = gens.length ? gens.reduce((s, x) => s + (x.politics || 0), 0) / gens.length : 0;
+    const culture = cities.length ? cities.reduce((s, c) => s + (c.prosperity || 0), 0) / cities.length : 0;
+    // 外交：以与玩家关系为代表（自身为 0）
+    let diplomacyScore = 0;
+    if (g.diplomacy && typeof g.diplomacy.getRelation === 'function' && fid !== g.playerFaction) {
+      try {
+        const r = g.diplomacy.getRelation(g.playerFaction, fid);
+        diplomacyScore = r ? (r.relation || 0) : 0;
+      } catch (e) { diplomacyScore = 0; }
+    } else if (fid === g.playerFaction) {
+      diplomacyScore = 50;
+    }
+    return {
+      raw: { military, economy, territory, generals: generalCount, politics, culture, diplomacy: diplomacyScore },
+      // 五维（雷达用）：军事/经济/政治/文化/外交
+      five: {
+        military: military,
+        economy: economy,
+        politics: politics * 10,
+        culture: culture * 5,
+        diplomacy: (diplomacyScore + 100) / 2 // -100~100 -> 0~100
+      }
+    };
+  }
+
+  // ---------- V18：国力变化趋势（自维护近 5 回合快照） ----------
+  _v18Trend(fid) {
+    const m = this._v18FactionMetrics(fid);
+    if (!m) return { dir: 0, pct: 0, hist: [] };
+    const strength = m.raw.military + m.raw.economy / 10 + m.raw.territory * 500;
+    this._v18StratHistory = this._v18StratHistory || {};
+    const arr = this._v18StratHistory[fid] = this._v18StratHistory[fid] || [];
+    const turn = (this.game && this.game.turn) || 0;
+    const last = arr[arr.length - 1];
+    if (!last || last.turn !== turn) {
+      arr.push({ turn, v: strength });
+      if (arr.length > 6) arr.shift();
+    }
+    if (arr.length < 2) return { dir: 0, pct: 0, hist: arr.map(x => x.v) };
+    const old = arr[0].v, now = arr[arr.length - 1].v;
+    const pct = old > 0 ? Math.round((now - old) / old * 100) : 0;
+    const dir = pct > 2 ? 1 : (pct < -2 ? -1 : 0);
+    return { dir, pct, hist: arr.map(x => x.v) };
+  }
+
+  // ---------- V18：实力对比条 ----------
+  _v18Bar(label, value, max, color) {
+    const pct = max > 0 ? Math.max(2, Math.min(100, Math.round(value / max * 100))) : 2;
+    return `<div class="v18-bar-row"><span class="v18-bar-label">${label}</span>` +
+      `<span class="v18-bar-track"><span class="v18-bar-fill" style="width:${pct}%;background:${color || '#c8a54a'}"></span></span>` +
+      `<span class="v18-bar-val">${value}</span></div>`;
+  }
+
+  // ============================================================
+  // 一、战略情报面板
+  // ============================================================
+  showIntelPanelV18() {
+    if (!this.game) { this.toast('尚未进入游戏'); return; }
+    const me = this.game.playerFaction;
+    const alive = this._v18AliveFactions();
+    // 预计算归一化基准
+    const metrics = {};
+    alive.forEach(f => { metrics[f.id] = this._v18FactionMetrics(f.id); });
+    const max = (k) => Math.max(1, ...alive.map(f => (metrics[f.id] && metrics[f.id].raw[k]) || 0));
+    const mMil = max('military'), mEco = max('economy'), mTer = max('territory'), mGen = max('generals');
+
+    // --- 势力实力对比表 ---
+    const rows = alive.map(f => {
+      const m = metrics[f.id]; if (!m) return '';
+      const r = m.raw;
+      const mine = f.id === me;
+      return `
+        <div class="v18-intel-row${mine ? ' v18-mine' : ''}" style="--v18-fc:${f.color}">
+          <div class="v18-intel-name">
+            <i class="v18-dot" style="background:${f.color}"></i>${f.name}${mine ? '<small>（我方）</small>' : ''}
+          </div>
+          ${this._v18Bar('军', Math.round(r.military), mMil, f.color)}
+          ${this._v18Bar('经', Math.round(r.economy), mEco, '#b8924a')}
+          ${this._v18Bar('土', r.territory, mTer, '#6a9a6a')}
+          ${this._v18Bar('将', r.generals, mGen, '#9a7ab0')}
+          <div class="v18-intel-acts">
+            <button class="v18-link" onclick="__ui_.showFactionDetailV18('${f.id}')">详情</button>
+          </div>
+        </div>`;
+    }).join('');
+
+    // --- 威胁等级热力图（八方向罗盘） ---
+    const compass = this._v18ThreatCompass(me);
+
+    // --- AI 可能行动预测 ---
+    const predicts = this._v18AIPredictions(me);
+
+    const body = `
+      <div class="v18-sec-title">◆ 天下实力对比</div>
+      <div class="v18-intel-list">${rows}</div>
+      <div class="v18-split">
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 四方威胁热力</div>
+          ${compass}
+          <div class="v18-legend">
+            <span><i class="v18-lg" style="background:#4caf50"></i>安宁</span>
+            <span><i class="v18-lg" style="background:#c9c24a"></i>需留意</span>
+            <span><i class="v18-lg" style="background:#e08a3d"></i>边患</span>
+            <span><i class="v18-lg" style="background:#e04a4a"></i>大战在即</span>
+          </div>
+        </div>
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 敌情推演 · AI 可能动向</div>
+          <div class="v18-predict-list">${predicts}</div>
+        </div>
+      </div>
+    `;
+    this._v18ModalShell('🜂 战略情报 · 智在天下', body, 'v18-wide');
+    this._v18Notify('intel', '已呈上图，知己知彼，百战不殆。');
+  }
+
+  // ---------- V18：八方向威胁热力罗盘（SVG） ----------
+  _v18ThreatCompass(me) {
+    const g = this.game;
+    const meFac = FACTIONS[me];
+    const cap = meFac && g.cities.get(meFac.capital);
+    const cx = 110, cy = 110, R = 92;
+    // 八方向威胁权重累计
+    const dirs = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+    const threat = new Array(8).fill(0);
+    const labels = new Array(8).fill('');
+    if (cap && typeof cap.isoX === 'number') {
+      const armies = (g.armies || []).filter(a => a.faction && a.faction !== me);
+      for (const a of armies) {
+        const ac = g.cities.get(a.cityId);
+        if (!ac || typeof ac.isoX !== 'number') continue;
+        const dx = ac.isoX - cap.isoX;
+        const dy = ac.isoY - cap.isoY;
+        const ang = Math.atan2(dy, dx); // 0=东, pi/2=南
+        let idx = Math.round(((ang + Math.PI * 2) % (Math.PI * 2)) / (Math.PI / 4)) % 8;
+        // 角度序：0东 1东南 2南 3西南 4西 5西北 6北 7东北
+        // 罗盘扇区序：0北 1东北 2东 3东南 4南 5西南 6西 7西北
+        const toCompass = [2, 3, 4, 5, 6, 7, 0, 1];
+        idx = toCompass[idx];
+        threat[idx] += (a.troops || 0) / 1000;
+        const fn = FACTIONS[a.faction];
+        labels[idx] = (labels[idx] ? labels[idx] + '、' : '') + (fn ? fn.name : '敌');
+      }
+    }
+    const maxT = Math.max(1, ...threat);
+    let sectors = '';
+    for (let i = 0; i < 8; i++) {
+      const t = threat[i] / maxT;
+      const color = t < 0.25 ? '#4caf50' : (t < 0.5 ? '#c9c24a' : (t < 0.75 ? '#e08a3d' : '#e04a4a'));
+      const a0 = -Math.PI / 2 + i * Math.PI / 4 - Math.PI / 8;
+      const a1 = a0 + Math.PI / 4;
+      const x0 = cx + R * Math.cos(a0), y0 = cy + R * Math.sin(a0);
+      const x1 = cx + R * Math.cos(a1), y1 = cy + R * Math.sin(a1);
+      sectors += `<path d="M${cx},${cy} L${x0},${y0} A${R},${R} 0 0 1 ${x1},${y1} Z" fill="${color}" fill-opacity="${0.25 + t * 0.6}" stroke="#1a1a1a"/>`;
+      const lx = cx + (R + 16) * Math.cos(a0 + Math.PI / 8);
+      const ly = cy + (R + 16) * Math.sin(a0 + Math.PI / 8);
+      sectors += `<text x="${lx}" y="${ly}" class="v18-compass-t" text-anchor="middle" dominant-baseline="middle">${dirs[i]}</text>`;
+    }
+    return `<svg class="v18-compass" viewBox="0 0 220 220" width="200" height="200">
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#5a4a2a"/>
+      ${sectors}
+      <circle cx="${cx}" cy="${cy}" r="14" fill="#e8c060" stroke="#1a1a1a"/>
+      <text x="${cx}" y="${cy + 4}" text-anchor="middle" font-size="11">都</text>
+    </svg>` +
+    `<div class="v18-compass-note">${labels.some(l => l) ? labels.map((l, i) => l ? `<div><b style="color:#e0b060">${dirs[i]}</b>：${l}</div>` : '').join('') : '<div>四方暂无敌踪，海晏河清。</div>'}</div>`;
+  }
+
+  // ---------- V18：AI 可能行动预测 ----------
+  _v18AIPredictions(me) {
+    const g = this.game;
+    const alive = this._v18AliveFactions().filter(f => f.id !== me);
+    const predicts = [];
+    const myCities = g.getFactionCities(me) || [];
+    for (const f of alive) {
+      let armies = [];
+      try { armies = g.getFactionArmies(f.id) || []; } catch (e) { armies = []; }
+      const total = armies.reduce((s, a) => s + (a.troops || 0), 0);
+      if (total < 1500) { predicts.push(`<div class="v18-predict v18-p-safe"><i>○</i> ${f.name} 国力疲弱，暂无大动作。</div>`); continue; }
+      // 找该势力军队距我方哪座城最近
+      let nearest = null, best = 1e9;
+      for (const a of armies) {
+        const ac = g.cities.get(a.cityId);
+        if (!ac || typeof ac.isoX !== 'number') continue;
+        for (const mc of myCities) {
+          if (typeof mc.isoX !== 'number') continue;
+          const d = Math.hypot(ac.isoX - mc.isoX, ac.isoY - mc.isoY);
+          if (d < best) { best = d; nearest = mc; }
+        }
+      }
+      // 关系判断
+      let rel = 0;
+      if (g.diplomacy && typeof g.diplomacy.getRelation === 'function') {
+        try { const r = g.diplomacy.getRelation(me, f.id); rel = r ? (r.relation || 0) : 0; } catch (e) {}
+      }
+      if (nearest && best < 4) {
+        const level = rel < -20 ? '大战在即' : (total > 8000 ? '虎视眈眈' : '摩拳擦掌');
+        predicts.push(`<div class="v18-predict v18-p-warn"><i>⚠</i> <b style="color:${f.color}">${f.name}</b> 集结兵力约 ${total}，${level}，似有南下之意，目标恐为 <b>${nearest.name}</b>。</div>`);
+      } else if (rel < -40) {
+        predicts.push(`<div class="v18-predict v18-p-tense"><i>▲</i> <b style="color:${f.color}">${f.name}</b> 与我交恶（关系 ${rel}），宜早作边防。</div>`);
+      } else {
+        predicts.push(`<div class="v18-predict v18-p-neutral"><i>·</i> <b style="color:${f.color}">${f.name}</b> 暂无明显异动，或在休养生息。</div>`);
+      }
+    }
+    return predicts.join('') || '<div class="v18-predict v18-p-neutral">暂无他国动向。</div>';
+  }
+
+  // ============================================================
+  // 二、势力详情面板深化
+  // ============================================================
+  showFactionDetailV18(fid) {
+    if (!this.game) return;
+    const f = FACTIONS[fid];
+    if (!f) return;
+    const m = this._v18FactionMetrics(fid);
+    const trend = this._v18Trend(fid);
+    if (!m) return;
+
+    // --- 五维雷达（军事/经济/政治/文化/外交） ---
+    const five = m.five;
+    const maxFive = { military: 1, economy: 1, politics: 1, culture: 1, diplomacy: 1 };
+    // 用全局最大值归一化
+    const alive = this._v18AliveFactions();
+    ['military', 'economy', 'politics', 'culture', 'diplomacy'].forEach(k => {
+      maxFive[k] = Math.max(1, ...alive.map(a => { const mm = this._v18FactionMetrics(a.id); return mm ? mm.five[k] : 0; }));
+    });
+
+    // --- 主要武将（按四维均值排序） ---
+    let gens = [];
+    try { gens = (this.game.getFactionGenerals(fid) || []).slice(); } catch (e) { gens = []; }
+    gens.forEach(g => { g._power = ((g.command || 0) + (g.force || 0) + (g.intel || 0) + (g.politics || 0)) / 4; });
+    gens.sort((a, b) => b._power - a._power);
+    const topGens = gens.slice(0, 8).map((g, i) => `
+      <div class="v18-gen-row">
+        <span class="v18-gen-rank">${i + 1}</span>
+        <span class="v18-gen-name">${g.name}</span>
+        <span class="v18-gen-role">${g.role || ''}</span>
+        <span class="v18-gen-stats">
+          统${g.command || 0} 武${g.force || 0} 智${g.intel || 0} 政${g.politics || 0}
+        </span>
+      </div>`).join('');
+
+    // --- 外交关系全景 ---
+    const diploRows = alive.map(o => {
+      if (o.id === fid) return '';
+      let rel = { relation: 0, alliance: false, ceasefire: false };
+      if (this.game.diplomacy && typeof this.game.diplomacy.getRelation === 'function') {
+        try { rel = this.game.diplomacy.getRelation(fid, o.id) || rel; } catch (e) {}
+      }
+      const v = rel.relation || 0;
+      const lvl = rel.alliance ? '同盟' : (v >= 40 ? '友好' : (v >= 0 ? '中立' : (v >= -40 ? '紧张' : '敌对')));
+      const cls = rel.alliance ? 'v18-dp-allied' : (v >= 40 ? 'v18-dp-friend' : (v >= 0 ? 'v18-dp-neutral' : (v >= -40 ? 'v18-dp-tense' : 'v18-dp-war')));
+      return `<div class="v18-dp-row ${cls}">
+        <i class="v18-dp-dot" style="background:${o.color}"></i>${o.name}
+        <span class="v18-dp-lvl">${lvl}${rel.ceasefire ? '·停战' : ''}</span>
+      </div>`;
+    }).join('');
+
+    // --- 战略意图提示 ---
+    let intent = '';
+    if (fid !== this.game.playerFaction) {
+      intent = this._v18FactionIntent(fid);
+    } else {
+      intent = '本国以稳守为上，广积粮、缓称王。';
+    }
+
+    const trendIcon = trend.dir > 0 ? '📈' : (trend.dir < 0 ? '📉' : '➖');
+    const trendTxt = trend.dir > 0 ? `近5回合国力上升 ${trend.pct}%` : (trend.dir < 0 ? `近5回合国力下降 ${Math.abs(trend.pct)}%` : '近5回合国力持平');
+
+    const body = `
+      <div class="v18-fac-head" style="--v18-fc:${f.color}">
+        <div class="v18-fac-name">${f.name} <small>${f.description || ''}</small></div>
+        <div class="v18-trend">${trendIcon} ${trendTxt}</div>
+      </div>
+      <div class="v18-split">
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 五维国力</div>
+          <div class="v18-radar-wrap"><canvas id="v18-fac-radar" width="240" height="240"></canvas></div>
+          <div class="v18-metric-grid">
+            <div class="v18-metric"><span>城池</span><b>${m.raw.territory}</b></div>
+            <div class="v18-metric"><span>武将</span><b>${m.raw.generals}</b></div>
+            <div class="v18-metric"><span>军力</span><b>${Math.round(m.raw.military)}</b></div>
+            <div class="v18-metric"><span>财富</span><b>${Math.round(m.raw.economy)}</b></div>
+          </div>
+        </div>
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 主要武将（按才略）</div>
+          <div class="v18-gen-list">${topGens || '<div class="v18-empty">暂无在野/在册武将</div>'}</div>
+          <div class="v18-sec-title">◆ 外交全景</div>
+          <div class="v18-dp-grid">${diploRows || '<div class="v18-empty">无外交往来</div>'}</div>
+        </div>
+      </div>
+      <div class="v18-intent-box">🎯 <b>战略研判：</b>${intent}</div>
+    `;
+    const modal = this._v18ModalShell(`势力详析 · ${f.name}`, body, 'v18-wide');
+    const cv = modal.querySelector('#v18-fac-radar');
+    if (cv) {
+      try {
+        this._v18DrawRadar(cv,
+          ['军事', '经济', '政治', '文化', '外交'],
+          [
+            Math.min(1, five.military / maxFive.military),
+            Math.min(1, five.economy / maxFive.economy),
+            Math.min(1, five.politics / maxFive.politics),
+            Math.min(1, five.culture / maxFive.culture),
+            Math.min(1, five.diplomacy / maxFive.diplomacy)
+          ],
+          f.color);
+      } catch (e) {}
+    }
+  }
+
+  // ---------- V18：势力战略意图启发式推断 ----------
+  _v18FactionIntent(fid) {
+    const g = this.game;
+    let armies = [];
+    try { armies = g.getFactionArmies(fid) || []; } catch (e) { armies = []; }
+    const total = armies.reduce((s, a) => s + (a.troops || 0), 0);
+    if (total < 1500) return `${FACTIONS[fid].name} 兵力空虚，暂取守势。`;
+    // 找最近的他势力城市
+    let target = null, best = 1e9;
+    for (const a of armies) {
+      const ac = g.cities.get(a.cityId);
+      if (!ac || typeof ac.isoX !== 'number') continue;
+      for (const c of g.cities.values()) {
+        if (c.owner === fid || !c.owner) continue;
+        if (typeof c.isoX !== 'number') continue;
+        const d = Math.hypot(ac.isoX - c.isoX, ac.isoY - c.isoY);
+        if (d < best) { best = d; target = c; }
+      }
+    }
+    if (target && best < 4) {
+      const tf = FACTIONS[target.owner];
+      return `斥候来报，${FACTIONS[fid].name} 主力约 ${total} 集结于边境，似正准备进攻 <b style="color:${tf ? tf.color : '#e8c060'}">${target.name}</b>（${tf ? tf.name : '未知'}）。`;
+    }
+    return `${FACTIONS[fid].name} 拥兵约 ${total}，正在整军经武，图谋不轨，宜细作紧盯。`;
+  }
+
+  // ---------- V18：通用五维雷达绘制 ----------
+  _v18DrawRadar(canvas, labels, vals, color) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const cx = W / 2, cy = H / 2, R = Math.min(W, H) / 2 - 26;
+    const n = labels.length;
+    ctx.clearRect(0, 0, W, H);
+    const pt = (i, r) => {
+      const ang = -Math.PI / 2 + (Math.PI * 2 * i) / n;
+      return [cx + r * Math.cos(ang), cy + r * Math.sin(ang)];
+    };
+    ctx.strokeStyle = 'rgba(196,165,90,0.35)'; ctx.lineWidth = 1;
+    for (let ring = 1; ring <= 3; ring++) {
+      ctx.beginPath();
+      for (let i = 0; i <= n; i++) { const [x, y] = pt(i % n, (R * ring) / 3); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+      ctx.stroke();
+    }
+    for (let i = 0; i < n; i++) { const [x, y] = pt(i, R); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(x, y); ctx.stroke(); }
+    ctx.beginPath();
+    for (let i = 0; i <= n; i++) {
+      const v = Math.max(0.04, Math.min(1, vals[i % n] || 0));
+      const [x, y] = pt(i % n, R * v);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fillStyle = (color || '#c8a54a') + '55';
+    ctx.fill();
+    ctx.strokeStyle = color || '#c8a54a';
+    ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#C8B890'; ctx.font = '12px STSong, serif'; ctx.textAlign = 'center';
+    for (let i = 0; i < n; i++) { const [x, y] = pt(i, R + 14); ctx.fillText(labels[i], x, y + 4); }
+  }
+
+  // ============================================================
+  // 三、战斗结算画面深化
+  // ============================================================
+  showBattleReportV18(result) {
+    if (!result) { this.toast('暂无战报'); return; }
+    const r = result;
+    const win = !!r.attackerWin && !r.draw;
+    const draw = !!r.draw;
+    const titleTxt = win ? '大捷详析' : (draw ? '两败俱伤·详析' : '折戟·复盘');
+
+    // --- 胜负原因分析（从 tactics / battleLog 归类） ---
+    const all = (Array.isArray(r.tactics) ? r.tactics : []).concat(Array.isArray(r.battleLog) ? r.battleLog : []);
+    const cat = { 天气: [], 地形: [], 阵型: [], 士气: [], 兵种: [], 奇谋: [] };
+    all.forEach(line => {
+      if (!line) return;
+      if (/天气|风|雨|雾|雪|火攻|借风/.test(line)) cat.天气.push(line);
+      else if (/地形|山地|平原|河流|沙漠|水战|不习水战|伏/.test(line)) cat.地形.push(line);
+      else if (/阵型|阵|克/.test(line)) cat.阵型.push(line);
+      else if (/士气|连胜|连败/.test(line)) cat.士气.push(line);
+      else if (/克制|兵种|骑兵|步兵|弓兵|水/.test(line)) cat.兵种.push(line);
+      else if (/奇袭|计谋|设伏|火攻|★/.test(line)) cat.奇谋.push(line);
+    });
+    const causeHtml = Object.keys(cat).map(k => {
+      if (!cat[k].length) return '';
+      return `<div class="v18-cause-row"><span class="v18-cause-k">${k}</span><span>${cat[k][0]}</span></div>`;
+    }).join('') || '<div class="v18-empty">无明显地形/天气/阵型加成，纯以兵戎相见。</div>';
+
+    // --- 关键回合记录（取日志中含关键词的行） ---
+    const logArr = Array.isArray(r.battleLog) ? r.battleLog : [];
+    const keyRounds = logArr.filter(l => /奇袭|破城|★|火攻|大胜|溃败|设伏|识破|决胜|战/.test(l)).slice(0, 12);
+    const keyHtml = keyRounds.map((l, i) => `<div class="v18-round"><span class="v18-round-no">${i + 1}</span><span>${l}</span></div>`).join('')
+      || '<div class="v18-empty">战报简略，无逐回合记录。</div>';
+
+    // --- 武将表现评分 ---
+    const scoreOf = (name, loss, sideWin) => {
+      // 启发式评分：以少损而胜为高
+      const base = sideWin ? 75 : 50;
+      const adjust = Math.max(-15, Math.min(15, 10 - (loss || 0) / 200));
+      return Math.max(20, Math.min(99, Math.round(base + adjust)));
+    };
+    const atkScore = scoreOf(r.attackerName, r.attackerLoss, win);
+    const defScore = scoreOf(r.defenderName, r.defenderLoss, !win && !draw);
+    const scoreBadge = (s) => s >= 90 ? 'S' : s >= 80 ? 'A' : s >= 70 ? 'B' : s >= 60 ? 'C' : 'D';
+    const genHtml = `
+      <div class="v18-score-card">
+        <div class="v18-score-name">${r.attackerName || '攻方'}</div>
+        <div class="v18-score-grade v18-g-${scoreBadge(atkScore)}">${scoreBadge(atkScore)}</div>
+        <div class="v18-score-num">评 ${atkScore} 分</div>
+      </div>
+      <div class="v18-score-vs">VS</div>
+      <div class="v18-score-card">
+        <div class="v18-score-name">${r.defenderName || '守方'}</div>
+        <div class="v18-score-grade v18-g-${scoreBadge(defScore)}">${scoreBadge(defScore)}</div>
+        <div class="v18-score-num">评 ${defScore} 分</div>
+      </div>`;
+
+    // --- 经验值明细 ---
+    const expWin = Math.max(10, Math.round(win ? 80 + (r.defenderLoss || 0) * 0.02 : (draw ? 40 : 30)));
+    const expHtml = `
+      <div class="v18-exp-row"><span>战斗性质</span><b>${win ? '胜利' : (draw ? '平局' : '败退')}</b></div>
+      <div class="v18-exp-row"><span>歼敌数</span><b class="v18-good">${r.defenderLoss || 0}</b></div>
+      <div class="v18-exp-row"><span>己方损失</span><b class="v18-bad">${r.attackerLoss || 0}</b></div>
+      <div class="v18-exp-row"><span>预估所得经验</span><b class="v18-exp">+${expWin}</b></div>`;
+
+    // --- 战利品 ---
+    let lootHtml = '';
+    if (r.conquered) {
+      lootHtml = `
+        <div class="v18-loot-chip">🏙 攻占 <b>${r.targetCityName || '城池'}</b></div>
+        <div class="v18-loot-chip">⚜ 缴获守将军械</div>
+        <div class="v18-loot-chip">💰 府库抄没</div>`;
+    } else {
+      lootHtml = '<div class="v18-empty">此役未获城池，亦无缴获。</div>';
+    }
+
+    const body = `
+      <div class="v18-banner ${win ? 'v18-win' : (draw ? 'v18-draw' : 'v18-lose')}">${win ? '★ 我军大捷 ★' : (draw ? '两败俱伤' : '我军受挫')} · ${r.targetCityName || '战场'}</div>
+      <div class="v18-sec-title">◆ 兵力消长曲线</div>
+      <canvas id="v18-troop-curve" width="560" height="200" class="v18-curve"></canvas>
+      <div class="v18-split">
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 关键回合</div>
+          <div class="v18-round-list">${keyHtml}</div>
+        </div>
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 武将表现</div>
+          <div class="v18-score-row">${genHtml}</div>
+        </div>
+      </div>
+      <div class="v18-sec-title">◆ 胜负归因</div>
+      <div class="v18-cause-box">${causeHtml}</div>
+      <div class="v18-split">
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 经验所得</div>
+          <div class="v18-exp-box">${expHtml}</div>
+        </div>
+        <div class="v18-half">
+          <div class="v18-sec-title">◆ 战利品</div>
+          <div class="v18-loot-box">${lootHtml}</div>
+        </div>
+      </div>
+    `;
+    const modal = this._v18ModalShell(`战报复盘 · ${titleTxt}`, body, 'v18-wide');
+    const cv = modal.querySelector('#v18-troop-curve');
+    if (cv) { try { this._v18DrawTroopCurve(cv, r); } catch (e) {} }
+  }
+
+  // ---------- V18：兵力消长曲线（由损失与日志回合数推演） ----------
+  _v18DrawTroopCurve(canvas, r) {
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const pad = { l: 34, r: 12, t: 14, b: 22 };
+    const plotW = W - pad.l - pad.r, plotH = H - pad.t - pad.b;
+    ctx.clearRect(0, 0, W, H);
+    const rounds = Math.max(6, Math.min(14, (Array.isArray(r.battleLog) ? r.battleLog.length : 6) || 8));
+    // 推演：双方起始兵力归一为 1.0，按损失比例递减，带波动
+    const atkLossRatio = Math.min(0.9, (r.attackerLoss || 0) / Math.max(1, (r.attackerLoss || 1) + 1));
+    const defLossRatio = Math.min(0.9, (r.defenderLoss || 0) / Math.max(1, (r.defenderLoss || 1) + 1));
+    const atkStart = 1.0, defStart = 1.0;
+    const pts = [];
+    for (let i = 0; i <= rounds; i++) {
+      const t = i / rounds;
+      // 曲线：前期胶着，后期胜负分明
+      const wob = 0.04 * Math.sin(t * 9 + (i % 3));
+      const atk = Math.max(0.05, atkStart - atkLossRatio * Math.pow(t, 1.15) + wob);
+      const def = Math.max(0.05, defStart - defLossRatio * Math.pow(t, 1.15) - wob);
+      pts.push([t, atk, def]);
+    }
+    // 网格
+    ctx.strokeStyle = 'rgba(196,165,90,0.18)'; ctx.lineWidth = 1;
+    for (let g = 0; g <= 4; g++) {
+      const y = pad.t + plotH * g / 4;
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    }
+    ctx.fillStyle = '#9a8b6a'; ctx.font = '10px STSong, serif'; ctx.textAlign = 'right';
+    for (let g = 0; g <= 4; g++) ctx.fillText(Math.round(100 - g * 25) + '%', pad.l - 4, pad.t + plotH * g / 4 + 3);
+    ctx.textAlign = 'center'; ctx.fillText('回合', W / 2, H - 4);
+    const xOf = (t) => pad.l + plotW * t;
+    const yOf = (v) => pad.t + plotH * (1 - Math.min(1, Math.max(0, v)));
+    // 攻方线（朱）
+    ctx.beginPath();
+    pts.forEach(([t, a], i) => { i === 0 ? ctx.moveTo(xOf(t), yOf(a)) : ctx.lineTo(xOf(t), yOf(a)); });
+    ctx.strokeStyle = '#d05a3a'; ctx.lineWidth = 2.5; ctx.stroke();
+    // 守方线（青）
+    ctx.beginPath();
+    pts.forEach(([t, , d], i) => { i === 0 ? ctx.moveTo(xOf(t), yOf(d)) : ctx.lineTo(xOf(t), yOf(d)); });
+    ctx.strokeStyle = '#3a8ad0'; ctx.stroke();
+    // 图例
+    ctx.font = '11px STSong, serif'; ctx.textAlign = 'left';
+    ctx.fillStyle = '#d05a3a'; ctx.fillText('— 攻方', pad.l + 6, pad.t + 12);
+    ctx.fillStyle = '#3a8ad0'; ctx.fillText('— 守方', pad.l + 60, pad.t + 12);
+  }
+
+  // ---------- V18：通知系统增强 ----------
+  _v18Notify(type, msg) {
+    // 复用 v81 通知，但额外附加 V18 情报图标与配色
+    try {
+      const iconMap = { intel: '🜂', warn: '⚠', good: '✔', bad: '✖', info: 'ℹ' };
+      const cls = type === 'warn' ? 'warning' : (type === 'good' ? 'success' : (type === 'bad' ? 'danger' : 'info'));
+      if (typeof this.showNotification === 'function') this.showNotification((iconMap[type] || 'ℹ') + ' ' + msg, cls);
+    } catch (e) {}
+  }
+

@@ -33,7 +33,10 @@ const PENTATONIC = {
   // V16.0 新增：G羽调战役 BGM 所需的低音区与 A大调开场 BGM 所需的三/六级音
   G2: 98.00, A2: 110.00, B2: 123.47, D2: 73.42, E2: 82.41,
   B3: 246.94, B4: 493.88,
-  C4s: 277.18, C5s: 554.37, F3s: 185.00, F4s: 369.99, F5s: 739.99
+  C4s: 277.18, C5s: 554.37, F3s: 185.00, F4s: 369.99, F5s: 739.99,
+  // V18.0 新增：C 小调攻城 BGM 所需的降三级(Eb)与降七级(Bb)音。
+  //   C 自然小调：C D Eb F G Ab Bb C；此处补 Eb3/Eb4/Bb3/Bb4，其余音沿用既有键。
+  Eb3: 155.56, Eb4: 311.13, Bb3: 233.08, Bb4: 466.16
 };
 
 // 各场景 BGM 配置
@@ -173,6 +176,22 @@ const BGM_TRACKS = {
     // G 大调自然音阶近似：G A B D E G A B D（明亮开阔，不拥挤）
     bpm: 80, scale: ['G3', 'A3', 'B3', 'D4', 'E4', 'G4', 'A4', 'B4', 'D5'],
     wave: 'triangle', bassWave: 'sine', stepMs: 560, hasDrum: true, density: 0.7
+  },
+
+  // ============================================================
+  // V18.0「音效扩充」新增 2 首 BGM
+  // ============================================================
+  strategy: { // 战略界面：F大调，70BPM，思考氛围——平静但暗藏紧张
+    // F 大调五声化音阶：F G A C D F G A C（明亮开阔但不激烈，
+    //   正弦主奏+正弦低音，无战鼓， density 压低，营造运筹帷幄的沉思感）
+    bpm: 70, scale: ['F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5'],
+    wave: 'sine', bassWave: 'sine', stepMs: 857, hasDrum: false, density: 0.45
+  },
+  siege: {    // 攻城战：C小调，120BPM，紧张激烈（锯齿主奏+方波低音+战鼓）
+    // C 自然小调五声化：C D Eb F G Bb C D Eb（降三级/降七级制造压抑紧张感，
+    //   快鼓+高 density，模拟云梯蚁附、槌撞城门的攻城节奏）
+    bpm: 120, scale: ['C3', 'D3', 'Eb3', 'F3', 'G3', 'Bb3', 'C4', 'D4', 'Eb4', 'F4', 'G4', 'Bb4', 'C5'],
+    wave: 'sawtooth', bassWave: 'square', stepMs: 280, hasDrum: true, density: 0.92
   }
 };
 
@@ -206,7 +225,10 @@ export const BGM_INFO = {
   intro:          { name: '开天辟地', desc: '开场过场·A大调史诗' },
   // V17.0 新增
   battleMarch:    { name: '铁马金戈', desc: '战斗进行曲·D小调140BPM' },
-  plainfield:     { name: '平野鏖兵', desc: '平原战场·G大调80BPM' }
+  plainfield:     { name: '平野鏖兵', desc: '平原战场·G大调80BPM' },
+  // V18.0 新增
+  strategy:       { name: '运筹帷幄', desc: '战略界面·F大调70BPM' },
+  siege:          { name: '云梯蚁附', desc: '攻城战·C小调120BPM' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -215,7 +237,9 @@ export const BGM_INFO = {
 const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'ending',
   'navy', 'diplomacy', 'victory', 'defeat', 'duel', 'domestic', 'campaign', 'intro',
   // V17.0：两首新战斗 BGM 默认解锁
-  'battleMarch', 'plainfield'];
+  'battleMarch', 'plainfield',
+  // V18.0：战略界面/攻城战两首新 BGM 默认解锁
+  'strategy', 'siege'];
 
 export class AudioManager {
   constructor() {
@@ -2357,6 +2381,188 @@ export class AudioManager {
   }
 
   // ============================================================
+  // V18.0「音效扩充」新增战场/内政音效（全部 Web Audio 程序化合成）
+  //   攻城四连（云梯/攻城槌/城墙碎裂/士兵攀爬）+ 伏兵 + 援军 + 溃逃 +
+  //   城市建设完成 + 情报获得。战场类走 battleGain 总线，内政/情报走 domesticGain。
+  // 技术参考：木质摩擦=带通噪声扫频；槌撞=低频鼓+低通噪声；砖石碎裂=高通短噪声串；
+  //   脚步=低频脉冲；号角渐强=gain ADSR 长起音；欢呼=宽频带通噪声群。
+  // ============================================================
+
+  // 1a) 攻城音效·云梯架起：木质摩擦（带通噪声缓慢扫频下行）+ 绳索绷紧吱吱声
+  playSiegeLadder() {
+    this.resume(); if (!this.ctx || !this._sfxGate('siege_ladder', 600)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'battle';
+    // 云梯拖至城下并斜靠的木质摩擦：中低频带通噪声，频率 800→300 缓降
+    this._noiseBurst({ dur: 0.7, freq: 800, q: 2, type: 'bandpass', vol: 0.16,
+      offset: 0, bus: BUS, sweepTo: 300, pan: -0.2 });
+    // 绳索/梯腿绷紧的吱吱声：中高频短促吱扭（方波下滑）
+    this.tone(600, 0.3, 'sawtooth', 0.10, 0.35, 350, BUS, -0.2);
+    this.tone(640, 0.25, 'sawtooth', 0.08, 0.5, 380, BUS, 0.1);
+    // 梯脚落定闷响
+    this.drum(0.3, 0.65, 90, BUS);
+  }
+
+  // 1b) 攻城音效·攻城槌撞击：低频巨鼓三连（渐强）+ 厚木震动（低通噪声）
+  playSiegeRam() {
+    this.resume(); if (!this.ctx || !this._sfxGate('siege_ram', 500)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'battle';
+    // 攻城槌撞门：三声低频闷鼓，第二/三声更重（槌车加速冲势）
+    this.drum(0.55, 0, 70, BUS);
+    this.drum(0.65, 0.25, 65, BUS);
+    this.drum(0.75, 0.5, 60, BUS);
+    // 厚木震动：低通噪声随撞击衰减
+    this._noiseBurst({ dur: 0.4, freq: 500, q: 1, type: 'lowpass', vol: 0.18,
+      offset: 0, bus: BUS, sweepTo: 150 });
+    this._noiseBurst({ dur: 0.45, freq: 450, q: 1, type: 'lowpass', vol: 0.20,
+      offset: 0.25, bus: BUS, sweepTo: 130 });
+    // 撞门后金属门闩震颤
+    this.tone(180, 0.3, 'square', 0.10, 0.05, 90, BUS);
+  }
+
+  // 1c) 攻城音效·城墙碎裂：砖石崩塌（高通短噪声串 + 低频轰鸣 + 尘土低通噪声）
+  playWallCrumble() {
+    this.resume(); if (!this.ctx || !this._sfxGate('wall_crumble', 800)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'battle';
+    // 崩塌低频轰鸣
+    this.drum(0.7, 0, 60, BUS);
+    this.tone(55, 0.6, 'sine', 0.30, 0, 28, BUS);
+    // 砖石滚落：一串高通短噪声（碎石飞溅）
+    for (let i = 0; i < 7; i++) {
+      this._noiseBurst({ dur: 0.06, freq: 2800 + i * 200, q: 2, type: 'highpass',
+        vol: 0.12, offset: 0.15 + i * 0.07, bus: BUS,
+        sweepTo: 1200, pan: (i % 2 ? 0.4 : -0.4) });
+    }
+    // 尘土扬起：低通噪声缓落
+    this._noiseBurst({ dur: 0.9, freq: 700, q: 0.8, type: 'lowpass', vol: 0.14,
+      offset: 0.3, bus: BUS, sweepTo: 200 });
+  }
+
+  // 1d) 攻城音效·士兵攀爬：急促脚步（低频脉冲）+ 云梯吱呀 + 攀爬呐喊
+  playSoldierClimb() {
+    this.resume(); if (!this.ctx || !this._sfxGate('soldier_climb', 500)) return;
+    this._duckBGM();
+    const BUS = 'battle';
+    // 攀爬急促脚步：6 次低频脉冲渐快
+    for (let i = 0; i < 6; i++) {
+      this.drum(0.22, i * 0.12, 110, BUS);
+      this._noiseBurst({ dur: 0.05, freq: 1200, q: 1.5, type: 'bandpass', vol: 0.07,
+        offset: i * 0.12, bus: BUS, pan: (i % 2 ? 0.3 : -0.3) });
+    }
+    // 云梯受力吱呀
+    this.tone(480, 0.4, 'sawtooth', 0.08, 0.2, 300, BUS);
+    // 攀爬呐喊：多音失谐锯齿
+    [200, 240, 280, 320].forEach((f, i) =>
+      this.tone(f, 0.35, 'sawtooth', 0.07, 0.3 + i * 0.04, f * 1.15, BUS, (i - 1.5) * 0.15));
+  }
+
+  // 2) 伏兵音效：突然战鼓（重击）+ 呐喊（群噪骤起）+ 金属碰撞（兵刃出鞘）
+  playAmbush() {
+    this.resume(); if (!this.ctx || !this._sfxGate('ambush', 800)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'battle';
+    // 骤起战鼓：一声极重低频鼓（伏兵信号）
+    this.drum(0.8, 0, 60, BUS);
+    this.drum(0.6, 0.12, 70, BUS);
+    // 伏兵呐喊：宽频带通噪声群骤然爆发（左右声像散开）
+    this._noiseBurst({ dur: 0.6, freq: 500, q: 0.7, type: 'bandpass', vol: 0.20,
+      offset: 0.1, bus: BUS, pan: -0.5 });
+    this._noiseBurst({ dur: 0.6, freq: 600, q: 0.7, type: 'bandpass', vol: 0.20,
+      offset: 0.15, bus: BUS, pan: 0.5 });
+    // 金属碰撞：兵刃出鞘/盾牌交击（高频噪声 + 金属泛音）
+    this._noiseBurst({ dur: 0.15, freq: 3200, q: 1.5, type: 'highpass', vol: 0.16,
+      offset: 0.1, bus: BUS });
+    this.tone(2200, 0.1, 'square', 0.12, 0.1, null, BUS);
+    this.tone(1500, 0.12, 'sine', 0.10, 0.12, null, BUS);
+    // 追击号角急促两短
+    this.horn(220.0, 0.25, 0.18, 0.4, null, 0);
+    this.horn(220.0, 0.25, 0.18, 0.65, null, 0);
+  }
+
+  // 3) 援军到达：远方号角渐强（长起音）+ 马蹄声 + 人声欢呼
+  playReinforcements() {
+    this.resume(); if (!this.ctx || !this._sfxGate('reinforcements', 1000)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'battle';
+    // 远方号角：两记长号角，起音缓慢渐强（由远及近）
+    this.horn(196.0, 1.2, 0.16, 0, null, -0.3);
+    this.horn(293.66, 1.2, 0.18, 0.3, null, 0.3);
+    // 马蹄声：低频脉冲序列渐快渐密（骑兵逼近）
+    for (let i = 0; i < 8; i++) {
+      const t = 0.5 + i * 0.11;
+      this.drum(0.18 + i * 0.02, t, 90, BUS);
+      this._noiseBurst({ dur: 0.05, freq: 500, q: 1.5, type: 'bandpass', vol: 0.06,
+        offset: t, bus: BUS });
+    }
+    // 人声欢呼：宽频噪声浪潮由弱渐强
+    this._noiseBurst({ dur: 1.0, freq: 700, q: 0.7, type: 'bandpass', vol: 0.10,
+      offset: 0.6, bus: BUS, sweepTo: 1000, pan: -0.4 });
+    this._noiseBurst({ dur: 1.0, freq: 900, q: 0.7, type: 'bandpass', vol: 0.10,
+      offset: 0.65, bus: BUS, sweepTo: 1200, pan: 0.4 });
+    // 定音鼓收尾
+    this.drum(0.45, 1.2, 75, BUS);
+  }
+
+  // 4) 军队溃逃：混乱号角（下滑不协和）+ 士兵奔跑声 + 丢弃武器声（金属落地）
+  playRout() {
+    this.resume(); if (!this.ctx || !this._sfxGate('rout', 800)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'battle';
+    // 混乱号角：两个不协和号角急促下滑（惊慌失措）
+    this.horn(233.08, 0.4, 0.22, 0, 160, -0.2);
+    this.horn(207.65, 0.4, 0.20, 0.2, 140, 0.2);
+    // 士兵奔跑杂乱脚步：宽频带通噪声起伏（左右散开）
+    this._noiseBurst({ dur: 0.9, freq: 600, q: 0.6, type: 'bandpass', vol: 0.16,
+      offset: 0.25, bus: BUS, pan: -0.4 });
+    this._noiseBurst({ dur: 0.9, freq: 800, q: 0.6, type: 'bandpass', vol: 0.16,
+      offset: 0.3, bus: BUS, pan: 0.4 });
+    // 丢弃武器落地：3 声短促金属磕碰（高频方波+噪声）
+    for (let i = 0; i < 3; i++) {
+      this.tone(1800, 0.08, 'square', 0.12, 0.4 + i * 0.15, 600, BUS);
+      this._noiseBurst({ dur: 0.06, freq: 2500, q: 2, type: 'highpass', vol: 0.08,
+        offset: 0.4 + i * 0.15, bus: BUS });
+    }
+    // 崩溃尾音：低频下沉
+    this.drum(0.4, 0.6, 50, BUS);
+  }
+
+  // 5) 城市建设完成：钟声（编钟）+ 百姓欢呼（宽频噪声群）
+  playCityBuilt() {
+    this.resume(); if (!this.ctx || !this._sfxGate('city_built', 800)) return;
+    const BUS = 'domestic';
+    // 建造完成钟声：两响编钟（C4 + G4），庄严喜庆
+    this.bell(261.63, 1.8, 0.22, 0, 0);
+    this.bell(392.00, 1.6, 0.16, 0.25, 0);
+    // 百姓欢呼：宽频带通噪声群（左右散开，模拟全城庆贺）
+    this._noiseBurst({ dur: 0.9, freq: 800, q: 0.7, type: 'bandpass', vol: 0.14,
+      offset: 0.4, bus: BUS, pan: -0.4 });
+    this._noiseBurst({ dur: 0.9, freq: 1000, q: 0.7, type: 'bandpass', vol: 0.14,
+      offset: 0.45, bus: BUS, pan: 0.4 });
+    this._noiseBurst({ dur: 0.7, freq: 1200, q: 0.8, type: 'bandpass', vol: 0.10,
+      offset: 0.5, bus: BUS, pan: 0 });
+    // 喜庆鼓点
+    this.drum(0.4, 0.4, 80, BUS);
+    this.drum(0.35, 0.7, 75, BUS);
+  }
+
+  // 6) 情报获得：翻纸声（带通噪声抖动）+ 墨迹声（水滴式高频滴音）
+  //    与 playSpyIntel（谍报潜行专用）区分：本方法为通用「获得情报/文书」反馈。
+  playIntelGained() {
+    this.resume(); if (!this.ctx || !this._sfxGate('intel_gained', 500)) return;
+    const BUS = 'sfx';
+    // 翻纸：带通噪声快速抖动两次（展开密报/卷轴）
+    this._noiseBurst({ dur: 0.16, freq: 2400, q: 1.5, type: 'bandpass', vol: 0.14,
+      offset: 0, bus: BUS });
+    this._noiseBurst({ dur: 0.12, freq: 2800, q: 1.5, type: 'bandpass', vol: 0.10,
+      offset: 0.16, bus: BUS });
+    // 墨迹滴落：两声高频滑音滴（笔落砚池/朱砂落纸）
+    this.tone(1600, 0.18, 'sine', 0.12, 0.3, 1100, BUS);
+    this.tone(1800, 0.15, 'sine', 0.10, 0.48, 1250, BUS);
+  }
+
+  // ============================================================
   // V15.0 天气氛围音（滤波白噪声循环，走 ambientGain 总线）
   //   rain：低通 2kHz 柔和雨白噪声；
   //   snow：高频轻柔嘶声（带通 6kHz，低音量）；
@@ -2426,6 +2632,8 @@ export class AudioManager {
   startEndingBGM(rank = 'S') {
     const track = BGM_TRACKS.finale;
     if (!track) return;
+    // 运行时改了 scale/bpm/density → 标记频率缓存脏，startBGM 会重建
+    track._scaleDirty = true;
     if (rank === 'S') {
       track.bpm = 96; track.stepMs = 420; track.density = 0.9;
       track.wave = 'triangle'; track.bassWave = 'sine'; track.hasDrum = true;
@@ -2713,6 +2921,18 @@ export class AudioManager {
     if (!this.ctx) return;
     this._bgmOn = true;
     this._bgmStep = 0;
+    // 性能优化（audio.js #2 多BGM切换资源管理）：
+    //   基准：_bgmTick 每拍（stepMs≈280~1000ms）都要对旋律音阶做
+    //     `PENTATONIC[scale[rand]]` 属性链查找 + 低音 `PENTATONIC[scale[0]]/2`。
+    //     单首 BGM 常驻数小时 → 每秒 1~4 次 × 数千拍，重复查表开销虽小但累积。
+    //   优化：startBGM 时一次性把 track.scale 翻译成频率数组 track._freqScale，
+    //     低音频率缓存为 track._bassFreq；_bgmTick 直接按下标取数，零属性链查找。
+    //   多 BGM 切换时只重算当前曲目缓存，不影响其他曲目（配置不变即缓存命中）。
+    if (!track._freqScale || track._scaleDirty) {
+      track._freqScale = track.scale.map(n => PENTATONIC[n] || 440);
+      track._bassFreq = (PENTATONIC[track.scale[0]] || 110) / 2;
+      track._scaleDirty = false;
+    }
     // 性能优化（audio.js #4）：多 BGM 切换时的资源管理——
     //   优化前：stopBGM 用 2s 线性淡出，紧接着 startBGM 又从 0 淡入到目标；
     //   若玩家快速连续切歌（如 UI 连点/场景自动切换），bgmGain 上会堆积多条
@@ -2748,11 +2968,12 @@ export class AudioManager {
   _bgmTick(track) {
     if (!this.ctx || this.muted || !this._bgmOn) return;
     const t0 = this.ctx.currentTime;
-    const scale = track.scale;
+    // 性能优化（audio.js #2）：直接用 startBGM 预建的频率数组，避免每拍
+    //   PENTATONIC 属性链查找。_freqScale 缺省时（理论上不会）兜底现算。
+    const freqScale = track._freqScale || track.scale.map(n => PENTATONIC[n] || 440);
     // 旋律：按概率在音阶中选音（密度控制旋律稀疏度）
     if (Math.random() < track.density) {
-      const noteName = scale[Math.floor(Math.random() * scale.length)];
-      const freq = PENTATONIC[noteName] || 440;
+      const freq = freqScale[Math.floor(Math.random() * freqScale.length)];
       const osc = this.ctx.createOscillator();
       const g = this.ctx.createGain();
       osc.type = track.wave;
@@ -2765,14 +2986,13 @@ export class AudioManager {
     }
     // 鼓点
     if (track.hasDrum && this._bgmStep % 4 === 0) this._bgmDrum(t0);
-    // 低音：每 4 拍一个低音
+    // 低音：每 4 拍一个低音（用缓存频率，零查找）
     if (this._bgmStep % 4 === 0) {
-      const bassNote = scale[0];
-      const bassFreq = PENTATONIC[bassNote] || 110;
+      const bassFreq = track._bassFreq || ((PENTATONIC[track.scale[0]] || 110) / 2);
       const osc = this.ctx.createOscillator();
       const g = this.ctx.createGain();
       osc.type = track.bassWave;
-      osc.frequency.value = bassFreq / 2;
+      osc.frequency.value = bassFreq;
       g.gain.setValueAtTime(0.0001, t0);
       g.gain.exponentialRampToValueAtTime(0.3, t0 + 0.05);
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.8);

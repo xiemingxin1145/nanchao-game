@@ -59,9 +59,21 @@ export function defaultGameStats() {
 export function recordTurn(game) {
   const s = game.gameStats;
   if (!s) return;
-  s.totalTurns = game.turn;
+  // BUG修复#6a（stats.js）：损坏存档/热重载后 game.turn 可能为 undefined，
+  //   直接 s.totalTurns = game.turn 会写入 undefined，后续统计面板显示 NaN/空。
+  //   此处做数值兜底。
+  s.totalTurns = Number.isInteger(game.turn) ? game.turn : 0;
   // 民心>90 维持回合
-  const cities = game.getFactionCities(game.playerFaction);
+  // 性能优化（stats.js #1 回合结算优化）：settleTurn 末尾已建好 _fidCityCountCache
+  //   （fid → city[]），recordTurn 紧接其后调用；优先复用该缓存，避免再次对 84 城
+  //   做一次全表 filter（getFactionCities 每城一次 includes 比较，O(84)）。
+  //   非回合结算路径（UI 手动调用）缓存缺失时兜底回原 getFactionCities。
+  let cities;
+  if (game._fidCityCountCache && game._fidCityCountCache.has(game.playerFaction)) {
+    cities = game._fidCityCountCache.get(game.playerFaction);
+  } else {
+    cities = game.getFactionCities(game.playerFaction);
+  }
   if (cities.length) {
     let sum = 0;
     for (let i = 0; i < cities.length; i++) sum += (cities[i].morale || 0);
@@ -76,6 +88,9 @@ export function recordTurn(game) {
 export function recordBattle(game, opts) {
   const s = game.gameStats;
   if (!s) return;
+  // BUG修复#6b（stats.js）：opts 缺省（战斗结算路径异常调用）时，直接取 opts.kills
+  //   会抛 TypeError，导致战斗结束流程中断。此处做防御：opts 缺省时按空对象处理。
+  opts = opts || {};
   s.battles++;
   s.kills += opts.kills || 0;
   s.losses += opts.losses || 0;
