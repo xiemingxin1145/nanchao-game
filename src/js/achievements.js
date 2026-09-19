@@ -59,6 +59,20 @@ function _mtStats(g) {
 function _mtSys(g) {
   try { return g.militaryTraining || null; } catch (e) { return null; }
 }
+// 工具：V24 屯田后勤系统统计
+function _logiStats(g) {
+  try { return g.logistics?.v24_stats || {}; } catch (e) { return {}; }
+}
+function _logiSys(g) {
+  try { return g.logistics || null; } catch (e) { return null; }
+}
+// 工具：V24 外交同盟系统统计
+function _dipV24(g) {
+  try { return g.diplomacy?.v24_stats || {}; } catch (e) { return {}; }
+}
+function _dipSys(g) {
+  try { return g.diplomacy || null; } catch (e) { return null; }
+}
 // 工具：玩家武将 id 列表
 function _myGeneralIds(g) {
   try { return (g.getFactionGenerals(g.playerFaction) || []).map(x => x.id); }
@@ -1248,6 +1262,141 @@ export const ACHIEVEMENTS = [
         const train = g.militaryTraining?.v23_stats?.maxTrainingLevel || 0;
         return { current: Math.min(5, reorgMax) + Math.min(10, train) / 2, total: 10 };
       } catch (e) { return { current: 0, total: 10 }; }
+    }
+  },
+
+  // ==================== V24.0.0 新增（10 个 v24_ 前缀：屯田后勤+外交同盟系统深化） ====================
+  // ---- 屯田后勤（3）----
+  {
+    id: 'v24_tuntian_harvest', name: '屯田积谷', icon: '🌾', category: 'economy', points: 20,
+    description: '屯田累计产粮达到 10000 石。', reward: { food: 3000 },
+    condition: (g) => (_logiStats(g).totalFoodProduced || 0) >= 10000,
+    progress: (g) => ({ current: Math.min(10000, _logiStats(g).totalFoodProduced || 0), total: 10000 })
+  },
+  {
+    id: 'v24_grain_road', name: '粮道畅通', icon: '🛤️', category: 'military', points: 20,
+    description: '同时有 5 支前线军队粮道畅通无阻。', reward: { food: 2000 },
+    condition: (g) => {
+      try {
+        const sys = _logiSys(g);
+        return !!(sys && sys.getConnectedArmyCount() >= 5);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _logiSys(g);
+        const n = sys ? sys.getConnectedArmyCount() : 0;
+        return { current: Math.min(5, n), total: 5 };
+      } catch (e) { return { current: 0, total: 5 }; }
+    }
+  },
+  {
+    id: 'v24_tuntian_wide', name: '屯田万顷', icon: '🏞️', category: 'economy', points: 50,
+    description: '全国屯田总等级达到 20（兵农合一，仓廪充实）。', reward: { money: 5000, title: '屯田经略' },
+    condition: (g) => {
+      try {
+        const sys = _logiSys(g);
+        return !!(sys && sys.getTotalTuntianLevels() >= 20);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _logiSys(g);
+        const n = sys ? sys.getTotalTuntianLevels() : 0;
+        return { current: Math.min(20, n), total: 20 };
+      } catch (e) { return { current: 0, total: 20 }; }
+    }
+  },
+
+  // ---- 要塞烽火（2）----
+  {
+    id: 'v24_fortress', name: '要塞坚城', icon: '🏰', category: 'military', points: 30,
+    description: '完成 3 次关隘要塞升级。', reward: { money: 3000 },
+    condition: (g) => (_logiStats(g).fortressUpgrades || 0) >= 3,
+    progress: (g) => ({ current: Math.min(3, _logiStats(g).fortressUpgrades || 0), total: 3 })
+  },
+  {
+    id: 'v24_beacon', name: '烽火预警', icon: '🔥', category: 'military', points: 20,
+    description: '建造 5 座烽火台，边境烽烟相望。', reward: { money: 2000 },
+    condition: (g) => (_logiStats(g).beaconBuilt || 0) >= 5,
+    progress: (g) => ({ current: Math.min(5, _logiStats(g).beaconBuilt || 0), total: 5 })
+  },
+
+  // ---- 外交同盟（5）----
+  {
+    id: 'v24_alliance', name: '歃血为盟', icon: '🤝', category: 'politics', points: 20,
+    description: '与 3 个势力结成同盟。', reward: { money: 2000 },
+    condition: (g) => {
+      try {
+        const sys = _dipSys(g);
+        return !!(sys && sys.v24GetAllyCount(null, g.playerFaction) >= 3);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _dipSys(g);
+        const n = sys ? sys.v24GetAllyCount(null, g.playerFaction) : 0;
+        return { current: Math.min(3, n), total: 3 };
+      } catch (e) { return { current: 0, total: 3 }; }
+    }
+  },
+  {
+    id: 'v24_joint_war', name: '联军破敌', icon: '⚔️', category: 'military', points: 30,
+    description: '参与 5 次联军协同作战。', reward: { food: 3000 },
+    condition: (g) => (_dipV24(g).jointBattles || 0) >= 5,
+    progress: (g) => ({ current: Math.min(5, _dipV24(g).jointBattles || 0), total: 5 })
+  },
+  {
+    id: 'v24_treaty', name: '条约互惠', icon: '📜', category: 'politics', points: 20,
+    description: '同时持有 5 个有效外交条约。', reward: { money: 2000 },
+    condition: (g) => {
+      try {
+        const sys = _dipSys(g);
+        if (!sys) return false;
+        const active = Object.values(sys.v24_treaties || {}).filter(t => t && t.active).length;
+        return active >= 5;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _dipSys(g);
+        const n = sys ? Object.values(sys.v24_treaties || {}).filter(t => t && t.active).length : 0;
+        return { current: Math.min(5, n), total: 5 };
+      } catch (e) { return { current: 0, total: 5 }; }
+    }
+  },
+  {
+    id: 'v24_vassal', name: '附庸来朝', icon: '🏯', category: 'politics', points: 30,
+    description: '拥有 3 个附庸国岁贡。', reward: { money: 4000, title: '宗主之威' },
+    condition: (g) => {
+      try {
+        const sys = _dipSys(g);
+        return !!(sys && sys.v24GetVassalCount(g.playerFaction) >= 3);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _dipSys(g);
+        const n = sys ? sys.v24GetVassalCount(g.playerFaction) : 0;
+        return { current: Math.min(3, n), total: 3 };
+      } catch (e) { return { current: 0, total: 3 }; }
+    }
+  },
+  {
+    id: 'v24_diplomat', name: '外交家', icon: '🕊️', category: 'politics', points: 40,
+    description: '外交声望达到 80（天下归心，诸侯仰服）。', reward: { bgm: 'culture', title: '纵横家' },
+    condition: (g) => {
+      try {
+        const sys = _dipSys(g);
+        return !!(sys && (sys.v24GetReputation(g.playerFaction) || 0) >= 80);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _dipSys(g);
+        const rep = sys ? (sys.v24GetReputation(g.playerFaction) || 0) : 0;
+        return { current: Math.min(80, Math.max(0, rep)), total: 80 };
+      } catch (e) { return { current: 0, total: 80 }; }
     }
   }
 ];

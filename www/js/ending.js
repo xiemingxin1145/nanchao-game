@@ -484,6 +484,59 @@ export const ENDINGS = [
       } catch (e) { return false; }
     },
     achievement: 'v23_forge_weapon'
+  },
+
+  // V24.0.0 新增：屯田霸主（S）— 屯田万顷、粮道畅通、仓廪充实
+  {
+    id: 'v24_economic_overlord', name: '屯田霸主', rank: 'S',
+    text: '自永嘉南渡，兵燹不绝，野多暴骨，仓廪空虚。陛下慨然念之，' +
+          '仿古屯田之法，于州郡列置屯田：淮北则营田，淮南则屯田，' +
+          '且耕且战，兵农合一。岁终计所入，动辄数十万斛。' +
+          '又修漕渠，通粮道，自建康至洛阳，舳舻相属，千里馈粮而不匮。' +
+          '关隘要塞，皆增修守备；边境烽火，相望于道。' +
+          '于是军食饶给，士卒无饥馑之患；仓廪充实，国有九年之蓄。' +
+          '虽汉武之兴屯田、魏武之许下，不是过也。' +
+          '史臣曰：「国之大事，在祀与戎；戎之所资，食为急务。」' +
+          '今陛下务农积谷，修渠通漕，使千里之馈如在肘腋，' +
+          '斯亦「屯田霸主」之谓欤。',
+    condition: (game) => {
+      try {
+        const sys = game.logistics;
+        if (!sys) return false;
+        const st = sys.v24_stats || {};
+        // 总屯田等级≥15、累计产粮≥20000、同时≥5支军队粮道畅通
+        return sys.getTotalTuntianLevels() >= 15 &&
+               (st.totalFoodProduced || 0) >= 20000 &&
+               sys.getConnectedArmyCount() >= 5;
+      } catch (e) { return false; }
+    },
+    achievement: 'v24_tuntian_wide'
+  },
+
+  // V24.0.0 新增：外交大师（A）— 合纵连横、诸侯宾服、天下归心
+  {
+    id: 'v24_diplomacy_master', name: '外交大师', rank: 'A',
+    text: '陛下以仁义为干橹，以辞命为弓矢。居庙堂之上，而折冲樽俎之间；' +
+          '遣行人于四方，结同盟于万里。北与强魏约为兄弟，' +
+          '西与大周通婚姻之好，南抚百越，东怀海东。' +
+          '凡同盟者数国，附庸者数邦，岁时朝贡，不绝于道。' +
+          '天下诸侯，闻陛下之风，莫不敛衽而朝，愿为臣妾。' +
+          '虽苏秦、张仪之纵横，鲁连、仲连之辩说，何以加焉。' +
+          '至若条约之信、盟誓之重，虽百世不敢忘。' +
+          '史臣曰：「上兵伐谋，其次伐交。」今陛下不烦甲兵，' +
+          '而使诸侯宾服，斯亦「外交大师」之伟绩也。',
+    condition: (game) => {
+      try {
+        const sys = game.diplomacy;
+        if (!sys) return false;
+        // 同盟≥4、附庸≥2、声望≥60
+        const alliances = sys.v24GetAllyCount(null, game.playerFaction);
+        const vassals = sys.v24GetVassalCount(game.playerFaction);
+        const rep = sys.v24GetReputation(game.playerFaction);
+        return alliances >= 4 && vassals >= 2 && rep >= 60;
+      } catch (e) { return false; }
+    },
+    achievement: 'v24_diplomat'
   }
 ];
 

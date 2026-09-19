@@ -1,5 +1,89 @@
 # 南北朝 — 版本更新日志
 
+## V24.0.0 — 仓廪邦交·音效扩充/BUG修复/性能优化子任务（2026-09-19）
+
+> 子任务：屯田后勤 + 外交同盟深化音效 + 真实 BUG 修复 + 性能优化。
+> 改动文件：`src/js/audio.js`、`game.js`、`barbarian.js`、`calendar.js`、`harem.js`、`dynasty.js`、`fog.js`。
+
+### 一、屯田音效（audio.js，Web Audio 程序化合成，走 domestic 内政总线）
+- **playHarvest()** 丰收：带通稻浪沙沙（左右声像交替）+ 高频镰刀唰声三连 + 高音欢跳音 + 低柔收尾
+- **playGranaryBuilt()** 粮仓建成：低频夯土闷鼓 + G-C-G 编钟三响 + 上扬喜悦琶音欢呼
+- **playGrainConvoy()** 粮队出发：低沉启程号角 + 锯波牛车吱呀滑音 + 规律马蹄鼓点六步
+
+### 二、外交音效（audio.js）
+- **playAllianceForm()** 结盟：G-C-E-G 编钟齐鸣 + G-B-D-G 礼乐分解和弦 + 上扬欢呼琶音
+- **playTreatySign()** 签约：带通竹简展开扫频 + 高频笔走沙沙 + 落印闷鼓 + 朱砂点印双音
+- **playVassalPledge()** 称臣：受降号角双鸣 + 三跪缓起鼓列 + 定调编钟
+- **playJointCampaign()** 联军出征：左右双号角齐鸣 + 8 拍进军鼓列 + 收尾重鼓
+
+### 三、要塞音效（audio.js）
+- **playFortressBuild()** 筑城：5 记低频夯土闷鼓由轻到重 + 每夯砖石磕碰噪声 + 收尾重夯编钟
+- **playBeaconLit()** 烽火点燃：随机声像高频噼啪迸溅 + 低频浓烟呼啸上扬扫频 + 低沉传警号角
+
+### 四、新 BGM 2 首（audio.js，BGM_TRACKS / BGM_INFO / DEFAULT_UNLOCKED_BGM 三处注册）
+- **farming「田园牧歌」**：D 大调五声，65BPM（stepMs=923），三角主奏（竹笛）+ 正弦低音（古筝），无战鼓，宁静祥和
+- **alliance「邦交会盟」**：G 大调，70BPM（stepMs=857），正弦主奏（古琴）+ 三角泛音点缀（编钟）+ 轻鼓，庄重典雅
+  （注：原 V8.1 外交曲 `diplomacy`(折冲樽俎,C 宫) 键名已占用，故本会盟曲另立 `alliance` 键，不覆盖旧曲）
+
+### 五、真实 BUG 修复（6 个）
+1. **barbarian.js 幽灵军队残留**：征讨蛮族全歼时仅置 `army.destroyed=true`，玩家/AI 两路径均未像攻城那样清扫 `game.armies`，致空军队每回合空吃粮、刷视野、`hasMoved` 重置；修复为本函数内统一 `filter(!destroyed)`。
+2. **game.js 事件招募武将空指针**：`eff.recruitGeneral` 路径直接 `cities.get(都城).id`，玩家都城被攻破后 `cities.get` 返回 undefined，取 `.id` 抛 TypeError 中断事件结算；修复为同款 nullish 兜底（与 recruitIdleGeneral 对齐）。
+3. **calendar.js 文化加成小数丢失**：`Math.floor(cultureFlat / 城市数)`——当文化值小于城市数时每城都分到 0，总文化一点没加却日志照打「+X」；修复为整除分配 + 余数补给前 N 城，总增益恒等于 cultureFlat。
+4. **harem.js 子嗣姓氏丢失**：`_makeChild` 算了 `surname` 却未使用，`name` 只给单字名；修复为「国姓 + 名」。
+5. **game.js 卸下装备空指针**：`unequipItem` 旧档/模组卸载后 `getItem(old)` 可能返回 undefined，直接取 `.name` 抛错；修复为取不到时降级显示「旧装」。
+6. **dynasty.js 禅让后 AI 势力名缓存过期**：AIPlayer 构造时缓存 `this.name` 永不刷新，禅让改国号后 AI 行动日志仍打旧国号；修复为禅让后同步刷新 `aiPlayers.get(fid).name`。
+
+### 六、性能优化（4 项）
+1. **game.js findDefenderGeneral**：原全表扫 `[...generals.values()].find`，改为复用 `_roundFactionGenerals` 守方势力分桶（O(1) 取桶），桶缺失兜底原实现；每次攻城结算各省一次全表扫描。
+2. **game.js settleTurn 人口结算**：原遍历全部 132 城（含无主空城）逐城判 owner，改为只遍历 `fidCities` 已含主城市分桶，跳过无主空城与逐城 owner 判断。
+3. **game.js settleTurn 下野市长清理**：原每个下野武将全表扫一次 cities 找其任市长的城（O(下野数×C)），改为入口一次性建 `mayorId→city` 索引，O(1) 直取。
+4. **fog.js computeVisibleCities**：玩家势力视野原统一全表 filter，改为复用 settleTurn 入口建好的 `_playerCitiesTurnCache`（取 .id），缓存缺失兜底原实现，省一次全表过滤。
+
+### 七、校验
+- `node --check` 全部通过：audio.js / game.js / barbarian.js / calendar.js / harem.js / dynasty.js / fog.js
+- 未提交 git、未构建、未改 www；未触碰禁改文件（data.js / ui.js / animation.js / map.js / style.css / events.js 等）
+
+---
+
+## V24.0.0 — 仓廪邦交：屯田后勤/外交同盟/要塞烽火深化动画（2026-09-19）
+
+> 子任务：动画与地图增强。改动文件仅限 `src/js/animation.js`、`src/js/map.js`。
+
+### 一、屯田后勤动画（新增 3 个 play* 接口，animation.js）
+- **playHarvest(ctx,x,y)**：五谷丰登——满载粮车随麦浪轻晃，金黄麦穗/谷粒向上飞溅，麦壳碎草扬起
+- **playGranaryBuilt(ctx,x,y)**：粮仓建成——方仓带金顶歇山从地面升起（ease-out），随后金光笼罩扩散
+- **playGrainCart(ctx,x1,y1,x2,y2)**：粮队运输——牛车沿两城路线插值移动（距离自适应时长 1.8~4.5s），车后持续扬尘
+
+### 二、外交同盟动画（新增 4 个 play* 接口，animation.js）
+- **playAllianceSign(ctx,x,y)**：歃血结盟——左红右蓝两国旗帜并排飘扬，中间红绸结飘动，红绸缓降飘落
+- **playTreatySign(ctx,x,y)**：约以朱印——竹简横向往复展开，朱红印鉴自上方落定盖下，落印红屑迸溅
+- **playVassalPledge(ctx,x,y)**：愿为藩属——小国使者匍匐俯身跪拜（俯身角 ease-in-out），旁置献礼金元宝托盘
+- **playJointAttack(ctx,x,y)**：联军出征——两路旗手自左右向中心收拢行进，汇合点金光环扩散
+
+### 三、要塞烽火动画（新增 2 个 play* 接口，animation.js）
+- **playFortressBuild(ctx,x,y)**：雄关铸就——青灰城墙分段升起加垛口，两侧角塔后拔起带小尖顶
+- **playBeaconFire(ctx,x,y)**：烽火传警——土台之上双焰摇曳（线性渐变），浓烟柱循环上升变淡变宽
+
+### 四、性能与架构（沿用 V21~V23 既有模式）
+- **对象池**：全部粒子走 `_getParticle/_pushParticle`，打 `_v24` 标记
+- **FX 上限**：`_v24FXCap=8`（同时存活，超出淘汰最老）
+- **粒子预算**：`_v24ParticleBudget=90`，粮车扬尘/烽火浓烟按 dt 节流生成（`_v24EmitAcc`），受预算保护
+- **时间推进**：`update(dt)` 内 `_updateV24FXs(deltaTime)` 用真实 delta time 推进，drawV24FX(ctx) 由 map.js 每帧调用
+- **距离 LOD**：map.js `scale<0.7` 远景简化绘制（麦田只画田垄、省略光点/细节）
+
+### 五、地图可视化（map.js）
+- **屯田城市**：城外右下金色麦田（田垄三斜线 + 随风摇摆麦穗）；判定 `city.tuntian>0` 或 `buildings.granary>=1 / farm>=2`
+- **粮道**：屯田城市间金色虚线连接（就近配对、去重、连线硬上限 12），沿线流动金色光点
+- **同盟势力**：读 `game.diplomacy.relations[*].alliance`，双方都城（FACTIONS[*].capital）间蓝色实线 + 蓝色往返流光
+- **要塞城市**：城左上方灰色角塔徽记（塔身+垛口+小尖顶）；判定 `buildings.fortress/guanbao>=1` 或 `defense>=70`
+- **烽火台**：城上方红色脉动光点（带辉光）；判定 `city.beacon` 或 `buildings.beacon/watchtower>=1`，边境山地高防城兜底
+- **缓存节流**：屯田城市 id / 同盟都城对集合每 0.5s 重建一次（`_v24RebuildSets`），视口裁剪 `_onScreen`
+
+### 六、校验
+- `node --check src/js/animation.js` 通过
+- `node --check src/js/map.js` 通过
+- 未提交 git、未构建、未改 www；改动文件仅限 animation.js / map.js
+
 ## V23.0.0 — 铁血雄师：军事训练/军团整编/装备锻造深化（2026-09-19）
 
 ### 一、军事训练系统（新增 src/js/military_training.js）

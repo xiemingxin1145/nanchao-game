@@ -5957,3 +5957,223 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
   .v23-opt { font-size: 12px; }
   .v23-merit-pts, .v23-merit-fief { font-size: 11px; }
 }
+
+/* ============================================================
+   V24.0「屯田定国版」— 屯田 / 粮道 / 城防 / 外交深化
+   色调：谷黄·青砖（农本为体，关隘为用）
+   ============================================================ */
+:root {
+  --v24-grain: #d4a843;        /* 谷黄：屯田丰收 */
+  --v24-earthy: #8b6914;       /* 麦褐 */
+  --v24-brick: #6b7a8f;        /* 青砖：城防 */
+  --v24-mortar: #4a5568;       /* 灰浆 */
+  --v24-jade: #5a8a7a;         /* 玉色：外交 */
+  --v24-seal: #b04a3a;         /* 朱印：条约 */
+  --v24-paper: #ece2c8;
+  --v24-ink: #16120a;
+  --v24-line: rgba(212,168,67,0.38);
+  --v24-panel: rgba(18,14,8,0.96);
+  --v24-warn: #e0a555;
+  --v24-safe: #6fcf6f;
+  --v24-danger: #e05555;
+  --v24-radius: 10px;
+}
+
+/* ---------- 顶栏入口按钮 ---------- */
+.v24-farm-btn, .v24-supply-btn, .v24-fort-btn {
+  border: 1px solid var(--v24-grain);
+  color: var(--v24-grain);
+  background: rgba(212,168,67,0.08);
+}
+.v24-farm-btn:hover, .v24-supply-btn:hover, .v24-fort-btn:hover {
+  background: rgba(212,168,67,0.22);
+  box-shadow: 0 0 8px rgba(212,168,67,0.35);
+}
+.v24-fort-btn { border-color: var(--v24-brick); color: #9fb0c4; background: rgba(107,122,143,0.10); }
+.v24-fort-btn:hover { background: rgba(107,122,143,0.28); }
+
+/* ---------- 版本徽章 ---------- */
+.v24-version-badge {
+  border-color: var(--v24-grain) !important;
+  color: var(--v24-grain) !important;
+  text-shadow: 0 0 10px rgba(212,168,67,0.5);
+}
+
+/* ---------- 弹窗骨架 ---------- */
+.v24-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(8,6,3,0.72);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.v24-modal {
+  position: relative;
+  width: 640px; max-width: 94vw; max-height: 88vh;
+  background: var(--v24-panel);
+  border: 1px solid var(--v24-line);
+  border-radius: var(--v24-radius);
+  padding: 22px 24px 20px;
+  color: var(--v24-paper);
+  box-shadow: 0 12px 48px rgba(0,0,0,0.6), inset 0 0 24px rgba(212,168,67,0.05);
+}
+.v24-scroll { overflow-y: auto; }
+.v24-corner { position: absolute; width: 14px; height: 14px; border: 2px solid var(--v24-grain); opacity: 0.7; }
+.v24-corner.tl { top:6px; left:6px; border-right:0; border-bottom:0; }
+.v24-corner.tr { top:6px; right:6px; border-left:0; border-bottom:0; }
+.v24-corner.bl { bottom:6px; left:6px; border-right:0; border-top:0; }
+.v24-corner.br { bottom:6px; right:6px; border-left:0; border-top:0; }
+.v24-title {
+  margin: 0 0 14px; padding-bottom: 10px;
+  font-size: 19px; color: var(--v24-grain);
+  border-bottom: 1px solid var(--v24-line);
+  letter-spacing: 1px;
+}
+.v24-body { font-size: 13px; line-height: 1.6; }
+.v24-close { margin-top: 14px; width: 100%; }
+
+/* ---------- 通用摘要 / 区块 ---------- */
+.v24-summary {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 8px; margin-bottom: 12px;
+}
+.v24-stat {
+  background: rgba(0,0,0,0.3); border: 1px solid var(--v24-line);
+  border-radius: 8px; padding: 8px 10px; text-align: center;
+}
+.v24-stat span { display: block; font-size: 11px; color: #a89270; }
+.v24-stat b { font-size: 15px; color: var(--v24-paper); }
+.v24-section { margin-top: 12px; }
+.v24-sec-title {
+  font-size: 13px; color: var(--v24-grain);
+  margin-bottom: 8px; padding-left: 4px;
+  border-left: 3px solid var(--v24-grain);
+}
+.v24-status-line {
+  font-size: 12px; padding: 8px 10px; border-radius: 6px;
+  margin-bottom: 10px; line-height: 1.5;
+}
+.v24-wait { background: rgba(224,165,85,0.12); color: var(--v24-warn); border: 1px solid rgba(224,165,85,0.3); }
+.v24-ok { background: rgba(111,207,111,0.12); color: var(--v24-safe); border: 1px solid rgba(111,207,111,0.3); }
+.v24-empty { color: #8a7a5a; text-align: center; padding: 16px 0; }
+
+/* ---------- 屯田面板 ---------- */
+.v24-farm-list { display: flex; flex-direction: column; gap: 8px; }
+.v24-farm-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 8px 10px;
+  background: rgba(0,0,0,0.28); border: 1px solid var(--v24-line);
+  border-radius: 8px;
+}
+.v24-farm-info { flex: 1; min-width: 0; }
+.v24-farm-info b { font-size: 14px; color: var(--v24-paper); }
+.v24-farm-attr { display: block; font-size: 11px; color: #a89270; margin: 3px 0; }
+.v24-yield { color: var(--v24-grain); font-style: normal; }
+.v24-farm-bar { height: 5px; background: rgba(0,0,0,0.4); border-radius: 3px; overflow: hidden; }
+.v24-farm-fill {
+  height: 100%; background: linear-gradient(90deg, var(--v24-earthy), var(--v24-grain));
+  animation: v24-grain-glow 2.4s ease-in-out infinite;
+}
+@keyframes v24-grain-glow {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.35); }
+}
+.v24-farm-up { display: flex; flex-direction: column; align-items: center; gap: 2px; white-space: nowrap; }
+.v24-farm-up small { font-size: 9px; color: #b09a70; }
+.v24-farm-max { color: var(--v24-grain); font-size: 12px; white-space: nowrap; }
+
+/* ---------- 粮道面板 ---------- */
+.v24-sup-list { display: flex; flex-direction: column; gap: 8px; }
+.v24-sup-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 8px 10px;
+  background: rgba(0,0,0,0.28); border-radius: 8px;
+  border-left: 3px solid var(--v24-safe);
+}
+.v24-sup-row.v24-sup-long { border-left-color: var(--v24-warn); }
+.v24-sup-row.v24-sup-cut { border-left-color: var(--v24-danger); }
+.v24-sup-info { flex: 1; min-width: 0; }
+.v24-sup-info b { font-size: 14px; color: var(--v24-paper); }
+.v24-sup-troop { color: #8a7a5a; font-weight: normal; margin-left: 6px; }
+.v24-sup-attr { display: block; font-size: 11px; color: #a89270; margin: 3px 0; }
+.v24-sup-bar { height: 5px; background: rgba(0,0,0,0.4); border-radius: 3px; overflow: hidden; }
+.v24-sup-fill { height: 100%; transition: width 0.4s; }
+.v24-sup-row.v24-sup-cut .v24-sup-fill { animation: v24-cut-blink 1.2s step-end infinite; }
+@keyframes v24-cut-blink {
+  0%, 100% { opacity: 1; } 50% { opacity: 0.35; }
+}
+.v24-sup-tag {
+  font-size: 11px; padding: 3px 10px; border-radius: 10px;
+  white-space: nowrap; border: 1px solid;
+}
+.v24-sup-tag.v24-sup-ok { color: var(--v24-safe); border-color: var(--v24-safe); }
+.v24-sup-tag.v24-sup-long { color: var(--v24-warn); border-color: var(--v24-warn); }
+.v24-sup-tag.v24-sup-cut { color: var(--v24-danger); border-color: var(--v24-danger); }
+
+/* ---------- 城防面板 ---------- */
+.v24-fort-stage {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14px; margin-bottom: 10px;
+  background: rgba(107,122,143,0.10); border: 1px solid var(--v24-brick);
+  border-radius: 10px;
+}
+.v24-fort-icon { font-size: 36px; animation: v24-fort-pulse 3s ease-in-out infinite; }
+@keyframes v24-fort-pulse {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+.v24-fort-name { font-size: 15px; color: #b8c4d4; margin: 6px 0; letter-spacing: 2px; }
+.v24-fort-bar { width: 70%; height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; }
+.v24-fort-fill {
+  height: 100%; background: linear-gradient(90deg, var(--v24-mortar), var(--v24-brick));
+}
+.v24-fort-up { width: 100%; margin: 10px 0; }
+.v24-fort-desc { font-size: 12px; color: #a89270; line-height: 1.7; text-align: center; }
+
+/* ---------- 外交深化 ---------- */
+.v24-dip-flag {
+  display: inline-block; font-size: 10px; padding: 1px 7px;
+  border-radius: 8px; margin-right: 4px; border: 1px solid;
+}
+.v24-dip-flag.v24-treaty { color: var(--v24-seal); border-color: var(--v24-seal); }
+.v24-dip-flag.v24-army { color: var(--v24-warn); border-color: var(--v24-warn); }
+.v24-dip-flag.v24-vassal { color: var(--v24-grain); border-color: var(--v24-grain); }
+.v24-dip-btn { border-color: var(--v24-jade); color: #9cc0b0; }
+.v24-dip-btn:hover { background: rgba(90,138,122,0.2); }
+.v24-dip-rep { color: var(--v24-grain); }
+.v24-dip-rep b { font-size: 15px; }
+.v24-dip-rep-bar {
+  height: 6px; background: rgba(0,0,0,0.4); border-radius: 3px;
+  overflow: hidden; margin: 8px 0 12px;
+}
+.v24-dip-rep-fill {
+  height: 100%; background: linear-gradient(90deg, var(--v24-jade), var(--v24-grain));
+  transition: width 0.5s;
+}
+.v24-dip-desc { font-size: 12px; color: var(--v24-paper); padding: 8px; background: rgba(0,0,0,0.3); border-radius: 6px; margin-bottom: 10px; }
+.v24-dip-prob { margin-bottom: 10px; }
+.v24-dip-prob span { font-size: 11px; color: #a89270; }
+.v24-prob-track { height: 8px; background: rgba(0,0,0,0.4); border-radius: 4px; overflow: hidden; margin: 4px 0; }
+.v24-prob-fill { height: 100%; transition: width 0.4s; }
+.v24-dip-cost { font-size: 12px; color: #a89270; margin-bottom: 10px; }
+.v24-dip-btns { display: flex; gap: 10px; }
+.v24-dip-btns .btn-ancient { flex: 1; }
+.v24-notify b { color: var(--v24-grain); }
+
+/* ---------- 响应式 768 / 480 ---------- */
+@media (max-width: 768px) {
+  .v24-modal { width: 96%; padding: 14px; }
+  .v24-summary { grid-template-columns: repeat(2, 1fr); }
+  .v24-farm-row, .v24-sup-row { flex-wrap: wrap; }
+  .v24-fort-bar { width: 90%; }
+  .v24-dip-btns { flex-direction: column; }
+}
+@media (max-width: 480px) {
+  .v24-title { font-size: 16px; }
+  .v24-stat b { font-size: 13px; }
+  .v24-farm-row { flex-direction: column; align-items: stretch; }
+  .v24-farm-up { flex-direction: row; justify-content: center; gap: 6px; }
+  .v24-sup-row { flex-direction: column; align-items: stretch; }
+  .v24-sup-tag { align-self: flex-start; }
+  .v24-farm-attr, .v24-sup-attr { font-size: 11px; }
+  .v24-corner { width: 10px; height: 10px; }
+}

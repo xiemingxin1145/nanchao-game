@@ -162,7 +162,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge v22-version-badge v23-version-badge">V23.0 · 铁血军魂版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge v22-version-badge v23-version-badge v24-version-badge">V24.0 · 屯田定国版</div>
         </div>
       </div>
     `;
@@ -1051,6 +1051,8 @@ export class UI {
             <button class="btn-small v21-family-btn" id="btn-v21-family" title="V21.0 家族联姻：家族树 / 联姻 / 声望 / 继承">家族</button>
             <button class="btn-small v23-drill-btn" id="btn-v23-drill" title="V23.0 训练：各城驻军训练等级 / 金粮操练 / 军衔晋阶">训练</button>
             <button class="btn-small v23-merit-btn" id="btn-v23-merit" title="V23.0 军功：武将军功 / 爵位 / 封地 / 军功爵">军功</button>
+            <button class="btn-small v24-farm-btn" id="btn-v24-farm" title="V24.0 屯田：各城屯田等级 / 粮食产量 / 劳动力">屯田</button>
+            <button class="btn-small v24-supply-btn" id="btn-v24-supply" title="V24.0 粮道：前线军团补给线 / 连接状态 / 补给效率">粮道</button>
             <button class="btn-small" id="btn-menu">菜单</button>
           </div>
         </div>
@@ -1137,6 +1139,9 @@ export class UI {
     // V23.0：铁血军魂 — 训练 / 军功 入口
     const bv23d = document.getElementById('btn-v23-drill'); if (bv23d) bv23d.onclick = () => this.showDrillPanelV23();
     const bv23m = document.getElementById('btn-v23-merit'); if (bv23m) bv23m.onclick = () => this.showMeritPanelV23();
+    // V24.0：屯田定国 — 屯田 / 粮道 入口
+    const bv24f = document.getElementById('btn-v24-farm'); if (bv24f) bv24f.onclick = () => this.showFarmPanelV24();
+    const bv24s = document.getElementById('btn-v24-supply'); if (bv24s) bv24s.onclick = () => this.showSupplyPanelV24();
     const bc = document.getElementById('btn-calendar'); if (bc) bc.onclick = () => this.showCalendarPanel();
     const bh = document.getElementById('btn-harem'); if (bh) bh.onclick = () => this.showHaremPanel();
     const sw = document.getElementById('hdr-solar-wrap'); if (sw) sw.onclick = () => this.showCalendarPanel();
@@ -1795,6 +1800,7 @@ export class UI {
           <button class="btn-small" onclick="__ui_.showUnitAdvance('${city.id}')">🎖 进阶</button>
           <button class="btn-small v20-pop-btn" onclick="__ui_.showPopulationPanelV20()">📊 户口</button>
           <button class="btn-small v21-silk-btn" onclick="__ui_._v21BuildStation('${city.id}')" title="驿传通达：每级移动力/补给+5%，并增益丝路安全度">🐫 驿站</button>
+          <button class="btn-small v24-fort-btn" onclick="__ui_.showFortifyPanelV24('${city.id}')" title="V24.0 城防：修缮城墙 / 关隘 / 要塞，提升守军防御">🏯 城防</button>
           ${availableGenerals.length > 0 ? `
             <select id="mayor-select" class="select-small">
               ${availableGenerals.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
@@ -6390,6 +6396,11 @@ export class UI {
     const otherFactions = Object.values(FACTIONS).filter(f => f.id !== me);
     const res = g.getPlayerRes ? g.getPlayerRes() : { money: 0 };
 
+    const v24Rep = this._v24DiploRep(g);
+    const v24Treaties = (g._v24 && g._v24.treaties) ? g._v24.treaties : {};
+    const v24Vassals = (g._v24 && g._v24.vassals) ? g._v24.vassals : {};
+    const v24AlliedArmys = (g._v24 && g._v24.armyPacts) ? g._v24.armyPacts : {};
+
     const rows = otherFactions.map(f => {
       const rel = g.diplomacy.getRelation(me, f.id) || { relation: 0, alliance: false, ceasefire: false };
       const lvl = this._v15RelLevel(rel);
@@ -6404,6 +6415,10 @@ export class UI {
       if (rel.ceasefire) flags.push('<span class="v15-dip-flag">停战</span>');
       if (hasMarriage) flags.push('<span class="v15-dip-flag">联姻</span>');
       if (tradeOk) flags.push('<span class="v15-dip-flag">互市</span>');
+      // V24.0：条约 / 联军 / 附庸
+      if (v24Treaties[f.id]) flags.push('<span class="v24-dip-flag v24-treaty">和约</span>');
+      if (v24AlliedArmys[f.id]) flags.push('<span class="v24-dip-flag v24-army">联军</span>');
+      if (v24Vassals[f.id]) flags.push('<span class="v24-dip-flag v24-vassal">附庸</span>');
 
       return `<div class="v15-dip-row" style="--v15-fac:${f.color};border-left-color:${f.color}">
         <div class="v15-dip-head">
@@ -6419,13 +6434,382 @@ export class UI {
           <button class="btn-small" onclick="__ui_._v15DiploAsk('trade','${f.id}')">⚖ 贸易协定</button>
           <button class="btn-small" onclick="__ui_._v15DiploAsk('pass','${f.id}')">🚩 军事通行</button>
           ${bribable.length ? `<button class="btn-small" onclick="__ui_._v15DiploAsk('bribe','${f.id}','${bribable[0].id}')">🗡 策反${this._escHtml(bribable[0].name)}</button>` : ''}
+          <button class="btn-small v24-dip-btn" onclick="__ui_._v24DiploAsk('treaty','${f.id}')" title="互不侵犯条约：十年不兴刀兵">📜 条约</button>
+          <button class="btn-small v24-dip-btn" onclick="__ui_._v24DiploAsk('armypact','${f.id}')" title="联军会师：约定共进退">⚔ 联军</button>
+          <button class="btn-small v24-dip-btn" onclick="__ui_._v24DiploAsk('vassal','${f.id}')" title="册封附庸：称臣纳贡，互为藩屏">👑 附庸</button>
+          <button class="btn-small v24-dip-btn" onclick="__ui_._v24DiploAsk('exchangeHostage','${f.id}')" title="交换人质：互换质子稳固盟好">🔄 换质</button>
         </div>
       </div>`;
     }).join('');
 
-    const body = `<div class="v15-dip-banner">💰 当前金 ${Math.round(res.money || 0)} · 关系越好，外交越易成功</div>
+    const body = `<div class="v15-dip-banner">💰 当前金 ${Math.round(res.money || 0)} · <span class="v24-dip-rep" title="V24.0 外交声望：由关系/同盟/联姻/条约汇总">🎖 外交声望 <b>${v24Rep}</b></span> · 关系越好，外交越易成功</div>
+      <div class="v24-dip-rep-bar"><div class="v24-dip-rep-fill" style="width:${Math.min(100, v24Rep)}%"></div></div>
       <div class="v15-dip-list">${rows}</div>`;
     this._v15ModalShell('🕊 外交中枢', body);
+  }
+
+  // ============================================================
+  // V24.0「屯田定国版」— 屯田 / 粮道 / 城防 / 外交深化
+  //  约定：新类名一律 v24- 前缀；所有 game/diplomacy/supply 调用
+  //        带 typeof 守卫，优雅降级；屯田/城防/外交条约为表现层派生，
+  //        轻量状态挂 game._v24，不改动任何数据模块，纯 UI 深化。
+  // ============================================================
+
+  // ---------- V24 通用工具 ----------
+  _v24Num(v, d = 0) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+  _v24Esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+  // V24 轻量表现层状态（屯田等级 / 城防等级 / 外交条约联军附庸 / 声望）
+  _v24Store() {
+    const g = this.game;
+    if (!g) return { farm: {}, fort: {}, treaties: {}, armyPacts: {}, vassals: {}, rep: 0 };
+    if (!g._v24) g._v24 = { farm: {}, fort: {}, treaties: {}, armyPacts: {}, vassals: {}, rep: 0 };
+    return g._v24;
+  }
+  // V24 古风弹窗骨架（复用 v23 视觉语系，独立 v24- 前缀）
+  _v24ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v24-overlay';
+    modal.innerHTML = `
+      <div class="modal v24-modal v24-scroll ${extraCls}">
+        <div class="v24-corner tl"></div><div class="v24-corner tr"></div>
+        <div class="v24-corner bl"></div><div class="v24-corner br"></div>
+        <h2 class="modal-title v24-title">${titleHtml}</h2>
+        <div class="v24-body">${bodyHtml}</div>
+        <button class="btn-ancient v24-close" onclick="this.closest('.v24-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') {
+      try { this.audio.playPanelOpen(); } catch (e) {}
+    }
+    return modal;
+  }
+
+  // ============================================================
+  // 一、屯田面板（各城屯田等级 / 粮食产量 / 劳动力）
+  // ============================================================
+  _v24FarmLevelOf(city) {
+    const st = this._v24Store();
+    const lv = st.farm[city.id] != null ? st.farm[city.id] : 0;
+    return Math.max(0, Math.min(10, lv));
+  }
+  _v24FarmYieldOf(city) {
+    const lv = this._v24FarmLevelOf(city);
+    const agri = this._v24Num(city.agri, 0);
+    // 屯田产量 = 基础农业 ×(1 + 0.15×屯田等级)
+    return Math.round(agri * (1 + lv * 0.15) * 0.6);
+  }
+  _v24FarmLaborOf(city) {
+    const lv = this._v24FarmLevelOf(city);
+    const pop = this._v24Num(city.pop, 0);
+    // 屯田劳动力：等级越高征调越多，占人口 2%~20%
+    return Math.round(pop * (0.02 + lv * 0.02));
+  }
+  showFarmPanelV24() {
+    if (!this.game) { this.toast('开始游戏后可见屯田'); return; }
+    const g = this.game;
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : {};
+    const myCities = [];
+    try { g.cities.forEach(c => { if (c.owner === g.playerFaction) myCities.push(c); }); } catch (e) {}
+    myCities.sort((a, b) => this._v24Num(b.agri) - this._v24Num(a.agri));
+    const totalYield = myCities.reduce((s, c) => s + this._v24FarmYieldOf(c), 0);
+    const totalLabor = myCities.reduce((s, c) => s + this._v24FarmLaborOf(c), 0);
+    const rows = myCities.map(c => {
+      const lv = this._v24FarmLevelOf(c);
+      const yield = this._v24FarmYieldOf(c);
+      const labor = this._v24FarmLaborOf(c);
+      const maxed = lv >= 10;
+      const costGold = 60 + lv * 30, costFood = 100 + lv * 50;
+      return `<div class="v24-farm-row">
+        <div class="v24-farm-info">
+          <b>${this._v24Esc(c.name)}</b>
+          <span class="v24-farm-attr">屯田 Lv.${lv} · 年产粮 <i class="v24-yield">🌾 ${yield}</i> · 征调劳力 ${labor} 人</span>
+          <div class="v24-farm-bar"><div class="v24-farm-fill" style="width:${lv * 10}%"></div></div>
+        </div>
+        ${maxed
+          ? '<span class="v24-farm-max">已至万石</span>'
+          : `<button class="btn-small v24-farm-up" onclick="__ui_._v24UpgradeFarm('${c.id}')">兴屯<small>${costGold}金 ${costFood}粮</small></button>`}
+      </div>`;
+    }).join('');
+    const body = `
+      <div class="v24-summary">
+        <div class="v24-stat"><span>屯田城池</span><b>${myCities.length} 座</b></div>
+        <div class="v24-stat"><span>岁入粮草</span><b style="color:var(--v24-grain)">🌾 ${totalYield}</b></div>
+        <div class="v24-stat"><span>征调劳力</span><b>${totalLabor} 人</b></div>
+        <div class="v24-stat"><span>仓中余粮</span><b>${this._v24Num(res.food)}</b></div>
+      </div>
+      <div class="v24-status-line v24-wait">屯田定国：兵农合一，且耕且守；每级屯田 +15% 粮食产量，岁养精卒而国用饶。</div>
+      <div class="v24-section"><div class="v24-sec-title">◆ 各城屯田实绩</div>
+        <div class="v24-farm-list">${rows || '<p class="v24-empty">尚无我方城池。</p>'}</div>
+      </div>`;
+    this._v24ModalShell('🌾 屯田定国 · 足食强兵', body, 'v24-wide');
+  }
+  _v24UpgradeFarm(cityId) {
+    const g = this.game; if (!g) return;
+    const city = (typeof g.getCity === 'function') ? g.getCity(cityId) : (g.cities && g.cities.get(cityId));
+    if (!city || city.owner !== g.playerFaction) { this.toast('无权在此兴屯'); return; }
+    const st = this._v24Store();
+    const lv = st.farm[city.id] != null ? st.farm[city.id] : 0;
+    if (lv >= 10) { this.toast('此城屯田已臻化境'); return; }
+    const costGold = 60 + lv * 30, costFood = 100 + lv * 50;
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : null;
+    if (!res) { this.toast('资源系统未就绪'); return; }
+    if (this._v24Num(res.money) < costGold) { this.toast(`金钱不足（需 ${costGold} 金）`); return; }
+    if (this._v24Num(res.food) < costFood) { this.toast(`粮草不足（需 ${costFood} 粮）`); return; }
+    res.money -= costGold; res.food -= costFood;
+    st.farm[city.id] = lv + 1;
+    this.toast(`${city.name} 屯田升至 Lv.${lv + 1}（耗 ${costGold} 金 ${costFood} 粮）`);
+    if (this.audio && this.audio.playCoin) { try { this.audio.playCoin(); } catch (e) {} }
+    document.querySelectorAll('.v24-overlay').forEach(m => m.remove());
+    this.showFarmPanelV24();
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+
+  // ============================================================
+  // 二、粮道后勤面板（前线军团补给线 / 连接状态）
+  // ============================================================
+  showSupplyPanelV24() {
+    if (!this.game) { this.toast('开始游戏后可见粮道'); return; }
+    const g = this.game;
+    let armies = [];
+    try { armies = (g.armies || []).filter(a => a.faction === g.playerFaction); } catch (e) { armies = []; }
+    // 取我方前线军团（距主城较远或野战中）
+    const rows = armies.map(a => {
+      const gd = (typeof g.getGeneral === 'function') ? g.getGeneral(a.generalId) : null;
+      const home = (typeof g.getCity === 'function') ? g.getCity(a.cityId) : null;
+      // 补给状态：优先调用 supply 系统，缺省则按兵力派生
+      let st = { connected: true, distance: 0, efficiency: 1.0 };
+      try {
+        if (typeof computeSupplyStatus === 'function') {
+          const s = computeSupplyStatus(g, a);
+          if (s) st = s;
+        }
+      } catch (e) {}
+      const dist = this._v24Num(st.distance, 0);
+      const conn = st.connected !== false;
+      const eff = this._v24Num(st.efficiency, conn ? 1 : 0.4);
+      const effPct = Math.round(eff * 100);
+      const cls = !conn ? 'cut' : (dist > 3 ? 'long' : 'ok');
+      const tag = !conn ? '已断' : (dist > 3 ? '过长' : '畅通');
+      const barColor = !conn ? 'var(--v24-danger)' : (dist > 3 ? 'var(--v24-warn)' : 'var(--v24-safe)');
+      return `<div class="v24-sup-row v24-sup-${cls}">
+        <div class="v24-sup-info">
+          <b>${this._v24Esc(gd ? gd.name : a.id)} <small class="v24-sup-troop">兵 ${this._v24Num(a.troops)}</small></b>
+          <span class="v24-sup-attr">驻地 ${this._v24Esc(home ? home.name : '野战')} · 粮道 ${dist} 格 · 补给效率 <i style="color:${barColor}">${effPct}%</i></span>
+          <div class="v24-sup-bar"><div class="v24-sup-fill" style="width:${effPct}%;background:${barColor}"></div></div>
+        </div>
+        <span class="v24-sup-tag v24-sup-${cls}">${tag}</span>
+      </div>`;
+    }).join('');
+    const cutCount = armies.filter(a => {
+      try { const s = (typeof computeSupplyStatus === 'function') ? computeSupplyStatus(g, a) : null; return s && s.connected === false; }
+      catch (e) { return false; }
+    }).length;
+    const body = `
+      <div class="v24-summary">
+        <div class="v24-stat"><span>在外军团</span><b>${armies.length} 支</b></div>
+        <div class="v24-stat"><span>粮道畅通</span><b style="color:var(--v24-safe)">${armies.length - cutCount} 支</b></div>
+        <div class="v24-stat"><span>粮道被断</span><b style="color:var(--v24-danger)">${cutCount} 支</b></div>
+        <div class="v24-stat"><span>补给总则</span><b>≥4格减半</b></div>
+      </div>
+      <div class="v24-status-line v24-wait">粮道命脉：前线孤军深入，补给线过长则粮耗倍增、士气日减；宜据城筑寨，节节为营。</div>
+      <div class="v24-section"><div class="v24-sec-title">◆ 前线军团补给线</div>
+        <div class="v24-sup-list">${rows || '<p class="v24-empty">麾下暂无在外军团。</p>'}</div>
+      </div>`;
+    this._v24ModalShell('🚩 粮道后勤 · 节节为营', body, 'v24-wide');
+  }
+
+  // ============================================================
+  // 三、城防升级面板（关隘 / 要塞）
+  // ============================================================
+  _v24FortLevelOf(city) {
+    const st = this._v24Store();
+    return Math.max(0, Math.min(10, st.fort[city.id] != null ? st.fort[city.id] : 0));
+  }
+  showFortifyPanelV24(cityId) {
+    if (!this.game) { this.toast('开始游戏后可修城防'); return; }
+    const g = this.game;
+    const city = (typeof g.getCity === 'function') ? g.getCity(cityId) : (g.cities && g.cities.get(cityId));
+    if (!city) { this.toast('城池不存在'); return; }
+    if (city.owner !== g.playerFaction) { this.toast('非我之城，不可修缮'); return; }
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : {};
+    const lv = this._v24FortLevelOf(city);
+    const baseDef = this._v24Num(city.defense, 0);
+    const fortDef = Math.round(baseDef * (1 + lv * 0.2));
+    const costGold = 80 + lv * 40, costWood = 120 + lv * 60;
+    const maxed = lv >= 10;
+    // 关隘/要塞名派生命名
+    const fortNames = ['夯土瓮城', '砖石雉堞', '弩台烽燧', '关隘铁壁', '雄关要塞'];
+    const fortName = lv === 0 ? '无城防' : fortNames[Math.min(fortNames.length - 1, Math.floor((lv - 1) / 2))];
+    const body = `
+      <div class="v24-summary">
+        <div class="v24-stat"><span>城池</span><b>${this._v24Esc(city.name)}</b></div>
+        <div class="v24-stat"><span>城防等级</span><b style="color:var(--v24-brick)">Lv.${lv}</b></div>
+        <div class="v24-stat"><span>守备加成</span><b>+${lv * 20}%</b></div>
+        <div class="v24-stat"><span>综合防御</span><b>🛡 ${fortDef}</b></div>
+      </div>
+      <div class="v24-fort-stage">
+        <div class="v24-fort-icon">🏯</div>
+        <div class="v24-fort-name">${this._v24Esc(fortName)}</div>
+        <div class="v24-fort-bar"><div class="v24-fort-fill" style="width:${lv * 10}%"></div></div>
+      </div>
+      <div class="v24-status-line v24-wait">城防为守国之险：修缮雉堞、增筑关隘，每级城防 +20% 守备，敌军攻城伤亡倍增。</div>
+      ${maxed
+        ? '<div class="v24-status-line v24-ok">此城已固若金汤，雄关漫道，不可复加。</div>'
+        : `<button class="btn-ancient v24-fort-up" onclick="__ui_._v24UpgradeFort('${city.id}')">🏗 修缮城防（${costGold}金 / ${costWood}粮）</button>`}
+      <div class="v24-section"><div class="v24-sec-title">◆ 城防沿革</div>
+        <p class="v24-fort-desc">自夯土瓮城而砖石雉堞，自弩台烽燧而关隘铁壁。城高池深，虽千万人吾往矣。</p>
+      </div>`;
+    this._v24ModalShell('🏯 雄关要塞 · 城防修缮', body, 'v24-wide');
+  }
+  _v24UpgradeFort(cityId) {
+    const g = this.game; if (!g) return;
+    const city = (typeof g.getCity === 'function') ? g.getCity(cityId) : (g.cities && g.cities.get(cityId));
+    if (!city || city.owner !== g.playerFaction) { this.toast('无权修缮此城'); return; }
+    const st = this._v24Store();
+    const lv = this._v24FortLevelOf(city);
+    if (lv >= 10) { this.toast('城防已至极品'); return; }
+    const costGold = 80 + lv * 40, costWood = 120 + lv * 60;
+    const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : null;
+    if (!res) { this.toast('资源系统未就绪'); return; }
+    if (this._v24Num(res.money) < costGold) { this.toast(`金钱不足（需 ${costGold} 金）`); return; }
+    if (this._v24Num(res.food) < costWood) { this.toast(`粮草/木材不足（需 ${costWood}）`); return; }
+    res.money -= costGold; res.food -= costWood;
+    st.fort[city.id] = lv + 1;
+    // 同步抬升城防数值
+    if (typeof city.defense === 'number') city.defense = Math.round(city.defense * 1.05);
+    this.toast(`${city.name} 城防升至 Lv.${lv + 1}，守备益固`);
+    if (this.audio && this.audio.playCoin) { try { this.audio.playCoin(); } catch (e) {} }
+    document.querySelectorAll('.v24-overlay').forEach(m => m.remove());
+    this.showFortifyPanelV24(cityId);
+    if (typeof this.showCityPanel === 'function' && this.game.selectedCity === cityId) this.showCityPanel(city);
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+
+  // ============================================================
+  // 四、外交深化（条约 / 联军 / 附庸 / 换质 / 外交声望）
+  // ============================================================
+  // 外交声望：由关系总和 + 同盟/联姻/条约数派生
+  _v24DiploRep(g) {
+    if (!g || !g.diplomacy) return 0;
+    const me = g.playerFaction;
+    let rep = 0;
+    try {
+      Object.values(FACTIONS).forEach(f => {
+        if (f.id === me) return;
+        const rel = g.diplomacy.getRelation(me, f.id) || { relation: 0 };
+        rep += Math.max(0, this._v24Num(rel.relation, 0));
+        if (rel.alliance) rep += 20;
+        if (rel.ceasefire) rep += 5;
+      });
+    } catch (e) {}
+    const st = this._v24Store();
+    rep += Object.keys(st.treaties || {}).length * 15;
+    rep += Object.keys(st.armyPacts || {}).length * 10;
+    rep += Object.keys(st.vassals || {}).length * 25;
+    return rep;
+  }
+  // V24 外交提议确认（条约/联军/附庸/换质）
+  _v24DiploAsk(action, targetFid) {
+    const g = this.game; if (!g) return;
+    const f = FACTIONS[targetFid]; if (!f) return;
+    const rel = (g.diplomacy && typeof g.diplomacy.getRelation === 'function')
+      ? g.diplomacy.getRelation(g.playerFaction, targetFid) : null;
+    const rval = this._v24Num(rel && rel.relation, 0);
+    const costMap = { treaty: { money: 300 }, armypact: { money: 500 }, vassal: { money: 0 }, exchangeHostage: { money: 200 } };
+    const descMap = {
+      treaty: `与 ${f.name} 立互不侵犯之约，十年内互不兴兵，边民得安。`,
+      armypact: `与 ${f.name} 约为联军，同进同退，互为掎角之势。`,
+      vassal: `慑于兵威，册封 ${f.name} 为附庸，岁岁朝贡，永为藩屏。`,
+      exchangeHostage: `与 ${f.name} 互换质子，以固盟好，互不相负。`
+    };
+    const cost = costMap[action] || { money: 0 };
+    // 接受概率随关系提升
+    const prob = Math.min(95, Math.max(15, 40 + rval));
+    const actionName = { treaty: '互不侵犯条约', armypact: '联军会师', vassal: '册封附庸', exchangeHostage: '交换人质' }[action] || action;
+    const old = document.querySelector('.v24-overlay.v24-dip-confirm');
+    if (old) old.remove();
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v24-overlay v24-dip-confirm';
+    modal.innerHTML = `
+      <div class="modal v24-modal v24-scroll">
+        <div class="v24-corner tl"></div><div class="v24-corner tr"></div>
+        <div class="v24-corner bl"></div><div class="v24-corner br"></div>
+        <h2 class="modal-title v24-title">V24 盟约：${actionName}</h2>
+        <div class="v24-body">
+          <div class="v24-dip-desc">${this._v24Esc(descMap[action] || '')}</div>
+          <div class="v24-dip-prob">
+            <span>对方应允之望</span>
+            <div class="v24-prob-track"><div class="v24-prob-fill" style="width:${prob}%;background:${prob > 60 ? 'var(--v24-safe)' : prob > 35 ? 'var(--v24-warn)' : 'var(--v24-danger)'}"></div></div>
+            <b style="color:${prob > 60 ? 'var(--v24-safe)' : prob > 35 ? 'var(--v24-warn)' : 'var(--v24-danger)'}">${prob}%</b>
+          </div>
+          <div class="v24-dip-cost">耗金：${cost.money || 0}</div>
+          <div class="v24-dip-btns">
+            <button class="btn-ancient" id="v24-dip-yes">遣使定盟</button>
+            <button class="btn-ancient" onclick="this.closest('.v24-overlay').remove()">作罢</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector('#v24-dip-yes').onclick = () => {
+      modal.remove();
+      this._v24DiploDo(action, targetFid);
+    };
+  }
+  _v24DiploDo(action, targetFid) {
+    const g = this.game; if (!g) return;
+    const st = this._v24Store();
+    const f = FACTIONS[targetFid];
+    let ok = true, msg = '';
+    try {
+      const res = (typeof g.getPlayerRes === 'function') ? g.getPlayerRes() : null;
+      const costMap = { treaty: 300, armypact: 500, vassal: 0, exchangeHostage: 200 };
+      const cost = costMap[action] || 0;
+      if (cost > 0) {
+        if (!res || this._v24Num(res.money) < cost) { this._v24Notify('盟约', `金钱不足（需 ${cost} 金）`, 'warn'); return; }
+        res.money -= cost;
+      }
+      switch (action) {
+        case 'treaty':
+          st.treaties[targetFid] = { turns: 10, signed: true };
+          msg = `与 ${f.name} 立约，十年不犯边境`;
+          break;
+        case 'armypact':
+          st.armyPacts[targetFid] = { active: true };
+          msg = `与 ${f.name} 约为联军，互为掎角`;
+          break;
+        case 'vassal':
+          st.vassals[targetFid] = { tribute: true };
+          msg = `${f.name} 已称臣纳贡，永为藩屏`;
+          break;
+        case 'exchangeHostage': {
+          const cand = g.getFactionGenerals(g.playerFaction).find(x => !x.inArmy && x.role !== '君主');
+          if (cand) cand.onHostage = targetFid;
+          msg = `已与 ${f.name} 互换质子，盟好益固`;
+          break;
+        }
+        default: ok = false; msg = '未知盟约';
+      }
+      // 外交声望 += 5
+      st.rep = this._v24Num(st.rep, 0) + 5;
+    } catch (e) { ok = false; msg = String(e && e.message || e); }
+    this._v24Notify(action === 'treaty' ? '条约' : action === 'armypact' ? '联军' : action === 'vassal' ? '附庸' : '换质', msg, ok ? 'success' : 'warn');
+    if (this.audio && ok && this.audio.playCoin) { try { this.audio.playCoin(); } catch (e) {} }
+    document.querySelectorAll('.v15-overlay, .v24-overlay').forEach(m => m.remove());
+    if (this.game.state === 'playing') this.showDiplomacyV15();
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+  // V24 外交/事件通知横幅（复用 v15 样式系，独立 v24 类）
+  _v24Notify(title, text, type) {
+    const cls = type === 'success' ? 'v15-notify-success' : type === 'warn' ? 'v15-notify-warn' : '';
+    const bar = document.createElement('div');
+    bar.className = `v15-notify v24-notify ${cls}`;
+    bar.innerHTML = `<b>${this._v24Esc(title)}</b><span>${this._v24Esc(text || '')}</span>`;
+    document.body.appendChild(bar);
+    requestAnimationFrame(() => bar.classList.add('show'));
+    setTimeout(() => { bar.classList.remove('show'); setTimeout(() => bar.remove(), 600); }, 3200);
   }
 
   // 外交提议确认弹窗（内容 + 接受概率 + 消耗）

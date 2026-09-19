@@ -34,6 +34,24 @@ export class DiplomacySystem {
         this.relations[key] = { relation: 0, alliance: false, ceasefire: false };
       }
     }
+    // V24.0.0：外交同盟系统深化
+    this.v24_treaties = {};       // 条约体系 { key: { type, expires, active } }
+    this.v24_vassals = {};        // 附庸国 { vassalFid: { suzerainFid, tribute, sinceTurn } }
+    this.v24_reputation = {};      // 外交声望 { factionId: -100~100 }
+    this.v24_jointOperations = []; // 联军作战记录
+    this.v24_stats = {           // 全局统计（成就/结局读取）
+      alliancesSigned: 0,          // 结盟次数
+      alliancesBroken: 0,          // 毁盟次数
+      jointBattles: 0,             // 联军作战次数
+      treatiesSigned: 0,           // 签订条约数
+      vassalsAccepted: 0,          // 接受附庸数
+      vassalTributes: 0,           // 附庸进贡次数
+      hostageExchanges: 0,         // 人质交换次数
+      maxReputation: 0,            // 最高外交声望
+      minReputation: 0,            // 最低外交声望
+      maxAllies: 0,                // 最多同盟数
+      maxVassals: 0                // 最多附庸数
+    };
   }
 
   _key(a, b) {
@@ -649,11 +667,334 @@ export class DiplomacySystem {
     } catch (e) {}
   }
 
+  // ============================================================
+  // V24.0.0：外交同盟系统深化
+  // （同盟体系 / 联军作战 / 条约体系 / 附庸国 / 外交声望）
+  // ============================================================
+
+  // ---------- 1. 同盟体系深化 ----------
+  // 结盟（深化版）：在原有 proposeAlliance 基础上，增加同盟期限与互不侵犯
+  v24ProposeAlliance(game, proposerFid, targetFid) {
+    if (proposerFid === targetFid) return { ok: false, msg: '不能与本势力结盟' };
+    const rel = this.getRelation(proposerFid, targetFid);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    if (rel.alliance) return { ok: false, msg: '已为同盟' };
+    // 同盟需关系≥20 或有和亲/联姻
+    const hasMarriage = this.getActiveMarriage(game, proposerFid, targetFid);
+    if (rel.relation < 20 && !hasMarriage) {
+      return { ok: false, msg: '两国关系未睦（需关系≥20 或已有姻亲）' };
+    }
+    // 检查是否有互不侵犯条约
+    const treatyKey = this._key(proposerFid, targetFid);
+    const existingTreaty = this.v24_treaties[treatyKey];
+    // AI 接受概率
+    let acceptProb = 0.4 + rel.relation / 150;
+    if (hasMarriage) acceptProb += 0.2;
+    if (existingTreaty && existingTreaty.active) acceptProb += 0.15;
+    acceptProb = Math.max(0.05, Math.min(0.95, acceptProb));
+    if (targetFid !== game.playerFaction && Math.random() >= acceptProb) {
+      return { ok: false, msg: `${FACTIONS[targetFid].name} 婉拒了结盟之请` };
+    }
+    rel.alliance = true;
+    rel.relation = Math.min(100, rel.relation + 30);
+    rel.allianceSince = game.turn;
+    this.v24_stats.alliancesSigned++;
+    // 更新声望
+    this.v24ReputationChange(proposerFid, 5);
+    this.v24ReputationChange(targetFid, 5);
+    game.pushLog(`🤝 同盟成立：${FACTIONS[proposerFid].name} 与 ${FACTIONS[targetFid].name} 歃血为盟，共御外侮！`);
+    // 更新盟友数统计
+    this.v24_stats.maxAllies = Math.max(this.v24_stats.maxAllies, this.v24GetAllyCount(game, proposerFid));
+    return { ok: true, msg: `与 ${FACTIONS[targetFid].name} 结成同盟！`, alliance: true };
+  }
+
+  // 撕毁同盟
+  v24BreakAlliance(game, fid1, fid2) {
+    const rel = this.getRelation(fid1, fid2);
+    if (!rel || !rel.alliance) return { ok: false, msg: '并非同盟关系' };
+    rel.alliance = false;
+    rel.relation = Math.max(-100, rel.relation - 40);
+    this.v24_stats.alliancesBroken++;
+    // 声望下降
+    this.v24ReputationChange(fid1, -15);
+    game.pushLog(`💔 ${FACTIONS[fid1].name} 撕毁与 ${FACTIONS[fid2].name} 的同盟！天下共鄙之。`);
+    return { ok: true, msg: '同盟已撕毁，声望大损' };
+  }
+
+  // 获取某势力的同盟数量
+  v24GetAllyCount(game, factionId) {
+    let count = 0;
+    for (const [k, rel] of Object.entries(this.relations)) {
+      if (!rel || !rel.alliance) continue;
+      const [a, b] = k.split('_');
+      if (a === factionId || b === factionId) count++;
+    }
+    return count;
+  }
+
+  // ---------- 2. 联军作战 ----------
+  // 同盟国协同作战：邀请同盟国出兵共击敌
+  v24JointWar(game, leaderFid, allyFid, enemyFid) {
+    if (leaderFid === allyFid || allyFid === enemyFid || leaderFid === enemyFid) {
+      return { ok: false, msg: '参战势力无效' };
+    }
+    const rel = this.getRelation(leaderFid, allyFid);
+    if (!rel || !rel.alliance) return { ok: false, msg: '须为同盟关系方可联合作战' };
+    // 检查敌对方关系
+    const enemyRel = this.getRelation(leaderFid, enemyFid);
+    if (!enemyRel) return { ok: false, msg: '与目标无外交关系' };
+    // 同盟国出兵概率（基于关系与实力）
+    let joinProb = 0.5 + (rel.relation || 0) / 200;
+    joinProb = Math.max(0.1, Math.min(0.9, joinProb));
+    if (Math.random() >= joinProb) {
+      game.pushLog(`🚫 ${FACTIONS[allyFid].name} 拒绝了联军请求。`);
+      return { ok: false, msg: '同盟国拒绝出兵' };
+    }
+    // 记录联军作战
+    const op = {
+      id: 'joint_' + Date.now(),
+      leader: leaderFid, ally: allyFid, enemy: enemyFid,
+      turn: game.turn, active: true
+    };
+    this.v24_jointOperations.push(op);
+    this.v24_stats.jointBattles++;
+    // 对敌方关系恶化
+    const relAllyEnemy = this.getRelation(allyFid, enemyFid);
+    if (relAllyEnemy) relAllyEnemy.relation = Math.max(-100, (relAllyEnemy.relation || 0) - 20);
+    game.pushLog(`⚔ 联军成立：${FACTIONS[leaderFid].name} 与 ${FACTIONS[allyFid].name} 共讨 ${FACTIONS[enemyFid].name}！`);
+    return { ok: true, msg: `联军成立！${FACTIONS[allyFid].name} 出兵协同作战`, operation: op };
+  }
+
+  // 查询联军作战记录
+  v24GetJointOperations(factionId) {
+    return this.v24_jointOperations.filter(op =>
+      op.leader === factionId || op.ally === factionId || op.enemy === factionId
+    );
+  }
+
+  // ---------- 3. 条约体系 ----------
+  // 签订互不侵犯条约
+  v24SignNonAggression(game, fid1, fid2, duration) {
+    if (fid1 === fid2) return { ok: false, msg: '不能与本势力签约' };
+    const rel = this.getRelation(fid1, fid2);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    if (rel.relation < -20) return { ok: false, msg: '两国交恶，难以签约' };
+    const key = this._key(fid1, fid2);
+    const treaty = {
+      type: 'non_aggression',
+      active: true,
+      signed: game.turn,
+      expires: game.turn + (duration || 20)
+    };
+    this.v24_treaties[key] = treaty;
+    rel.ceasefire = true;
+    rel.relation = Math.min(100, rel.relation + 15);
+    this.v24_stats.treatiesSigned++;
+    game.pushLog(`📜 互不侵犯条约：${FACTIONS[fid1].name} 与 ${FACTIONS[fid2].name} 约为兄弟，互不攻伐（${duration || 20}回合）。`);
+    return { ok: true, msg: '互不侵犯条约已签订', treaty };
+  }
+
+  // 签订停战协议
+  v24SignCeasefire(game, fid1, fid2, duration) {
+    if (fid1 === fid2) return { ok: false, msg: '不能与本势力签约' };
+    const rel = this.getRelation(fid1, fid2);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    const key = this._key(fid1, fid2);
+    const treaty = {
+      type: 'ceasefire',
+      active: true,
+      signed: game.turn,
+      expires: game.turn + (duration || 10)
+    };
+    this.v24_treaties[key] = treaty;
+    rel.ceasefire = true;
+    rel.relation = Math.min(100, rel.relation + 10);
+    this.v24_stats.treatiesSigned++;
+    game.pushLog(`🕊 停战协议：${FACTIONS[fid1].name} 与 ${FACTIONS[fid2].name} 罢兵息战（${duration || 10}回合）。`);
+    return { ok: true, msg: '停战协议已签订', treaty };
+  }
+
+  // 签订嫁妆条约（和亲+嫁妆）
+  v24SignDowryTreaty(game, fid1, fid2, dowryAmount) {
+    if (fid1 === fid2) return { ok: false, msg: '不能与本势力签约' };
+    const rel = this.getRelation(fid1, fid2);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    const res = game.factionRes.get(fid1);
+    if (!res || res.money < (dowryAmount || 0)) return { ok: false, msg: '嫁妆不足' };
+    res.money -= (dowryAmount || 0);
+    const key = this._key(fid1, fid2);
+    const treaty = {
+      type: 'dowry',
+      active: true,
+      signed: game.turn,
+      expires: game.turn + 30,
+      dowry: dowryAmount || 0
+    };
+    this.v24_treaties[key] = treaty;
+    rel.ceasefire = true;
+    rel.relation = Math.min(100, rel.relation + 25);
+    this.v24_stats.treatiesSigned++;
+    game.pushLog(`💍 嫁妆条约：${FACTIONS[fid1].name} 以 ${dowryAmount} 金为嫁妆，与 ${FACTIONS[fid2].name} 永结和好。`);
+    return { ok: true, msg: '嫁妆条约已签订', treaty };
+  }
+
+  // 检查是否有有效条约
+  v24HasActiveTreaty(fid1, fid2, currentTurn) {
+    const key = this._key(fid1, fid2);
+    const t = this.v24_treaties[key];
+    if (!t || !t.active) return false;
+    if (t.expires && currentTurn && currentTurn > t.expires) return false;
+    return true;
+  }
+
+  // 每回合清理过期条约
+  _v24CleanupTreaties(game) {
+    for (const [k, t] of Object.entries(this.v24_treaties)) {
+      if (t.active && t.expires && game.turn > t.expires) {
+        t.active = false;
+        game.pushLog(`📜 条约到期：${k.replace('_', ' 与 ')} 的条约已失效。`);
+      }
+    }
+  }
+
+  // ---------- 4. 附庸国 ----------
+  // 接受附庸：小国臣服，每年进贡
+  v24AcceptVassal(game, suzerainFid, vassalFid) {
+    if (suzerainFid === vassalFid) return { ok: false, msg: '不能为本势力附庸' };
+    if (this.v24_vassals[vassalFid]) return { ok: false, msg: '该势力已有宗主' };
+    const rel = this.getRelation(suzerainFid, vassalFid);
+    if (!rel) return { ok: false, msg: '无外交关系' };
+    // 附庸国实力须明显弱于宗主
+    try {
+      const sp = strategyPlanner;
+      const me = sp.getFactionStrength(suzerainFid, game);
+      const them = sp.getFactionStrength(vassalFid, game);
+      if (them.military > me.military * 0.8) {
+        return { ok: false, msg: '对方实力不弱，难以臣服' };
+      }
+    } catch (e) {}
+    // 设定附庸
+    this.v24_vassals[vassalFid] = {
+      suzerain: suzerainFid,
+      sinceTurn: game.turn,
+      annualTribute: 500,
+      tributeAccumulated: 0
+    };
+    rel.relation = Math.min(100, rel.relation + 40);
+    rel.ceasefire = true;
+    this.v24_stats.vassalsAccepted++;
+    this.v24_stats.maxVassals = Math.max(this.v24_stats.maxVassals, Object.keys(this.v24_vassals).length);
+    game.pushLog(`🏯 ${FACTIONS[vassalFid].name} 臣服于 ${FACTIONS[suzerainFid].name}，岁贡不绝！`);
+    return { ok: true, msg: `${FACTIONS[vassalFid].name} 成为附庸`, vassal: vassalFid };
+  }
+
+  // 附庸国进贡结算（每回合调用）
+  v24CollectVassalTribute(game, suzerainFid) {
+    let total = 0;
+    for (const [vassalFid, vassal] of Object.entries(this.v24_vassals)) {
+      if (vassal.suzerain !== suzerainFid) continue;
+      // 每年（12回合）进贡一次
+      if ((game.turn - vassal.sinceTurn) % 12 !== 0) continue;
+      const amount = vassal.annualTribute || 500;
+      const res = game.factionRes.get(suzerainFid);
+      if (res) {
+        res.money = (res.money || 0) + amount;
+        total += amount;
+        vassal.tributeAccumulated = (vassal.tributeAccumulated || 0) + amount;
+        this.v24_stats.vassalTributes++;
+        game.pushLog(`💰 ${FACTIONS[vassalFid].name} 进贡 ${amount} 金`);
+      }
+    }
+    return total;
+  }
+
+  // 附庸国独立（宗主过弱或附庸反叛）
+  v24ReleaseVassal(game, suzerainFid, vassalFid) {
+    const v = this.v24_vassals[vassalFid];
+    if (!v || v.suzerain !== suzerainFid) return { ok: false, msg: '非我方附庸' };
+    delete this.v24_vassals[vassalFid];
+    const rel = this.getRelation(suzerainFid, vassalFid);
+    if (rel) rel.relation = Math.max(-100, (rel.relation || 0) - 10);
+    game.pushLog(`🏃 ${FACTIONS[vassalFid].name} 脱离附庸，自立于一方。`);
+    return { ok: true, msg: '附庸已脱离' };
+  }
+
+  // 获取某势力的附庸数量
+  v24GetVassalCount(suzerainFid) {
+    return Object.values(this.v24_vassals).filter(v => v.suzerain === suzerainFid).length;
+  }
+
+  // ---------- 5. 外交声望 ----------
+  // 修改声望（内部）
+  v24ReputationChange(factionId, delta) {
+    const cur = this.v24_reputation[factionId] || 0;
+    const next = Math.max(-100, Math.min(100, cur + delta));
+    this.v24_reputation[factionId] = next;
+    this.v24_stats.maxReputation = Math.max(this.v24_stats.maxReputation, next);
+    this.v24_stats.minReputation = Math.min(this.v24_stats.minReputation, next);
+    return next;
+  }
+
+  // 获取声望
+  v24GetReputation(factionId) {
+    return this.v24_reputation[factionId] || 0;
+  }
+
+  // 声望对结盟成功率的修正
+  v24ReputationAllyMod(factionId) {
+    const rep = this.v24_reputation[factionId] || 0;
+    // 声望≥50：结盟成功率+20%；声望≤-50：结盟成功率-20%
+    if (rep >= 50) return 0.20;
+    if (rep >= 20) return 0.10;
+    if (rep <= -50) return -0.20;
+    if (rep <= -20) return -0.10;
+    return 0;
+  }
+
+  // 声望过低时，其他势力倾向围攻
+  v24IsIsolated(factionId) {
+    const rep = this.v24_reputation[factionId] || 0;
+    return rep <= -50;
+  }
+
+  // ---------- 每回合结算 ----------
+  v24EndTurn(game) {
+    // 清理过期条约
+    this._v24CleanupTreaties(game);
+    // 附庸进贡
+    if (game.playerFaction) {
+      this.v24CollectVassalTribute(game, game.playerFaction);
+    }
+    // 声望随时间自然恢复（每回合+1，上限0）
+    for (const fid of Object.keys(this.v24_reputation)) {
+      if (this.v24_reputation[fid] < 0) {
+        this.v24_reputation[fid] = Math.min(0, (this.v24_reputation[fid] || 0) + 1);
+      }
+    }
+  }
+
+  // ---------- 汇总查询（成就/结局用）----------
+  v24GetAllStats(factionId) {
+    return {
+      alliances: this.v24GetAllyCount(null, factionId),
+      vassals: this.v24GetVassalCount(factionId),
+      reputation: this.v24GetReputation(factionId),
+      treaties: Object.values(this.v24_treaties).filter(t => t.active).length,
+      ...this.v24_stats
+    };
+  }
+
   serialize() {
     return {
       relations: this.relations,
       tradeAgreements: this.tradeAgreements || {},
-      passages: this.passages || {}
+      passages: this.passages || {},
+      // V24.0.0 新增
+      v24_treaties: this.v24_treaties || {},
+      v24_vassals: this.v24_vassals || {},
+      v24_reputation: this.v24_reputation || {},
+      v24_jointOperations: this.v24_jointOperations || [],
+      v24_stats: this.v24_stats || {}
     };
   }
 
@@ -662,6 +1003,12 @@ export class DiplomacySystem {
     if (data && data.relations) d.relations = data.relations;
     if (data && data.tradeAgreements) d.tradeAgreements = data.tradeAgreements;
     if (data && data.passages) d.passages = data.passages;
+    // V24.0.0 新增
+    if (data && data.v24_treaties) d.v24_treaties = data.v24_treaties;
+    if (data && data.v24_vassals) d.v24_vassals = data.v24_vassals;
+    if (data && data.v24_reputation) d.v24_reputation = data.v24_reputation;
+    if (data && data.v24_jointOperations) d.v24_jointOperations = data.v24_jointOperations;
+    if (data && data.v24_stats) d.v24_stats = Object.assign(d.v24_stats, data.v24_stats);
     return d;
   }
 }

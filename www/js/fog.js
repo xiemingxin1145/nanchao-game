@@ -47,7 +47,14 @@ function bfsDistances(starts, maxDist) {
 // 某派系当前可见的城市 id 集合（实时视野，不含历史探索）
 export function computeVisibleCities(game, factionId) {
   const visible = new Set();
-  const factionCities = game.getFactionCities(factionId).map(c => c.id);
+  const factionCities = (factionId === game.playerFaction && game._playerCitiesTurnCache)
+    // 性能优化（fog.js V24.0 玩家可见城市复用回合缓存）：
+    //   基准：原统一走 `game.getFactionCities(factionId)` = `[...cities.values()].filter()`
+    //   对全部城市做一次全表扫描。settleTurn 入口已为玩家势力建好
+    //   `_playerCitiesTurnCache`（本数组存的是城市对象，需取 .id，同回合内有效），
+    //   玩家视野计算直接复用，省一次全表过滤；缓存缺失（非回合内调用）兜底回原全表 filter。
+    ? game._playerCitiesTurnCache.map(c => c.id)
+    : game.getFactionCities(factionId).map(c => c.id);
   // 性能优化（fog.js V23.0·computeVisibleCities 同盟视野）：
   //   基准：原实现对每个同盟势力都调用 game.getFactionCities(fid)——内部是
   //     `[...cities.values()].filter(c=>c.owner===fid)` 全表过滤。设 C=城市数、

@@ -215,6 +215,15 @@ export class DynastySystem {
       FACTIONS[fid].color = dyn.color;
       FACTIONS[fid].colorLight = dyn.colorLight;
     }
+    // BUG修复（dynasty.js V24.0 禅让后 AI 势力名缓存过期）：
+    //   AIPlayer 在构造时一次性缓存了 `this.name = FACTIONS[factionId].name`（见 ai.js），
+    //   此后永不刷新。本函数把 FACTIONS[fid].name 改成新王朝国号后，该势力 AI 后续
+    //   每回合的行动日志仍打出旧国号（如「宋」军征讨，实际已改国号为「齐」），
+    //   文案与王朝实况不符。修复：禅让后同步刷新该势力 AI 的缓存名。
+    if (game.aiPlayers) {
+      const _ai = game.aiPlayers.get(fid);
+      if (_ai) _ai.name = dyn.name;
+    }
     this.calcLegitimacy(game, fid);
     // 大赦：全势力城市民心 +15，武将忠诚 +10
     for (const c of game.getFactionCities(fid)) c.morale = Math.min(100, c.morale + 15);

@@ -90,6 +90,14 @@ export function attackBarbarian(game, factionId, tribeId) {
     if (army.troops <= 0) {
       army.destroyed = true;
       if (attGen) { attGen.inArmy = null; attGen.location = army.cityId; }
+      // BUG修复（barbarian.js V24.0 幽灵军队残留）：原实现仅置 army.destroyed=true，
+      //   但 player 路径（game.js attackBarbarian）与 AI 路径（ai.js aiBarbarianActions）
+      //   调用后都未像 attackCity 系列那样 `game.armies.filter(!destroyed)` 清扫。
+      //   被蛮族全歼的军队因此以「destroyed 幽灵军」永久残留在 game.armies：
+      //   每回合 endTurn 的 `for (const army of this.armies) army.hasMoved=false`、
+      //   settleTurn 的粮草结算、getFactionArmies 都会继续把它当成活军（空吃粮、刷视野）。
+      //   修复：本函数内统一清扫一次 destroyed 军队，与攻城路径行为对齐。
+      game.armies = game.armies.filter(a => !a.destroyed);
     }
     return { ok: true, msg: `征讨大捷！缴获 ${loot} 金`, win: true, loot };
   }
@@ -98,6 +106,8 @@ export function attackBarbarian(game, factionId, tribeId) {
   if (army.troops <= 0) {
     army.destroyed = true;
     if (attGen) { attGen.inArmy = null; attGen.location = army.cityId; }
+    // BUG修复（barbarian.js V24.0 幽灵军队残留）：同上，败退全军覆没时也清扫幽灵军。
+    game.armies = game.armies.filter(a => !a.destroyed);
   }
   return { ok: true, msg: '征讨未果，收兵回营', win: false };
 }

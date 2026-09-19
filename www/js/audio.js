@@ -286,6 +286,27 @@ const BGM_TRACKS = {
     //   density 0.6，营造熔炉烈焰、锤声叮当的冶铸氛围）。
     bpm: 70, scale: ['D3', 'F3', 'G3', 'A3', 'Bb3', 'C4', 'D4', 'F4', 'G4', 'A4', 'Bb4'],
     wave: 'triangle', bassWave: 'square', stepMs: 857, hasDrum: true, density: 0.6
+  },
+
+  // ============================================================
+  // V24.0「音效扩充」新增 2 首 BGM（屯田后勤 / 外交同盟）
+  // ============================================================
+  farming: { // 田园牧歌：D大调，65BPM，宁静祥和——竹笛(三角主奏)+古筝(正弦低音铺底)
+    // D 大调五声：D E F# A B D E F# A B D（F# 用既有 F3s/F4s 键，不新增频率，
+    //   三角主奏模拟竹笛清越悠扬、正弦低音铺底模拟古筝温润，无战鼓，
+    //   stepMs=923(=65BPM四分音符)，density 0.45，
+    //   营造阡陌纵横、稻浪飘香、男耕女织的田园牧歌氛围）。
+    bpm: 65, scale: ['D3', 'E3', 'F3s', 'A3', 'B3', 'D4', 'E4', 'F4s', 'A4', 'B4', 'D5'],
+    wave: 'triangle', bassWave: 'sine', stepMs: 923, hasDrum: false, density: 0.45
+  },
+  alliance: { // 邦交会盟：G大调，70BPM，庄重典雅——古琴(正弦主奏)+编钟(三角泛音点缀)+轻磬
+    // G 大调自然音阶近似：G A B D E G A B D E G（明亮宫调 + 舒展从容旋律，
+    //   正弦主奏模拟古琴悠远泛音、三角泛音点缀模拟编钟金石声，轻鼓点缀会盟庄重，
+    //   stepMs=857(=70BPM四分音符)，density 0.55，
+    //   营造冠盖云集、歃血为盟、折冲樽俎的邦交会盟氛围）。
+    //   注：原 V8.1 外交曲 `diplomacy`(折冲樽俎,C宫) 键名已占用，故本会盟曲另立 `alliance` 键。
+    bpm: 70, scale: ['G3', 'A3', 'B3', 'D4', 'E4', 'G4', 'A4', 'B4', 'D5', 'E5', 'G5'],
+    wave: 'sine', bassWave: 'sine', stepMs: 857, hasDrum: true, density: 0.55
   }
 };
 
@@ -337,7 +358,10 @@ export const BGM_INFO = {
   academy:        { name: '崇文校书', desc: '翰林院·D大调55BPM古琴竹笛' },
   // V23.0 新增（军营号角 / 炉火纯青）
   militaryCamp:   { name: '沙场点兵', desc: '军营号角·C小调85BPM号角军鼓' },
-  forge:          { name: '炉火纯青', desc: '锻造冶炼·D小调70BPM打铁金属泛音' }
+  forge:          { name: '炉火纯青', desc: '锻造冶炼·D小调70BPM打铁金属泛音' },
+  // V24.0 新增（田园牧歌 / 邦交会盟）
+  farming:        { name: '田园牧歌', desc: '屯田后勤·D大调65BPM竹笛古筝' },
+  alliance:       { name: '邦交会盟', desc: '外交同盟·G大调70BPM古琴编钟' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -358,7 +382,9 @@ const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'end
   // V22.0：科举殿试/翰林院两首新 BGM 默认解锁（殿试与崇文馆场景随版本开放即可用）
   'examFinal', 'academy',
   // V23.0：军营号角/炉火纯青两首新 BGM 默认解锁（校场练兵与工坊锻造场景随版本开放即可用）
-  'militaryCamp', 'forge'];
+  'militaryCamp', 'forge',
+  // V24.0：田园牧歌/邦交会盟两首新 BGM 默认解锁（屯田后勤与外交同盟场景随版本开放即可用）
+  'farming', 'alliance'];
 
 export class AudioManager {
   constructor() {
@@ -1491,15 +1517,31 @@ export class AudioManager {
   }
 
   // 15. 农业丰收：欢快民乐（五声音阶短旋律）+ 麦穗沙沙（高频细噪）
+  // V24.0 富化：在原「五声音阶 + 麦穗沙沙」基础上，加入 稻浪沙沙（带通噪声起伏）
+  //   + 镰刀收割（高频金属唰声）+ 农人欢笑（高音短跳音），凑齐「稻浪沙沙+镰刀声+欢笑声」。
   playHarvest() {
-    this.resume(); if (!this.ctx) return;
+    this.resume(); if (!this.ctx || !this._sfxGate('harvest', 800)) return;
     this._duckBGM(); this._sfxDuck();
+    const BUS = 'domestic';
     // 欢快民乐：G-A-C-D-E 短旋律
     [392, 440, 523.25, 587.33, 659.25].forEach((f, i) =>
-      this.tone(f, 0.22, 'triangle', 0.16, i * 0.12, null, 'domestic'));
+      this.tone(f, 0.22, 'triangle', 0.16, i * 0.12, null, BUS));
+    // 稻浪沙沙：两段带通中高频噪声，左右声像交替起伏（风吹稻浪）
+    this._noiseBurst({ dur: 1.4, freq: 2200, q: 0.8, type: 'bandpass', vol: 0.13,
+      offset: 0, bus: BUS, sweepTo: 1600, pan: -0.3 });
+    this._noiseBurst({ dur: 1.2, freq: 2600, q: 0.8, type: 'bandpass', vol: 0.11,
+      offset: 0.25, bus: BUS, sweepTo: 1900, pan: 0.3 });
     // 麦穗沙沙：6kHz 细噪声扫频
     this._noiseBurst({ dur: 0.6, freq: 6000, q: 2, type: 'highpass', vol: 0.06,
-      offset: 0.2, bus: 'domestic', sweepTo: 3000 });
+      offset: 0.2, bus: BUS, sweepTo: 3000 });
+    // 镰刀收割：高频金属唰声三连（镰刃过秆）
+    for (let i = 0; i < 3; i++) {
+      this._noiseBurst({ dur: 0.18, freq: 4800, q: 2.0, type: 'highpass', vol: 0.08,
+        offset: 0.2 + i * 0.35, bus: BUS, sweepTo: 1200, pan: (i - 1) * 0.3 });
+    }
+    // 农人欢笑：高音短跳音三连（上扬，喜悦）
+    const laugh = [659.25, 783.99, 1046.5];
+    laugh.forEach((f, i) => this.tone(f, 0.18, 'triangle', 0.10, 0.9 + i * 0.12, null, BUS, (i - 1) * 0.2));
   }
 
   // ---------- 四、兵种进阶音效（走 sfx 总线） ----------
@@ -3268,6 +3310,148 @@ export class AudioManager {
     // 收尾定音：一记重鼓 + 号角长音
     this.drum(0.5, 0.2 + 8 * 0.16, 60, BUS);
     this.horn(392.0, 1.0, 0.18, 0.5 + 8 * 0.16, null, 0);
+  }
+
+  // ============================================================
+  // V24.0「屯田后勤 + 外交同盟深化」新增 9 个音效
+  //   屯田 3（丰收/粮仓建成/粮队出发）+ 外交 4（结盟/签约/称臣/联军出征）
+  //   + 要塞 2（筑城/烽火点燃）。统一走 domestic 内政总线。
+  // ============================================================
+
+  // ---- 一、屯田音效 ----
+  // 注：playHarvest（丰收）已在本文件上方「农业丰收」处定义（V24.0 在其原实现上
+  //   富化为「稻浪沙沙 + 镰刀声 + 欢笑声」，见该处），此处不再重复定义以免方法覆盖。
+
+  // 2. 粮仓建成：夯土打桩（低频闷鼓）+ 编钟（金声）+ 欢呼（上扬琶音）
+  playGranaryBuilt() {
+    this.resume(); if (!this.ctx || !this._sfxGate('granary_built', 900)) return;
+    const BUS = 'domestic';
+    // 夯土打桩：两记低频闷鼓（筑仓夯墙）
+    this.drum(0.4, 0, 78, BUS);
+    this.drum(0.38, 0.18, 72, BUS);
+    // 编钟：G-C-G 三响（仓廪落成，金声玉振）
+    this.bell(392.0, 1.6, 0.18, 0.35, -0.2);
+    this.bell(523.25, 1.6, 0.16, 0.5, 0.2);
+    this.bell(783.99, 1.8, 0.16, 0.65, 0);
+    // 欢呼：上扬琶音（仓成民乐，米粮满仓）
+    const cheer = [523.25, 659.25, 783.99, 1046.5];
+    cheer.forEach((f, i) => this.tone(f, 0.35, 'triangle', 0.13, 0.8 + i * 0.12, null, BUS, (i - 1.5) * 0.12));
+  }
+
+  // 3. 粮队出发：牛车轱辘（低频吱呀滑音）+ 马蹄（规律鼓点）+ 号令（号角短鸣）
+  playGrainConvoy() {
+    this.resume(); if (!this.ctx || !this._sfxGate('grain_convoy', 700)) return;
+    const BUS = 'domestic';
+    // 号令先鸣：一记低沉号角（启程号）
+    this.horn(146.83, 0.6, 0.18, 0, null, 0);
+    // 牛车轱辘：低频吱呀——锯波缓慢滑音上下（木轮吱扭）
+    this.tone(110, 1.0, 'sawtooth', 0.10, 0.1, 180, BUS, -0.2);
+    this.tone(90, 1.0, 'sawtooth', 0.08, 0.5, 140, BUS, 0.2);
+    // 马蹄：规律低频鼓点 6 步（护卫随行，左右声像交替）
+    for (let i = 0; i < 6; i++) {
+      this.drum(0.22, 0.25 + i * 0.16, 88 - (i % 2) * 6, BUS);
+      this._noiseBurst({ dur: 0.03, freq: 1100, q: 1.2, type: 'highpass', vol: 0.04,
+        offset: 0.25 + i * 0.16, bus: BUS, pan: (i % 2 ? 0.35 : -0.35) });
+    }
+  }
+
+  // ---- 二、外交音效 ----
+
+  // 4. 结盟：编钟 + 礼乐（和弦铺展）+ 欢呼（上扬）
+  playAllianceForm() {
+    this.resume(); if (!this.ctx || !this._sfxGate('alliance_form', 900)) return;
+    const BUS = 'domestic';
+    // 编钟齐鸣：G-C-E-G 会盟定音
+    const chimes = [392.0, 523.25, 659.25, 783.99];
+    chimes.forEach((f, i) => this.bell(f, 1.8, 0.16, i * 0.1, (i - 1.5) * 0.15));
+    // 礼乐：分解和弦温润铺展（G-B-D-G 礼乐和鸣）
+    const music = [392.0, 493.88, 587.33, 783.99];
+    music.forEach((f, i) => this.tone(f, 1.2, 'sine', 0.11, 0.3 + i * 0.15, null, BUS, 0));
+    // 欢呼：上扬琶音（歃血为盟，两国交欢）
+    const cheer = [523.25, 659.25, 783.99, 1046.5, 1318.5];
+    cheer.forEach((f, i) => this.tone(f, 0.3, 'triangle', 0.11, 0.9 + i * 0.1, null, BUS, (i - 2) * 0.1));
+  }
+
+  // 5. 签约：竹简展开（布帛噪声扫频）+ 朱印盖章（闷鼓 + 朱砂点印）
+  playTreatySign() {
+    this.resume(); if (!this.ctx || !this._sfxGate('treaty_sign', 700)) return;
+    const BUS = 'domestic';
+    // 竹简展开：布帛/竹片展开——带通噪声缓慢上扬扫频（"哗——"展简）
+    this._noiseBurst({ dur: 1.0, freq: 700, q: 1.0, type: 'bandpass', vol: 0.14,
+      offset: 0, bus: BUS, sweepTo: 2200 });
+    // 书写沙沙：高频短促噪声（笔走简上）
+    this._noiseBurst({ dur: 0.5, freq: 3200, q: 1.5, type: 'highpass', vol: 0.06,
+      offset: 0.55, bus: BUS, sweepTo: 1800 });
+    // 朱印盖章：一记闷鼓（落印）+ 朱砂点印高频短响
+    this.drum(0.4, 1.15, 90, BUS);
+    this.tone(1567.98, 0.12, 'sine', 0.14, 1.18, null, BUS, 0);
+    this.tone(2093.00, 0.18, 'sine', 0.10, 1.24, null, BUS, 0);
+  }
+
+  // 6. 称臣：号角（受降号）+ 跪拜鼓乐（缓起鼓列）
+  playVassalPledge() {
+    this.resume(); if (!this.ctx || !this._sfxGate('vassal_pledge', 900)) return;
+    const BUS = 'domestic';
+    // 受降号角：低沉庄严号角长鸣（上邦受降）
+    this.horn(130.81, 1.2, 0.22, 0, null, -0.2);
+    this.horn(196.0, 1.0, 0.18, 0.15, null, 0.2);
+    // 跪拜鼓乐：缓起鼓列（三跪九叩，节奏庄重）
+    for (let i = 0; i < 3; i++) {
+      this.drum(0.35, 0.4 + i * 0.3, 64 - i * 4, BUS);
+    }
+    // 定调：编钟一记（藩属归附，名分既定）
+    this.bell(523.25, 1.6, 0.16, 1.1, 0);
+  }
+
+  // 7. 联军出征：两军号角齐鸣（左右双角）+ 战鼓列阵
+  playJointCampaign() {
+    this.resume(); if (!this.ctx || !this._sfxGate('joint_campaign', 800)) return;
+    const BUS = 'domestic';
+    // 两军号角齐鸣：左翼 G、右翼 D，声像左右分开（两军会师）
+    this.horn(196.0, 1.0, 0.22, 0, null, -0.4);
+    this.horn(146.83, 1.0, 0.22, 0.05, null, 0.4);
+    this.horn(293.66, 1.2, 0.20, 0.1, null, 0);
+    // 战鼓列阵：8 拍进军鼓点（联军开拔，雷动）
+    for (let i = 0; i < 8; i++) {
+      this.drum(0.34, 0.25 + i * 0.15, 84 - (i % 2) * 6, BUS);
+    }
+    // 收尾重鼓（兵锋所指）
+    this.drum(0.5, 0.25 + 8 * 0.15, 60, BUS);
+  }
+
+  // ---- 三、要塞音效 ----
+
+  // 8. 筑城：夯土打桩（连续低频闷鼓）+ 砖石堆叠（砖石磕碰清脆噪声）
+  playFortressBuild() {
+    this.resume(); if (!this.ctx || !this._sfxGate('fortress_build', 900)) return;
+    const BUS = 'domestic';
+    // 夯土打桩：5 记低频闷鼓由轻到重（筑墙夯土）
+    for (let i = 0; i < 5; i++) {
+      this.drum(0.3 + i * 0.04, i * 0.18, 82 - (i % 2) * 5, BUS);
+      // 砖石堆叠：每夯一记伴随砖石磕碰清脆噪声
+      this._noiseBurst({ dur: 0.06, freq: 2400, q: 1.6, type: 'bandpass', vol: 0.07,
+        offset: i * 0.18, bus: BUS, pan: (i % 2 ? 0.3 : -0.3) });
+    }
+    // 收尾定城：一记重夯 + 编钟（城垣落成）
+    this.drum(0.5, 5 * 0.18, 66, BUS);
+    this.bell(523.25, 1.6, 0.15, 5 * 0.18 + 0.15, 0);
+  }
+
+  // 9. 烽火点燃：火焰噼啪（高频短噪声迸溅）+ 浓烟升腾（低频呼啸扫频）
+  playBeaconLit() {
+    this.resume(); if (!this.ctx || !this._sfxGate('beacon_lit', 800)) return;
+    const BUS = 'domestic';
+    // 火焰噼啪：一串高频短噪声迸溅（柴火爆裂，随机声像）
+    for (let i = 0; i < 7; i++) {
+      this._noiseBurst({ dur: 0.05, freq: 3500 + Math.random() * 2000, q: 1.5,
+        type: 'highpass', vol: 0.08, offset: 0.1 + i * 0.12, bus: BUS,
+        pan: (Math.random() - 0.5) * 0.9 });
+    }
+    // 浓烟升腾：低频呼啸扫频上扬（烽火烈焰冲天）
+    this._noiseBurst({ dur: 1.3, freq: 300, q: 1.0, type: 'lowpass', vol: 0.13,
+      offset: 0.2, bus: BUS, sweepTo: 900 });
+    // 烽火定音：一记低沉号角（狼烟已举，军情传警）
+    this.horn(110.0, 1.0, 0.18, 0.6, null, 0);
   }
 
   // ============================================================

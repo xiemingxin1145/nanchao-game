@@ -224,6 +224,24 @@ export class IsometricMap {
     this._V23_HIGH_RANK_OFFICE = 2;  // 官职 rank<=2 视为高军衔（大将军/三公/柱国/骠骑/车骑）
     this._V23_TRAIN_THRESHOLD = 50;  // 训练等级阈值
 
+    // ============================================================
+    // V24.0 — 地图可视化：屯田后勤 / 外交同盟 / 要塞烽火
+    // 设计：
+    //   - 屯田城市(city.tuntian>0 或 city.buildings.granary>=1)：城外金色麦田标记
+    //   - 粮道：屯田城市之间金色虚线连接（流动光点）
+    //   - 同盟势力(diplomacy.relations[*].alliance)：双方都城之间蓝色连线
+    //   - 要塞城市(city.buildings.fortress>=1 或 city.defense>=70)：灰色角塔徽记
+    //   - 烽火台(city.beacon 或 city.buildings.beacon/watchtower，边境山城兜底)：红色脉动光点
+    // 性能：屯田城市/同盟都对集合每 0.5s 重建一次（避免每帧遍历）；
+    //       距离 LOD（scale<0.7）简化绘制；视口裁剪；连线数量硬上限。
+    // ============================================================
+    this._v24TuntianCityIds = [];    // 屯田城市 id 缓存
+    this._v24AllianceLinks = [];     // 同盟都城连线 [{x1,y1,x2,y2}]（屏幕坐标由帧内换算）
+    this._v24AlliancePairs = [];     // 同盟 faction 对 [{a,b}]（都城 cityId 对）
+    this._v24RebuildAt = 0;          // 上次重建屯田/同盟集合时刻
+    this._V24_FORTRESS_DEF = 70;    // 防御≥该值视为要塞（无 fortress 建筑时兜底）
+    this._V24_LINE_CAP = 12;         // 粮道/同盟连线总条数硬上限
+
     this._bindEvents();
     this._initView();
   }
@@ -1909,6 +1927,9 @@ export class IsometricMap {
     // V18.0：河上商船/战船（河流城市附近定期经过）
     this._drawRiverShips(ctx);
 
+    // V24.0：屯田粮道（金色虚线）+ 同盟势力（蓝色连线）——叠在地形之上、城市之下
+    this._drawV24LogisticsLines(ctx);
+
     this._drawCities();
     // V22.0：京城科举金榜标记 + 翰林院建筑标记（叠加在首都之上）
     this._drawCapitalExamMarkers(ctx);
@@ -2004,6 +2025,10 @@ export class IsometricMap {
     // V23.0：军事训练/整编/锻造动画 FX（操练/晋升/授奖/锻造武器甲马/整编/阅兵）
     if (typeof Animator.drawV23FX === 'function') {
       Animator.drawV23FX(ctx);
+    }
+    // V24.0：屯田丰收/粮仓/粮车/结盟/签约/称臣/联军/要塞/烽火 动画 FX
+    if (typeof Animator.drawV24FX === 'function') {
+      Animator.drawV24FX(ctx);
     }
   }
 
@@ -2413,6 +2438,9 @@ export class IsometricMap {
 
       // V23.0：军事训练小兵 / 锻造烟囱火花 / 高军衔金色将旗 城市标记
       this._drawV23MilitaryMarkers(ctx, city, r, t);
+
+      // V24.0：屯田金色麦田 / 要塞灰色角塔 / 烽火红色光点 城市标记
+      this._drawV24LogisticsMarkers(ctx, city, r, t);
 
       // V15.0：冬季白雪覆盖（城市底座一层薄雪）
       if (this._seasonIdx() === 3) {
@@ -4218,6 +4246,232 @@ export class IsometricMap {
       ctx.lineTo(fx + 7 * s + wave, fy - 10 * s * pulse + wave * 0.5);
       ctx.lineTo(fx, fy - 8 * s * pulse);
       ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ============================================================
+  // V24.0 — 屯田后勤 / 外交同盟 / 要塞烽火 地图可视化
+  // ============================================================
+
+  // 屯田城市判定：显式 tuntian 等级 >0，或建有粮仓建筑
+  _v24IsTuntianCity(city) {
+    if (!city) return false;
+    if ((city.tuntian || 0) > 0) return true;
+    const b = city.buildings || {};
+    return (b.granary || 0) >= 1 || (b.farm || 0) >= 2;
+  }
+
+  // 要塞城市判定：建有要塞/关城建筑，或城防足够高（兜底）
+  _v24IsFortressCity(city) {
+    if (!city) return false;
+    const b = city.buildings || {};
+    if ((b.fortress || 0) >= 1 || (b.guanbao || 0) >= 1) return true;
+    return (city.defense || 0) >= this._V24_FORTRESS_DEF;
+  }
+
+  // 烽火台城市判定：显式 beacon 标记，或建有烽火台/瞭望楼；边境山城高防兜底
+  _v24IsBeaconCity(city) {
+    if (!city) return false;
+    if (city.beacon === true) return true;
+    const b = city.buildings || {};
+    if ((b.beacon || 0) >= 1 || (b.watchtower || 0) >= 1) return true;
+    // 兜底：边境山地要塞城（与现有 V15 战时烽火互补）
+    return city.terrain === 'mountain' && (city.defense || 0) >= 60;
+  }
+
+  // 重建屯田城市集合 + 同盟都城对（每 0.5s 一次，避免每帧遍历）
+  _v24RebuildSets() {
+    if (!this.game || !this.game.cities) {
+      this._v24TuntianCityIds = [];
+      this._v24AlliancePairs = [];
+      return;
+    }
+    // 1) 屯田城市 id
+    const tids = [];
+    for (const c of this.game.cities.values()) {
+      if (this._v24IsTuntianCity(c)) tids.push(c.id);
+    }
+    this._v24TuntianCityIds = tids;
+    // 2) 同盟 faction 对（解析为双方都城 cityId）
+    const pairs = [];
+    const dip = this.game.diplomacy;
+    if (dip && dip.relations) {
+      for (const key of Object.keys(dip.relations)) {
+        const rel = dip.relations[key];
+        if (!rel || !rel.alliance) continue;
+        const [a, b] = key.split('_');
+        const ca = FACTIONS[a] && FACTIONS[a].capital;
+        const cb = FACTIONS[b] && FACTIONS[b].capital;
+        if (ca && cb) pairs.push({ a: ca, b: cb });
+      }
+    }
+    this._v24AlliancePairs = pairs;
+  }
+
+  // 连线层：屯田粮道（金色虚线）+ 同盟势力（蓝色连线）
+  _drawV24LogisticsLines(ctx) {
+    if (!this.game || !this.game.cities) return;
+    if (this._animTime - this._v24RebuildAt > 0.5) {
+      this._v24RebuildAt = this._animTime;
+      this._v24RebuildSets();
+    }
+    const s = this.scale;
+    const farLOD = s < 0.7;
+    const t = this._animTime;
+    const lineW = Math.max(1.2, 1.8 * s);
+    let budget = this._V24_LINE_CAP;
+
+    ctx.save();
+
+    // ---- 1) 屯田粮道：金色虚线连接附近屯田城市 + 流动光点 ----
+    if (this._v24TuntianCityIds.length >= 2) {
+      const seen = new Set();
+      const cities = this._v24TuntianCityIds
+        .map(id => this.game.cities.get(id))
+        .filter(Boolean);
+      for (let i = 0; i < cities.length && budget > 0; i++) {
+        const c1 = cities[i];
+        // 找最近的另一个屯田城市（等距距离阈值 3.5）
+        let best = null, bestD = 3.5;
+        for (let j = 0; j < cities.length; j++) {
+          if (i === j) continue;
+          const c2 = cities[j];
+          const d = Math.hypot(c2.isoX - c1.isoX, c2.isoY - c1.isoY);
+          if (d < bestD) { bestD = d; best = c2; }
+        }
+        if (!best) continue;
+        const pairKey = [c1.id, best.id].sort().join('_');
+        if (seen.has(pairKey)) continue;
+        seen.add(pairKey);
+        const p1 = this.isoToScreen(c1.isoX, c1.isoY);
+        const p2 = this.isoToScreen(best.isoX, best.isoY);
+        if (!this._onScreen(p1.x, p1.y, 160) && !this._onScreen(p2.x, p2.y, 160)) continue;
+        budget--;
+        ctx.strokeStyle = 'rgba(212,175,55,0.5)';
+        ctx.lineWidth = lineW;
+        ctx.setLineDash([6, 5]);
+        ctx.lineDashOffset = -t * 18;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // 流动光点（非远景才画，省性能）
+        if (!farLOD) {
+          const f = ((t * 0.15 + i * 0.37) % 1 + 1) % 1;
+          const gx = p1.x + (p2.x - p1.x) * f;
+          const gy = p1.y + (p2.y - p1.y) * f;
+          ctx.fillStyle = 'rgba(255,228,140,0.9)';
+          ctx.shadowColor = '#ffd24a';
+          ctx.shadowBlur = 5;
+          ctx.beginPath(); ctx.arc(gx, gy, Math.max(1.4, 2.0 * s), 0, Math.PI * 2); ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+    }
+
+    // ---- 2) 同盟势力：双方都城之间蓝色实线（淡流光）----
+    for (const pr of this._v24AlliancePairs) {
+      if (budget <= 0) break;
+      const c1 = this.game.cities.get(pr.a);
+      const c2 = this.game.cities.get(pr.b);
+      if (!c1 || !c2) continue;
+      const p1 = this.isoToScreen(c1.isoX, c1.isoY);
+      const p2 = this.isoToScreen(c2.isoX, c2.isoY);
+      if (!this._onScreen(p1.x, p1.y, 200) && !this._onScreen(p2.x, p2.y, 200)) continue;
+      budget--;
+      ctx.strokeStyle = 'rgba(80,140,255,0.55)';
+      ctx.lineWidth = lineW + 0.4 * s;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      // 同盟流光（蓝色光点沿连线往返）
+      if (!farLOD) {
+        const raw = (t * 0.1 + 0.2) % 1;
+        const f = raw < 0.5 ? raw * 2 : 2 - raw * 2;
+        const gx = p1.x + (p2.x - p1.x) * f;
+        const gy = p1.y + (p2.y - p1.y) * f;
+        ctx.fillStyle = 'rgba(150,200,255,0.95)';
+        ctx.shadowColor = '#6aa8ff';
+        ctx.shadowBlur = 6;
+        ctx.beginPath(); ctx.arc(gx, gy, Math.max(1.6, 2.2 * s), 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    ctx.restore();
+  }
+
+  // V24 城市标记总入口（由 _drawCities 在 V23 标记后调用）
+  // 传入的 ctx 已 translate 到城市原点、按 scale 缩放（r 为城市半径）。
+  _drawV24LogisticsMarkers(ctx, city, r, t) {
+    if (!city) return;
+    const s = this.scale;
+    const farLOD = s < 0.7;   // 距离 LOD：远视野简化绘制
+
+    // ---- 1) 屯田城市：城外金色麦田（田垄 + 麦穗）----
+    if (this._v24IsTuntianCity(city)) {
+      ctx.save();
+      const mx = r * 0.7, my = r * 0.55;   // 城外右下
+      // 田垄（几条金色斜线）
+      ctx.strokeStyle = 'rgba(200,160,50,0.85)';
+      ctx.lineWidth = 0.9 * s;
+      for (let k = 0; k < 3; k++) {
+        ctx.beginPath();
+        ctx.moveTo(mx - 4 * s + k * 2.2 * s, my + 2 * s);
+        ctx.lineTo(mx - 1 * s + k * 2.2 * s, my - 3 * s);
+        ctx.stroke();
+      }
+      // 麦穗（随风轻摆）
+      if (!farLOD) {
+        const sway = Math.sin(t * 3 + city.isoX) * 1.0 * s;
+        ctx.strokeStyle = '#d8a828'; ctx.lineWidth = 1 * s;
+        ctx.beginPath(); ctx.moveTo(mx - 2 * s, my - 3 * s); ctx.lineTo(mx - 2 * s + sway, my - 8 * s); ctx.stroke();
+        ctx.fillStyle = '#e8c040';
+        for (let g = 0; g < 3; g++) {
+          ctx.beginPath();
+          ctx.ellipse(mx - 2 * s + sway, my - 8 * s - g * 1.5 * s, 0.9 * s, 1.4 * s, 0.3, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+    }
+
+    // ---- 2) 要塞城市：灰色角塔徽记（城左上方小碉楼）----
+    if (this._v24IsFortressCity(city)) {
+      ctx.save();
+      const tx = -r * 0.7, ty = -r * 0.1;
+      // 碉楼塔身
+      ctx.fillStyle = '#7a7a82';
+      ctx.fillRect(tx - 2.2 * s, ty - 4 * s, 4.4 * s, 6 * s);
+      // 垛口
+      ctx.fillStyle = '#62626a';
+      ctx.fillRect(tx - 2.8 * s, ty - 5.6 * s, 1.6 * s, 1.6 * s);
+      ctx.fillRect(tx - 0.8 * s, ty - 5.6 * s, 1.6 * s, 1.6 * s);
+      // 小尖顶
+      ctx.fillStyle = '#4e4e56';
+      ctx.beginPath();
+      ctx.moveTo(tx - 2.8 * s, ty - 4 * s);
+      ctx.lineTo(tx, ty - 7.2 * s);
+      ctx.lineTo(tx + 2.8 * s, ty - 4 * s);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    // ---- 3) 烽火台：红色脉动光点（城上方，警示）----
+    if (this._v24IsBeaconCity(city)) {
+      ctx.save();
+      const pulse = 0.5 + 0.5 * Math.sin(t * 4 + city.isoY);
+      const ox = 0, oy = -r - 10 * s;
+      ctx.fillStyle = `rgba(255,70,40,${0.5 + pulse * 0.5})`;
+      ctx.shadowColor = '#ff4028';
+      ctx.shadowBlur = farLOD ? 0 : 6 * s;
+      ctx.beginPath();
+      ctx.arc(ox, oy, (1.6 + pulse * 1.2) * s, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
       ctx.restore();
     }
   }

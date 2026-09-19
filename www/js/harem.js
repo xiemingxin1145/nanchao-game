@@ -146,13 +146,16 @@ export class HaremSystem {
   _makeChild(gender, mother, father, fid) {
     const surname = FACTIONS[fid] ? (FACTIONS[fid].name || '萧') : '萧';
     const given = this._childName(gender);
+    // BUG修复（harem.js V24.0 子嗣姓氏丢失）：原写法算出 `surname` 却未使用，
+    //   `name: given` 只给了单字名（如「勇」「丽华」），皇子皇女一律不带王朝姓氏，
+    //   与「按势力国姓命名」的设计不符。修复：姓名 = 国姓 + 名。
     const baseCmd = father ? father.command : 60;
     const baseForce = father ? father.force : 60;
     const baseIntel = mother.rank === 'empress' ? 75 : (60 + Math.random() * 15);
     const basePolitics = father ? father.politics : 60;
     return {
       id: 'ch_' + (childSeq++),
-      name: given,
+      name: surname + given,
       gender,
       age: 0,
       motherId: mother.id,

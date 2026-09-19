@@ -74,9 +74,20 @@ export class CalendarSystem {
       logs.push(`商业${eff.commFlat >= 0 ? '+' : ''}${eff.commFlat}`);
     }
     if (eff.cultureFlat) {
+      // BUG修复（calendar.js V24.0 文化加成小数丢失）：原写法
+      //   `Math.floor(eff.cultureFlat / cities.length)`——当 cultureFlat（如 +5）小于
+      //   城市数（如 20 城）时，每城都 floor(5/20)=0，结果全势力文化一点没加，
+      //   但日志仍打出「文化+5」（日志与实际不符，玩家吃亏）。
+      //   修复：按城数整除分配，余数补给前余数组城（每城至少 1 点），保证总文化增益
+      //   恒等于 eff.cultureFlat，且分布均匀。
+      const n = Math.max(1, cities.length);
+      const per = Math.floor(eff.cultureFlat / n);
+      let rem = eff.cultureFlat - per * n;
       for (const c of cities) {
         if (!c.religion) c.religion = { buddhist: 0, daoist: 0, culture: 0 };
-        c.religion.culture = (c.religion.culture || 0) + Math.floor(eff.cultureFlat / Math.max(1, cities.length));
+        let add = per;
+        if (rem > 0) { add += 1; rem--; }
+        c.religion.culture = (c.religion.culture || 0) + add;
       }
       logs.push(`文化+${eff.cultureFlat}`);
     }

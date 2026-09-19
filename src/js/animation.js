@@ -196,6 +196,21 @@ export class CharacterAnimator {
     this._v23FXCap = 8;             // 同时存活 V23 FX 上限
     this._v23ParticleBudget = 90;   // V23 专属粒子预算（_v23 标记）
     this._v23EmitAcc = 0;           // 持续粒子生成累计器（锻炉/操练尘土）
+
+    // ============================================================
+    // V24.0 — 动画与地图增强：屯田后勤 / 外交同盟 / 要塞烽火 深化动画
+    // 设计：与 V21.0/V22.0/V23.0 一致——play* 只写入 _v24FXs 状态机
+    //      + 触发一次性粒子；update(dt) 用真实时间推进 t；
+    //      drawV24FX(ctx) 按 t/dur 渲染（由 map.js 每帧调用）。
+    //      粒子走 _getParticle/_pushParticle 对象池 + 专属预算(_v24 标记)；
+    //      FX 列表硬上限 _v24FXCap=8（超出淘汰最老）；
+    //      粮车行进/烽火浓烟等持续粒子按 dt 节流生成，受 _v24ParticleBudget=90 保护；
+    //      距离 LOD：远视野（map.js scale<0.7）简化绘制。
+    // ============================================================
+    this._v24FXs = [];              // V24 FX [{type,x,y,... ,t,dur,seed}]
+    this._v24FXCap = 8;             // 同时存活 V24 FX 上限
+    this._v24ParticleBudget = 90;   // V24 专属粒子预算（_v24 标记）
+    this._v24EmitAcc = 0;           // 持续粒子生成累计器（粮车扬尘/烽火浓烟）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -605,6 +620,8 @@ export class CharacterAnimator {
     }
     // ---- V23.0：军事训练/整编/锻造 FX 时间线推进（真实时间，不受慢动作影响）----
     this._updateV23FXs(deltaTime);
+    // ---- V24.0：屯田后勤/外交同盟/要塞烽火 FX 时间线推进（真实时间，不受慢动作影响）----
+    this._updateV24FXs(deltaTime);
     // 士气条淡入淡出推进
     for (const [k, m] of this._moraleBars) {
       m.t += deltaTime;
@@ -7725,6 +7742,662 @@ export class CharacterAnimator {
       ctx.fillStyle = '#ffe9a8';
       ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
       ctx.fillText('阅兵', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V24.0 — 屯田后勤 / 外交同盟 / 要塞烽火 深化动画
+  // ============================================================
+
+  // 推入 V24 点 FX（带上限保护，超出淘汰最老）
+  _pushV24FX(fx) {
+    if (this._v24FXs.length >= this._v24FXCap) this._v24FXs.shift();
+    fx.t = 0;
+    if (fx.seed == null) fx.seed = Math.random() * 1000;
+    this._v24FXs.push(fx);
+  }
+
+  // V24 专属粒子爆发（对象池 + _v24 预算保护）
+  _v24Burst(x, y, count, opts) {
+    for (let i = 0; i < count; i++) {
+      if (this._countTaggedParticles('_v24') >= this._v24ParticleBudget) break;
+      const s = this._getParticle();
+      const a = Math.random() * Math.PI * 2;
+      const sp = (opts.minSpeed || 30) + Math.random() * (opts.spread || 120);
+      Object.assign(s, {
+        type: opts.type || 'v24_spark',
+        _v24: true,
+        x: x + (Math.random() - 0.5) * (opts.rangeX || 10),
+        y: y + (Math.random() - 0.5) * (opts.rangeY || 10),
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - (opts.upBias || 0),
+        gravity: opts.gravity != null ? opts.gravity : 60,
+        drag: opts.drag != null ? opts.drag : 0.4,
+        life: (opts.lifeMin || 0.6) + Math.random() * ((opts.lifeMax || 1.3) - (opts.lifeMin || 0.6)),
+        size: (opts.sizeMin || 1.6) + Math.random() * ((opts.sizeMax || 3.2) - (opts.sizeMin || 1.6)),
+        color: Array.isArray(opts.colors)
+          ? opts.colors[Math.floor(Math.random() * opts.colors.length)]
+          : (opts.color || '#FFD700'),
+        angle: Math.random() * Math.PI * 2,
+        seed: Math.random() * 10
+      });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 屯田·丰收：金黄麦穗飞舞 + 粮车装满 ----
+  playHarvest(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'harvest', x, y, dur: 3.0 });
+    // 金黄麦穗/谷粒向上飞溅
+    this._v24Burst(x, y - 4, 18, {
+      type: 'v24_wheat',
+      colors: ['#e8c040', '#f5d76a', '#d4a828', '#fff0a8'],
+      minSpeed: 24, spread: 90, upBias: 90, gravity: 70,
+      lifeMin: 0.7, lifeMax: 1.5, sizeMin: 1.4, sizeMax: 2.8
+    });
+    // 粮车旁扬起麦壳碎草
+    this._v24Burst(x + 8, y + 4, 6, {
+      colors: ['#c8b060', '#b89a40'],
+      minSpeed: 10, spread: 30, upBias: 20, gravity: 30,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.4, sizeMax: 2.4
+    });
+  }
+
+  // ---- 屯田·粮仓建成：粮仓升起 + 金光 ----
+  playGranaryBuilt(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'granary', x, y, dur: 3.0 });
+    // 建成金光爆发（金/白金碎屑向上）
+    this._v24Burst(x, y - 8, 16, {
+      colors: ['#FFD700', '#FFF3B0', '#ffe9a8', '#ffffff'],
+      minSpeed: 26, spread: 100, upBias: 110, gravity: 70,
+      lifeMin: 0.7, lifeMax: 1.4, sizeMin: 1.5, sizeMax: 3.0
+    });
+    // 奠基尘土（棕）
+    this._v24Burst(x, y + 6, 6, {
+      colors: ['#b89a6a', '#c8b088'],
+      minSpeed: 10, spread: 40, upBias: 12, gravity: 25,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.6, sizeMax: 2.8
+    });
+  }
+
+  // ---- 屯田·粮队运输：牛车沿 (x1,y1)->(x2,y2) 移动 ----
+  playGrainCart(ctx, x1, y1, x2, y2) {
+    x1 = x1 || 0; y1 = y1 || 0; x2 = x2 || 0; y2 = y2 || 0;
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    // 距离越远走得越久，限制在 1.8~4.5 秒之间
+    const dur = Math.max(1.8, Math.min(4.5, dist / 110));
+    this._pushV24FX({ type: 'graincart', x1, y1, x2, y2, dur });
+    // 出发处一阵起步尘土
+    this._v24Burst(x1, y1 + 6, 5, {
+      colors: ['#b89a6a', '#c8b088'],
+      minSpeed: 8, spread: 30, upBias: 8, gravity: 15,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.6, sizeMax: 2.8
+    });
+  }
+
+  // ---- 外交·结盟：两国旗帜并排 + 红绸飘落 ----
+  playAllianceSign(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'alliance', x, y, dur: 3.2 });
+    // 红绸飘落（朱红/绯红长带，缓降）
+    this._v24Burst(x, y - 14, 12, {
+      colors: ['#d82828', '#ff5a4a', '#c01818'],
+      minSpeed: 12, spread: 50, upBias: 30, gravity: 18,
+      drag: 0.1, lifeMin: 1.4, lifeMax: 2.4, sizeMin: 2.0, sizeMax: 3.4
+    });
+    // 结盟金辉
+    this._v24Burst(x, y - 6, 8, {
+      colors: ['#FFD700', '#fff2b0'],
+      minSpeed: 20, spread: 60, upBias: 60, gravity: 40,
+      lifeMin: 0.6, lifeMax: 1.1, sizeMin: 1.4, sizeMax: 2.6
+    });
+  }
+
+  // ---- 外交·签约：竹简展开 + 朱印 ----
+  playTreatySign(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'treaty', x, y, dur: 3.0 });
+    // 朱印落定红屑
+    this._v24Burst(x, y - 4, 8, {
+      colors: ['#d82828', '#b01818', '#ff6a5a'],
+      minSpeed: 16, spread: 40, upBias: 20, gravity: 50,
+      lifeMin: 0.5, lifeMax: 0.9, sizeMin: 1.2, sizeMax: 2.2
+    });
+    // 墨香纸光（淡金）
+    this._v24Burst(x, y - 8, 6, {
+      colors: ['#e8d8a8', '#f5e8b8'],
+      minSpeed: 10, spread: 30, upBias: 30, gravity: 20,
+      drag: 0.15, lifeMin: 0.7, lifeMax: 1.2, sizeMin: 1.3, sizeMax: 2.2
+    });
+  }
+
+  // ---- 外交·附庸称臣：小国使者跪拜 ----
+  playVassalPledge(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'vassal', x, y, dur: 3.0 });
+    // 跪拜掀起尘土（褐黄）
+    this._v24Burst(x, y + 6, 8, {
+      colors: ['#b89a6a', '#c8b088', '#9a8050'],
+      minSpeed: 8, spread: 36, upBias: 10, gravity: 20,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.1, sizeMin: 1.6, sizeMax: 2.8
+    });
+    // 献礼银辉
+    this._v24Burst(x, y - 8, 6, {
+      colors: ['#e8ecf0', '#c8ccd4'],
+      minSpeed: 14, spread: 40, upBias: 50, gravity: 35,
+      lifeMin: 0.5, lifeMax: 0.9, sizeMin: 1.3, sizeMax: 2.4
+    });
+  }
+
+  // ---- 外交·联军出征：两路军旗汇合 ----
+  playJointAttack(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'jointattack', x, y, dur: 3.2 });
+    // 两路行军尘土向中心汇聚
+    this._v24Burst(x, y + 4, 12, {
+      colors: ['#b89a6a', '#c8b088', '#9a8050'],
+      minSpeed: 18, spread: 70, upBias: 10, gravity: 20,
+      drag: 0.2, lifeMin: 0.7, lifeMax: 1.3, sizeMin: 1.8, sizeMax: 3.0
+    });
+    // 军旗汇合金辉
+    this._v24Burst(x, y - 10, 8, {
+      colors: ['#FFD700', '#ffe9a8'],
+      minSpeed: 18, spread: 50, upBias: 50, gravity: 40,
+      lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.4, sizeMax: 2.6
+    });
+  }
+
+  // ---- 要塞·建造：城墙升高 + 塔楼 ----
+  playFortressBuild(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'fortress', x, y, dur: 3.2 });
+    // 砖石碎屑（青灰）
+    this._v24Burst(x, y - 4, 12, {
+      colors: ['#9a9aa2', '#b0b0b8', '#7a7a82'],
+      minSpeed: 22, spread: 80, upBias: 60, gravity: 110,
+      lifeMin: 0.5, lifeMax: 1.0, sizeMin: 1.4, sizeMax: 2.6
+    });
+    // 夯土扬起（棕）
+    this._v24Burst(x, y + 6, 6, {
+      colors: ['#b89a6a', '#c8b088'],
+      minSpeed: 8, spread: 36, upBias: 10, gravity: 20,
+      drag: 0.2, lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.6, sizeMax: 2.6
+    });
+  }
+
+  // ---- 要塞·烽火台：火光升起 + 浓烟 ----
+  playBeaconFire(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushV24FX({ type: 'beacon', x, y, dur: 3.5 });
+    // 初始火光迸射（橙金）
+    this._v24Burst(x, y - 6, 12, {
+      colors: ['#ff8a2a', '#ffd040', '#fff0a0'],
+      minSpeed: 40, spread: 100, upBias: 50, gravity: 120,
+      lifeMin: 0.3, lifeMax: 0.7, sizeMin: 1.2, sizeMax: 2.4
+    });
+    // 初起浓烟（灰黑上升变淡）
+    this._v24Burst(x, y - 10, 5, {
+      type: 'v24_smoke',
+      colors: ['rgba(70,70,76,0.6)'],
+      minSpeed: 6, spread: 14, upBias: 60, gravity: -6,
+      drag: 0.15, lifeMin: 1.2, lifeMax: 2.0, sizeMin: 3, sizeMax: 6
+    });
+  }
+
+  // ---- V24 FX 时间线推进 + 持续粒子生成 ----
+  _updateV24FXs(dt) {
+    if (!dt || dt <= 0) return;
+    for (let i = this._v24FXs.length - 1; i >= 0; i--) {
+      const fx = this._v24FXs[i];
+      fx.t += dt;
+      if (fx.t >= fx.dur) { this._v24FXs.splice(i, 1); continue; }
+      // 粮车：沿路线插值位置，持续扬起车后尘土（受预算保护）
+      if (fx.type === 'graincart') {
+        this._v24EmitAcc += dt;
+        const step = 0.22;
+        if (this._v24EmitAcc >= step) {
+          this._v24EmitAcc = 0;
+          if (this._countTaggedParticles('_v24') < this._v24ParticleBudget) {
+            const p = fx.t / fx.dur;
+            const cx = fx.x1 + (fx.x2 - fx.x1) * p;
+            const cy = fx.y1 + (fx.y2 - fx.y1) * p;
+            this._v24Burst(cx + (Math.random() - 0.5) * 6, cy + 6, 1, {
+              colors: ['#b89a6a', '#c8b088'],
+              minSpeed: 6, spread: 18, upBias: 4, gravity: 10,
+              drag: 0.2, lifeMin: 0.5, lifeMax: 0.8, sizeMin: 1.4, sizeMax: 2.4
+            });
+          }
+        }
+      }
+      // 烽火：持续火光迸射 + 浓烟上升（受预算保护）
+      if (fx.type === 'beacon') {
+        this._v24EmitAcc += dt;
+        const step = 0.16;
+        if (this._v24EmitAcc >= step) {
+          this._v24EmitAcc = 0;
+          if (this._countTaggedParticles('_v24') < this._v24ParticleBudget) {
+            this._v24Burst(fx.x, fx.y - 6, 1, {
+              colors: ['#ff8a2a', '#ffd040'],
+              minSpeed: 30, spread: 70, upBias: 30, gravity: 110,
+              lifeMin: 0.25, lifeMax: 0.5, sizeMin: 1.0, sizeMax: 2.0
+            });
+            this._v24Burst(fx.x + (Math.random() - 0.5) * 4, fx.y - 8, 1, {
+              type: 'v24_smoke',
+              colors: ['rgba(70,70,76,0.6)'],
+              minSpeed: 5, spread: 12, upBias: 55, gravity: -6,
+              drag: 0.15, lifeMin: 1.0, lifeMax: 1.6, sizeMin: 2.6, sizeMax: 5
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // ---- 绘制所有激活的 V24 FX（map.js 每帧调用）----
+  drawV24FX(ctx) {
+    if (!ctx || this._v24FXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._v24FXs) {
+      const p = fx.t / fx.dur;
+      if (p < 0 || p > 1) continue;
+      switch (fx.type) {
+        case 'harvest':     this._drawHarvest(ctx, fx, p); break;
+        case 'granary':     this._drawGranaryBuilt(ctx, fx, p); break;
+        case 'graincart':   this._drawGrainCart(ctx, fx, p); break;
+        case 'alliance':    this._drawAllianceSign(ctx, fx, p); break;
+        case 'treaty':      this._drawTreatySign(ctx, fx, p); break;
+        case 'vassal':      this._drawVassalPledge(ctx, fx, p); break;
+        case 'jointattack': this._drawJointAttack(ctx, fx, p); break;
+        case 'fortress':    this._drawFortressBuild(ctx, fx, p); break;
+        case 'beacon':      this._drawBeaconFire(ctx, fx, p); break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 丰收：饱满粮车 + 环绕麦穗翻涌，麦浪金黄
+  _drawHarvest(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 粮车（木箱满载粮袋）
+    const rock = Math.sin(this.time * 4 + fx.seed) * 0.8;
+    ctx.translate(fx.x, fx.y + rock * 0.3);
+    // 车轮
+    ctx.strokeStyle = '#5a3a22'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(-4, 4, 2.2, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(4, 4, 2.2, 0, Math.PI * 2); ctx.stroke();
+    // 车厢
+    ctx.fillStyle = '#8a5a30';
+    ctx.fillRect(-6, 0, 12, 4);
+    // 满载粮袋（鼓胀）
+    ctx.fillStyle = '#e8d088';
+    ctx.beginPath(); ctx.ellipse(-3, -1.5, 3, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(2, -2, 3, 2.4, 0, 0, Math.PI * 2); ctx.fill();
+    // 车把
+    ctx.strokeStyle = '#5a3a22'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(6, 1); ctx.lineTo(11, 0); ctx.stroke();
+    // 麦穗翻涌（两簇随节拍摇摆）
+    for (let k = -1; k <= 1; k += 2) {
+      const sway = Math.sin(this.time * 5 + fx.seed + k) * 2 * k;
+      const bx = k * 11, by = -4;
+      ctx.strokeStyle = '#c89828'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(bx, by + 4); ctx.lineTo(bx + sway, by - 4); ctx.stroke();
+      ctx.fillStyle = '#e8c040';
+      for (let g = 0; g < 3; g++) {
+        ctx.beginPath();
+        ctx.ellipse(bx + sway, by - 4 - g * 1.8, 1.0, 1.6, k * 0.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // 丰收文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('五谷丰登', 0, -16);
+    }
+    ctx.restore();
+  }
+
+  // 粮仓建成：仓房从地面升起 + 金光笼罩
+  _drawGranaryBuilt(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 升起高度（前 0.4 段 ease-out 升起）
+    const riseP = this._v15EaseOutCubic(Math.min(1, p / 0.4));
+    const lift = (1 - riseP) * 10;
+    ctx.translate(fx.x, fx.y + lift);
+    // 仓房主体（方仓）
+    ctx.fillStyle = '#a87838';
+    ctx.fillRect(-7, -6, 14, 8);
+    ctx.fillStyle = '#8a5a28';
+    ctx.fillRect(-7, 0, 14, 2);
+    // 歇山顶（金顶粮仓）
+    ctx.fillStyle = '#d8a838';
+    ctx.beginPath();
+    ctx.moveTo(-9, -6); ctx.lineTo(0, -12); ctx.lineTo(9, -6);
+    ctx.closePath(); ctx.fill();
+    // 仓门
+    ctx.fillStyle = '#5a3a18';
+    ctx.fillRect(-2, -2, 4, 4);
+    // 金光笼罩（升起后扩散）
+    if (p > 0.35) {
+      const glowP = (p - 0.35) / 0.4;
+      ctx.globalAlpha = fade * (1 - glowP) * 0.6;
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.ellipse(0, -3, 10 + glowP * 16, 6 + glowP * 9, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = fade;
+    }
+    // 建成文字
+    const textP = this._v15EaseOutCubic((p - 0.5) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('粮仓建成', 0, -22);
+    }
+    ctx.restore();
+  }
+
+  // 粮车运输：牛车沿路线插值移动，满载粮袋
+  _drawGrainCart(ctx, fx, p) {
+    const cx = fx.x1 + (fx.x2 - fx.x1) * p;
+    const cy = fx.y1 + (fx.y2 - fx.y1) * p;
+    const walking = Math.sin(this.time * 9 + fx.seed);
+    ctx.save();
+    ctx.translate(cx, cy + walking * 1.0);
+    // 牛身（深棕，横置）
+    ctx.fillStyle = '#6a4a2a';
+    ctx.beginPath(); ctx.ellipse(-2, -1, 5, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+    // 牛头
+    ctx.beginPath(); ctx.arc(3.5, -2, 1.8, 0, Math.PI * 2); ctx.fill();
+    // 牛角
+    ctx.strokeStyle = '#3a2a18'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(3, -3.4); ctx.lineTo(4.2, -4.6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(3.6, -3.4); ctx.lineTo(4.8, -4.2); ctx.stroke();
+    // 车辕 + 车厢
+    ctx.strokeStyle = '#5a3a22'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(-6, 0); ctx.lineTo(-10, 1); ctx.stroke();
+    ctx.fillStyle = '#8a5a30';
+    ctx.fillRect(-13, -2, 5, 3.4);
+    // 粮袋
+    ctx.fillStyle = '#e8d088';
+    ctx.beginPath(); ctx.ellipse(-10.5, -3, 2.6, 1.8, 0, 0, Math.PI * 2); ctx.fill();
+    // 车轮
+    ctx.strokeStyle = '#4a2e18'; ctx.lineWidth = 1.3;
+    ctx.beginPath(); ctx.arc(-11, 1.4, 1.6, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  // 结盟：两国旗帜并排 + 中间红绸结
+  _drawAllianceSign(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 两侧旗杆（竖直升起）
+    for (let k = -1; k <= 1; k += 2) {
+      const px = fx.x + k * 11;
+      const wave = Math.sin(this.time * 5 + fx.seed + k) * 1.6;
+      ctx.strokeStyle = '#c4a55a'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(px, fx.y + 4); ctx.lineTo(px, fx.y - 14); ctx.stroke();
+      // 两国旗帜（左红右蓝，并排）
+      ctx.fillStyle = k < 0 ? '#c82828' : '#2858c8';
+      ctx.beginPath();
+      ctx.moveTo(px, fx.y - 14);
+      ctx.lineTo(px + k * 7 + wave, fx.y - 12 + wave * 0.5);
+      ctx.lineTo(px, fx.y - 9);
+      ctx.closePath(); ctx.fill();
+      // 旗边金边
+      ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(px, fx.y - 14);
+      ctx.lineTo(px + k * 7 + wave, fx.y - 12 + wave * 0.5);
+      ctx.lineTo(px, fx.y - 9);
+      ctx.stroke();
+    }
+    // 中间红绸结（随时间飘动）
+    const knot = Math.sin(this.time * 3 + fx.seed) * 1.2;
+    ctx.fillStyle = '#d82828';
+    ctx.beginPath();
+    ctx.moveTo(fx.x - 3, fx.y - 8);
+    ctx.quadraticCurveTo(fx.x + knot, fx.y - 5, fx.x + 3, fx.y - 8);
+    ctx.lineTo(fx.x + 3, fx.y - 6);
+    ctx.quadraticCurveTo(fx.x + knot, fx.y - 3, fx.x - 3, fx.y - 6);
+    ctx.closePath(); ctx.fill();
+    // 结盟文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('歃血结盟', fx.x, fx.y - 22);
+    }
+    ctx.restore();
+  }
+
+  // 签约：竹简横向展开 + 朱印盖落
+  _drawTreatySign(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 竹简展开宽度（前 0.4 ease-out 展开）
+    const openP = this._v15EaseOutCubic(Math.min(1, p / 0.4));
+    const halfW = 12 * openP;
+    // 简身（竹色横条）
+    ctx.fillStyle = '#d8b878';
+    ctx.fillRect(fx.x - halfW, fx.y - 3, halfW * 2, 6);
+    // 编绳（两道棕线）
+    ctx.strokeStyle = '#8a5a28'; ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(fx.x - halfW, fx.y - 1.5); ctx.lineTo(fx.x + halfW, fx.y - 1.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(fx.x - halfW, fx.y + 1.5); ctx.lineTo(fx.x + halfW, fx.y + 1.5); ctx.stroke();
+    // 简端卷轴
+    ctx.fillStyle = '#b89050';
+    ctx.beginPath(); ctx.ellipse(fx.x - halfW, fx.y, 1.6, 3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(fx.x + halfW, fx.y, 1.6, 3, 0, 0, Math.PI * 2); ctx.fill();
+    // 朱印（展开后从上方落定，右侧）
+    if (p > 0.4) {
+      const stampP = this._v15EaseOutCubic(Math.min(1, (p - 0.4) / 0.25));
+      const stampY = fx.y - 3 - (1 - stampP) * 14;
+      ctx.fillStyle = '#d82828';
+      ctx.beginPath();
+      ctx.arc(fx.x + halfW - 4, stampY, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+      // 印文白痕
+      ctx.strokeStyle = 'rgba(255,240,230,0.8)'; ctx.lineWidth = 0.6;
+      ctx.beginPath(); ctx.moveTo(fx.x + halfW - 5.4, stampY); ctx.lineTo(fx.x + halfW - 2.6, stampY); ctx.stroke();
+    }
+    // 签约文字
+    const textP = this._v15EaseOutCubic((p - 0.55) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('约以朱印', fx.x, fx.y - 18);
+    }
+    ctx.restore();
+  }
+
+  // 附庸称臣：小国使者伏地跪拜 + 献礼托盘
+  _drawVassalPledge(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 跪拜俯身角度（前 0.3 段俯身）
+    const bowP = this._v15EaseInOut(Math.min(1, p / 0.3));
+    const bodyY = fx.y - bowP * 3;
+    // 使者身体（匍匐横卧）
+    ctx.fillStyle = '#4a5a6a';
+    ctx.beginPath(); ctx.ellipse(fx.x - 2, bodyY, 5, 2.4, 0, 0, Math.PI * 2); ctx.fill();
+    // 低头（越俯身头越低）
+    ctx.fillStyle = '#e0c8a0';
+    ctx.beginPath(); ctx.arc(fx.x + 3.5, bodyY - 0.5 + bowP * 2, 1.6, 0, Math.PI * 2); ctx.fill();
+    // 献礼托盘（旁置，银辉）
+    ctx.fillStyle = '#c8ccd4';
+    ctx.beginPath(); ctx.ellipse(fx.x - 8, fx.y + 1, 2.6, 1.2, 0, 0, Math.PI * 2); ctx.fill();
+    // 贡品（金元宝）
+    ctx.fillStyle = '#FFD700';
+    ctx.beginPath(); ctx.ellipse(fx.x - 8, fx.y - 0.6, 1.4, 1.0, 0, 0, Math.PI * 2); ctx.fill();
+    // 称臣文字
+    const textP = this._v15EaseOutCubic((p - 0.4) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('愿为藩属', fx.x, fx.y - 16);
+    }
+    ctx.restore();
+  }
+
+  // 联军出征：两路军旗从左右向中心汇合
+  _drawJointAttack(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 两路旗手向中心收拢（前 0.5 段行进）
+    const marchP = this._v15EaseInOut(Math.min(1, p / 0.5));
+    for (let k = -1; k <= 1; k += 2) {
+      const startX = k * 22;
+      const px = fx.x + startX * (1 - marchP);
+      const bob = Math.abs(Math.sin(this.time * 8 + fx.seed + k)) * 1.4;
+      // 旗手（士兵剪影）
+      ctx.fillStyle = '#3a4a5a';
+      ctx.fillRect(px - 1.4, fx.y - 3 + bob * 0.3, 2.8, 4.4);
+      ctx.fillStyle = '#e0c8a0';
+      ctx.beginPath(); ctx.arc(px, fx.y - 4.2 + bob * 0.3, 1.3, 0, Math.PI * 2); ctx.fill();
+      // 旗杆 + 军旗
+      ctx.strokeStyle = '#c4a55a'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(px, fx.y - 3); ctx.lineTo(px, fx.y - 13 - bob); ctx.stroke();
+      const wave = Math.sin(this.time * 6 + fx.seed + k) * 1.4;
+      ctx.fillStyle = k < 0 ? '#c82828' : '#d8a028';
+      ctx.beginPath();
+      ctx.moveTo(px, fx.y - 13 - bob);
+      ctx.lineTo(px + k * 6 + wave, fx.y - 11 - bob + wave * 0.5);
+      ctx.lineTo(px, fx.y - 9 - bob);
+      ctx.closePath(); ctx.fill();
+    }
+    // 汇合点金光环
+    if (p > 0.5) {
+      const ringP = (p - 0.5) / 0.3;
+      ctx.globalAlpha = fade * (1 - ringP) * 0.8;
+      ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(fx.x, fx.y - 2, 6 + ringP * 18, 0, Math.PI * 2); ctx.stroke();
+      ctx.globalAlpha = fade;
+    }
+    // 出征文字
+    const textP = this._v15EaseOutCubic((p - 0.55) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('联军出征', fx.x, fx.y - 24);
+    }
+    ctx.restore();
+  }
+
+  // 要塞建造：城墙分段升高 + 角塔拔起
+  _drawFortressBuild(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 城墙升高（前 0.5 段分段升起）
+    const riseP = this._v15EaseOutCubic(Math.min(1, p / 0.5));
+    const wallH = 6 * riseP;
+    // 主城墙（青灰，三段垛口）
+    ctx.fillStyle = '#8a8a92';
+    ctx.fillRect(fx.x - 10, fx.y - wallH, 20, wallH);
+    // 垛口（锯齿）
+    ctx.fillStyle = '#70707a';
+    for (let c = -2; c <= 2; c++) {
+      ctx.fillRect(fx.x + c * 4 - 1.4, fx.y - wallH - 2 * riseP, 2.8, 2 * riseP);
+    }
+    // 两侧角塔（后拔起，更高）
+    const towerP = this._v15EaseOutCubic(Math.min(1, Math.max(0, (p - 0.2) / 0.5)));
+    for (let k = -1; k <= 1; k += 2) {
+      const tx = fx.x + k * 11;
+      const th = 9 * towerP;
+      ctx.fillStyle = '#70707a';
+      ctx.fillRect(tx - 2.4, fx.y - th, 4.8, th);
+      // 塔顶（小尖顶）
+      ctx.fillStyle = '#5a5a64';
+      ctx.beginPath();
+      ctx.moveTo(tx - 3.2, fx.y - th);
+      ctx.lineTo(tx, fx.y - th - 3 * towerP);
+      ctx.lineTo(tx + 3.2, fx.y - th);
+      ctx.closePath(); ctx.fill();
+    }
+    // 建造文字
+    const textP = this._v15EaseOutCubic((p - 0.5) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('雄关铸就', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 烽火台：台座火光跳动 + 浓烟柱升腾
+  _drawBeaconFire(ctx, fx, p) {
+    const fade = p < 0.1 ? p / 0.1 : (p > 0.9 ? (1 - p) / 0.1 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 烽火台座（梯形土台）
+    ctx.fillStyle = '#6a5a4a';
+    ctx.beginPath();
+    ctx.moveTo(fx.x - 5, fx.y + 4);
+    ctx.lineTo(fx.x + 5, fx.y + 4);
+    ctx.lineTo(fx.x + 3, fx.y - 2);
+    ctx.lineTo(fx.x - 3, fx.y - 2);
+    ctx.closePath(); ctx.fill();
+    // 火光跳动（双焰摇曳）
+    const flick = 0.7 + 0.3 * Math.sin(this.time * 12 + fx.seed);
+    const flameH = 5 * flick;
+    const grad = ctx.createLinearGradient(fx.x, fx.y - 2, fx.x, fx.y - 2 - flameH * 1.8);
+    grad.addColorStop(0, 'rgba(255,80,20,0.95)');
+    grad.addColorStop(1, 'rgba(255,210,60,0.0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.moveTo(fx.x - 2.6, fx.y - 2);
+    ctx.quadraticCurveTo(fx.x - flick * 1.5, fx.y - 2 - flameH, fx.x, fx.y - 2 - flameH * 1.8);
+    ctx.quadraticCurveTo(fx.x + flick * 1.5, fx.y - 2 - flameH, fx.x + 2.6, fx.y - 2);
+    ctx.closePath(); ctx.fill();
+    // 浓烟柱（循环上升变淡变宽）
+    const smoke = (this.time * 0.4 + fx.seed) % 1;
+    ctx.fillStyle = `rgba(60,60,66,${0.5 * (1 - smoke)})`;
+    ctx.beginPath();
+    ctx.ellipse(fx.x + Math.sin(smoke * 4) * 2, fx.y - 6 - smoke * 16, (1.8 + smoke * 3.2), (1.8 + smoke * 3.2), 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 烽火文字
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffb06a';
+      ctx.shadowColor = '#7a2a00'; ctx.shadowBlur = 5;
+      ctx.fillText('烽火传警', fx.x, fx.y - 26);
     }
     ctx.restore();
   }

@@ -939,8 +939,13 @@ export class Game {
     if (!old) return { ok: false, msg: '该槽位没有装备' };
     gen.equipment[slot] = null;
     this.getPlayerInventory().push(old);
-    this.pushLog(`${gen.name} 卸下了【${getItem(old).name}】`);
-    return { ok: true, msg: `卸下 ${getItem(old).name}` };
+    // BUG修复（game.js V24.0 卸下装备空指针）：原写法 `getItem(old).name`——
+    //   旧存档/模组卸载后，槽位里的旧装备 id 可能已不在装备表中（getItem 返回 undefined），
+    //   此处直接取 .name 抛 TypeError，导致卸下装备中断。修复：取不到装备时降级为「旧装」。
+    const _oldItem = getItem(old);
+    const _oldName = (_oldItem && _oldItem.name) || '旧装';
+    this.pushLog(`${gen.name} 卸下了【${_oldName}】`);
+    return { ok: true, msg: `卸下 ${_oldName}` };
   }
 
   // 战斗胜利缴获：概率抢走败将一件随机装备
@@ -1389,7 +1394,13 @@ export class Game {
       const gen = this.generals.get(eff.recruitGeneral);
       if (gen && gen.faction === null) {
         gen.faction = this.playerFaction; gen.loyalty = 80;
-        gen.location = this.cities.get(FACTIONS[this.playerFaction].capital).id;
+        // BUG修复（game.js V24.0 事件招募武将空指针）：原写法
+        //   `gen.location = this.cities.get(FACTIONS[this.playerFaction].capital).id`
+        //   当玩家都城已被攻破（城市不存在，cities.get 返回 undefined）时，
+        //   直接取 `.id` 抛 TypeError，导致事件结算中断、后续效果全部丢失。
+        //   与 recruitIdleGeneral 同款兜底：都城缺失时 location 置 null。
+        const _cap = this.cities.get(FACTIONS[this.playerFaction] && FACTIONS[this.playerFaction].capital);
+        gen.location = _cap ? _cap.id : null;
         this.pushLog(`${gen.name} 加入我方！`);
       }
     }
@@ -1878,8 +1889,18 @@ export class Game {
     const city = this.cities.get(cityId);
     if (!city) return null;
     if (city.mayor) return this.generals.get(city.mayor);
-    const gen = [...this.generals.values()].find(g => g.location === cityId && g.faction === city.owner && !g.inArmy);
-    return gen || null;
+    // 性能优化（game.js V24.0 findDefenderGeneral 复用分桶索引）：
+    //   基准：原 `[...this.generals.values()].find(...)` 对全部武将做一次全表扫描。
+    //   本函数在每次攻城结算（玩家/AI 路径各一次）被调用，234 将规模下每次 O(N)。
+    //   优化：优先用 runAITurns 入口建好的 `_roundFactionGenerals` 按「守方势力」分桶，
+    //   只在该守方势力武将数组里 find（通常个位数~数十人）；桶缺失（非 AI 回合路径）
+    //   兜底回原全表扫描，行为不变。
+    const _gens = (this._roundFactionGenerals && this._roundFactionGenerals.get(city.owner))
+      || this.generals.values();
+    for (const g of _gens) {
+      if (g.location === cityId && g.faction === city.owner && !g.inArmy) return g;
+    }
+    return null;
   }
 
   disbandArmy(armyId) {
@@ -2207,6 +2228,14 @@ export class Game {
       if (!c.owner) continue;
       (fidCities.get(c.owner) || fidCities.set(c.owner, []).get(c.owner)).push(c);
     }
+    // 性能优化（game.js V24.0 市长→城市 索引）：下野清理时需「按武将 id 找他任市长的城」。
+    //   原实现每个下野武将都全表扫一次 cities（O(C)），一回合多将下野即 O(下野数×C)。
+    //   此处入口一次性建 mayorId→city 索引，下野清理改为 O(1) 直取（本回合内市长
+    //   只在本清理点被置空，不会新增/易主，索引在回合内有效）。
+    const mayorCityIndex = new Map();
+    for (const c of this.cities.values()) {
+      if (c.mayor) mayorCityIndex.set(c.mayor, c);
+    }
     const fidGenerals = new Map();
     for (const g of this.generals.values()) {
       if (!g.faction) continue;
@@ -2387,8 +2416,13 @@ export class Game {
           gen.office = null;
           gen.location = null;
           // (b) 清理以该武将为市长的城市（避免守将悬空指向无主武将）
-          for (const c of this.cities.values()) {
-            if (c.mayor === gen.id) c.mayor = null;
+          // 性能优化（game.js V24.0）：用入口建好的 mayorCityIndex O(1) 直取，替代全表扫描。
+          {
+            const _mayorCity = mayorCityIndex.get(gen.id);
+            if (_mayorCity && _mayorCity.mayor === gen.id) {
+              _mayorCity.mayor = null;
+              mayorCityIndex.delete(gen.id);
+            }
           }
           // (c) 清理外交在途状态（为质/出使中武将下野，不再算本势力人质/使臣）
           gen.onHostage = false;
@@ -2491,9 +2525,16 @@ export class Game {
     // ---- V20.0：人口动态结算（所有势力城市）----
     if (this.populationSystem) {
       try {
-        for (const c of this.cities.values()) {
-          if (c.owner && c.population > 0) {
-            this.populationSystem.updatePopulation(c, this);
+        // 性能优化（game.js V24.0 人口结算遍历）：
+        //   基准：原 `for (const c of this.cities.values())` 遍历全部 132 城（含开局/灭国
+        //   遗留的无主空城），每城再判 `c.owner && c.population>0`。无主空城占比常达
+        //   10~30 座，纯空转。settleTurn 入口已建好 fidCities（只含有主城市分桶），
+        //   此处直接遍历其 values（每座都已确保有主），跳过无主空城与逐城 owner 判断。
+        for (const ownedCities of fidCities.values()) {
+          for (const c of ownedCities) {
+            if (c.population > 0) {
+              this.populationSystem.updatePopulation(c, this);
+            }
           }
         }
       } catch (e) { /* 安全降级：人口系统异常不影响主流程 */ }
