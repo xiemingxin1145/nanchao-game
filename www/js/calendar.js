@@ -53,7 +53,9 @@ export class CalendarSystem {
   applyTermEffects(game) {
     if (!game.playerFaction || !game.factionRes.has(game.playerFaction)) return;
     const eff = this.term.effect || {};
-    const cities = game.getFactionCities(game.playerFaction);
+    // 性能优化（calendar.js V21.0·120城回合结算）：优先复用 settleTurn 入口挂好的
+    //   `_playerCitiesTurnCache`（同一回合、玩家势力分组），避免再全表 filter 一次 120 城。
+    const cities = game._playerCitiesTurnCache || game.getFactionCities(game.playerFaction);
     const res = game.factionRes.get(game.playerFaction);
     const logs = [];
 

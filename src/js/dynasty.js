@@ -225,7 +225,19 @@ export class DynastySystem {
   _acclaimNewEmperor(game, fid) {
     const rec = this.factions[fid];
     if (!rec) return;
-    const newEmp = rec.heirId ? game.getGeneral(rec.heirId) : null;
+    let newEmp = rec.heirId ? game.getGeneral(rec.heirId) : null;
+    // BUG修复（dynasty.js V21.0 无继承人时势力永久无君）：
+    //   优化前：仅当 rec.heirId 有效时才即位；heirId 为 null（开局未立储、
+    //     或太子先于君主战死/为质）时直接静默 return——此后该势力永久没有君主：
+    //     settleTurn 每回合都走「找 role==='君主' 失败 → 调本函数 → 无 heirId 静默」
+    //     的空转，calcLegitimacy 拿不到 emperor 政治加成，getEmperorBag 永久返回空袋，
+    //     该势力的皇帝 buff 永久失效。
+    //   修复：heirId 无效时，回退到 _pickHeir（取本势力非君主武将中政治最高者）
+    //     立为新君；若仍无人可立（势力已无可用武将）才保持静默。
+    if (!newEmp || newEmp.faction !== fid) {
+      this._pickHeir(fid, game.generals);
+      newEmp = rec.heirId ? game.getGeneral(rec.heirId) : null;
+    }
     if (!newEmp) return;
     rec.emperorId = newEmp.id;
     if (newEmp.role !== '君主') newEmp.role = '君主';

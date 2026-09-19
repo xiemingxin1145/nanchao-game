@@ -134,6 +134,8 @@ export class UI {
       <div class="main-menu v13-main-menu">
         <div class="title-screen v13-title-screen">
           <img src="${IMG.titleBg}" class="title-bg kenburns" onerror="this.style.display='none'">
+          <!-- V21.0：丝路情缘主菜单氛围光晕（黄沙驼铃暖光，纯 CSS，无 JS 粒子负担） -->
+          <div class="v21-menu-haze"></div>
           <!-- V20.0：盛世华章主菜单氛围光晕（呼吸渐变，纯 CSS 动画，无 JS 粒子负担） -->
           <div class="v20-menu-haze"></div>
           <!-- V13.0：Canvas 古风粒子背景（花瓣/墨点/星光），全屏层 -->
@@ -158,7 +160,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge">V20.0 · 盛世华章版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge">V21.0 · 丝路情缘版</div>
         </div>
       </div>
     `;
@@ -1042,6 +1044,8 @@ export class UI {
             <button class="btn-small" id="btn-religion">宗教</button>
             <button class="btn-small" id="btn-recruit">招募</button>
             <button class="btn-small v20-pop-btn" id="btn-v20-pop" title="V20.0 户口总览：各城人口 / 增长 / 迁移 / 征兵比例">户口</button>
+            <button class="btn-small v21-silk-btn" id="btn-v21-silk" title="V21.0 丝绸之路：商路 / 商队 / 驿站 / 节点图">丝路</button>
+            <button class="btn-small v21-family-btn" id="btn-v21-family" title="V21.0 家族联姻：家族树 / 联姻 / 声望 / 继承">家族</button>
             <button class="btn-small" id="btn-menu">菜单</button>
           </div>
         </div>
@@ -1096,6 +1100,11 @@ export class UI {
     // V20.0：户口总览入口
     const v20PopBtn = document.getElementById('btn-v20-pop');
     if (v20PopBtn) v20PopBtn.onclick = () => this.showPopulationPanelV20();
+    // V21.0：丝绸之路 / 家族联姻 入口
+    const v21SilkBtn = document.getElementById('btn-v21-silk');
+    if (v21SilkBtn) v21SilkBtn.onclick = () => this.showSilkRoadPanelV21();
+    const v21FamBtn = document.getElementById('btn-v21-family');
+    if (v21FamBtn) v21FamBtn.onclick = () => this.showFamilyPanelV21();
     document.getElementById('btn-menu').onclick = () => this.showSettings();
     document.getElementById('btn-tech').onclick = () => this.showTechTree();
     // V19.0：文化面板入口
@@ -1174,6 +1183,8 @@ export class UI {
   _updateMapMarker() {
     let marker = document.getElementById('map-pulse-marker');
     const container = document.getElementById('map-container');
+    // V21.0：丝路节点标记常驻渲染（不依赖选中城市），置于早返回之前
+    try { this._v21RenderSilkMarkers(); } catch (e) {}
     if (!this.game || !this.map || !container) { if (marker) marker.remove(); return; }
     if (!this.game.selectedCity) { if (marker) marker.remove(); return; }
     const city = this.game.cities.get(this.game.selectedCity);
@@ -1188,6 +1199,546 @@ export class UI {
     marker.style.left = pos.x + 'px';
     marker.style.top = pos.y + 'px';
   }
+
+  // ============================================================
+  // ============== V21.0「丝路情缘版」UI 精修 ==================
+  //  约定：新类名一律 v21- 前缀；所有 game/trade/harem/diplomacy API
+  //        调用带 typeof === 'function' / 存在性守卫，优雅降级；
+  //        地图覆盖层节点 ≤12 个，纯 CSS/SVG 动画，不新增 Canvas 粒子循环。
+  // ============================================================
+
+  // ---------- V21 通用工具 ----------
+  _v21Num(v, d = 0) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+  _v21Clamp(v, lo = 0, hi = 100) { return Math.max(lo, Math.min(hi, v)); }
+  _v21Esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  // ---------- V21 古风弹窗骨架 ----------
+  _v21ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v21-overlay';
+    modal.innerHTML = `
+      <div class="modal v21-modal v21-scroll ${extraCls}">
+        <div class="v21-corner tl"></div><div class="v21-corner tr"></div>
+        <div class="v21-corner bl"></div><div class="v21-corner br"></div>
+        <h2 class="modal-title v21-title">${titleHtml}</h2>
+        <div class="v21-body">${bodyHtml}</div>
+        <button class="btn-ancient v21-close" onclick="this.closest('.v21-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') {
+      try { this.audio.playPanelOpen(); } catch (e) {}
+    }
+    return modal;
+  }
+
+  // ---------- V21：安全读取贸易系统 ----------
+  _v21Trade() {
+    const g = this.game;
+    if (!g || !g.tradeSystem) return { sys: null, info: { longRoutes: [], caravans: [], agreementMult: 0 } };
+    let info = { longRoutes: [], caravans: [], agreementMult: 0 };
+    try {
+      if (typeof g.getTradeInfo === 'function') info = g.getTradeInfo();
+    } catch (e) { info = { longRoutes: [], caravans: [], agreementMult: 0 }; }
+    return { sys: g.tradeSystem, info };
+  }
+
+  // ---------- V21：丝路固定节点（长安/洛阳/姑臧/广州） ----------
+  _v21SilkNodes() {
+    return [
+      { id: 'changan', name: '长安', route: '陆上丝路' },
+      { id: 'luoyang', name: '洛阳', route: '陆上丝路' },
+      { id: 'guzang',  name: '姑臧', route: '陆上丝路' },
+      { id: 'guangzhou', name: '广州', route: '海上丝路' }
+    ];
+  }
+
+  // ---------- V21：丝路安全度（由我方驿站等级派生，0~100） ----------
+  _v21SilkSafety(cities) {
+    let lv = 0;
+    for (const c of (cities || [])) {
+      lv += (c && c.buildings && (c.buildings['v14_post_station'] || 0)) || 0;
+    }
+    // 5 级驿站拉满安全；基础被劫 15% → 驿站每级 -2.5%
+    const safety = this._v21Clamp(55 + lv * 9, 20, 98);
+    const plunderRisk = this._v21Clamp(Math.round((15 - lv * 2.5) * 10) / 10, 3, 15);
+    return { level: lv, safety, plunderRisk };
+  }
+
+  // ============================================================
+  // 一、丝绸之路主面板
+  // ============================================================
+  showSilkRoadPanelV21() {
+    if (!this.game) { this.toast('开始游戏后可见丝路'); return; }
+    const g = this.game;
+    const me = g.playerFaction;
+    let cities = [];
+    try { cities = g.getFactionCities(me) || []; } catch (e) { cities = []; }
+    const { sys, info } = this._v21Trade();
+    const safety = this._v21SilkSafety(cities);
+
+    // --- 当前丝路路线 / 状态 ---
+    const owned = new Set(cities.map(c => c.id));
+    const routeDefs = [
+      { id: 'silkroad_land', name: '陆上丝绸之路', need: ['changan', 'luoyang', 'guzang'],
+        desc: '自长安洛阳经河西姑臧出西域，商旅络绎。', income: 1200 },
+      { id: 'maritime', name: '海上丝绸之路', need: ['guangzhou'],
+        desc: '自广州扬帆，经南海抵天竺波斯，明珠犀象辐辏。', income: 900 },
+      { id: 'grand_bazaar', name: '建康互市', need: ['jiankang', 'kuaiji'],
+        desc: '秦淮两岸廛闬扑地，商贩并列。', income: 500 }
+    ];
+    const routeHtml = routeDefs.map(r => {
+      const active = r.need.every(cid => owned.has(cid));
+      const missing = r.need.filter(cid => !owned.has(cid));
+      const nodeNames = { changan: '长安', luoyang: '洛阳', guzang: '姑臧', guangzhou: '广州', jiankang: '建康', kuaiji: '会稽' };
+      return `<div class="v21-route ${active ? 'v21-route-on' : 'v21-route-off'}">
+        <div class="v21-route-head">
+          <span class="v21-route-dot"></span>
+          <b>${this._v21Esc(r.name)}</b>
+          <span class="v21-route-state">${active ? '● 开通中' : '○ 未开通'}</span>
+        </div>
+        <div class="v21-route-desc">${this._v21Esc(r.desc)}</div>
+        <div class="v21-route-foot">
+          ${active
+            ? `<span class="v21-route-income" style="color:#6FCF6F">岁入 +${r.income}/回合</span>`
+            : `<span class="v21-route-miss">尚缺节点：${missing.map(m => nodeNames[m] || m).join('、')}</span>`}
+        </div>
+      </div>`;
+    }).join('');
+
+    // --- 丝路利润总览 ---
+    const longIncome = (info.longRoutes || []).reduce((s, r) => s + this._v21Num(r.income), 0);
+    const agreementMult = this._v21Num(info.agreementMult);
+    const estProfit = Math.round(longIncome * (1 + agreementMult));
+
+    // --- 商队管理：在途商队 ---
+    const cavs = (info.caravans || []).filter(c => true);
+    const cavHtml = cavs.length ? cavs.map(cav =>
+      `<div class="v21-cav-row">
+        <span class="v21-cav-goods">🐫 ${this._v21Esc(cav.goodsName || '货物')}</span>
+        <span class="v21-cav-path">${this._v21Esc(cav.from)} → ${this._v21Esc(cav.to)}</span>
+        <span class="v21-cav-eta">剩${this._v21Num(cav.turnsLeft)}回合</span>
+        <b class="v21-cav-profit">利 ${this._v21Num(cav.estProfit)}</b>
+      </div>`).join('')
+      : '<p class="v21-empty">暂无在途商队。遣使一队，货通南北。</p>';
+
+    // --- 商队派遣（起讫下拉） ---
+    const cityOpts = cities.map(c => `<option value="${c.id}">${this._v21Esc(c.name)}</option>`).join('');
+    const dispatchHtml = cities.length >= 2 ? `
+      <div class="v21-dispatch">
+        <select class="v21-select" id="v21-cav-from">${cityOpts}</select>
+        <span class="v21-arrow">→</span>
+        <select class="v21-select" id="v21-cav-to">${cityOpts.split('</option>').slice(1).join('</option>')}</select>
+        <button class="btn-small v21-silk-btn" onclick="__ui_._v21DispatchCaravan()">🐫 遣使商队</button>
+      </div>
+      <p class="v21-hint">耗 800金 / 400粮，3 回合抵达；当前途中被劫概率约 ${safety.plunderRisk}%。</p>
+    ` : '<p class="v21-empty">需据有 2 座以上城邑方可遣使商队。</p>';
+
+    // --- 驿站建造（我方城市驿站等级） ---
+    const stationRows = cities.map(c => {
+      const lv = (c.buildings && (c.buildings['v14_post_station'] || 0)) || 0;
+      const full = lv >= 5;
+      return `<div class="v21-station-row">
+        <span class="v21-station-city">${this._v21Esc(c.name)}</span>
+        <span class="v21-station-lv">${'驿'.repeat(lv) || '<i>未建</i>'} <small>Lv.${lv}/5</small></span>
+        ${full
+          ? '<b class="v21-station-full">已满级</b>'
+          : `<button class="btn-small" onclick="__ui_._v21BuildStation('${c.id}')">营建驿站</button>`}
+      </div>`;
+    }).join('');
+
+    // --- 丝路节点图 ---
+    const mapSvg = this._v21SilkRouteMapSVG(owned);
+
+    const body = `
+      <div class="v21-silk-summary">
+        <div class="v21-stat"><span>丝路岁入</span><b style="color:#FFD54F">+${estProfit}</b></div>
+        <div class="v21-stat"><span>通商加成</span><b>+${Math.round(agreementMult * 100)}%</b></div>
+        <div class="v21-stat"><span>丝路安全度</span><b style="color:#6FCF6F">${Math.round(safety.safety)}</b></div>
+        <div class="v21-stat"><span>在途商队</span><b>${cavs.length}</b></div>
+      </div>
+      <div class="v21-section">
+        <div class="v21-sec-title">◆ 当前丝路路线</div>
+        ${mapSvg}
+        <div class="v21-route-list">${routeHtml}</div>
+      </div>
+      <div class="v21-section">
+        <div class="v21-sec-title">◆ 商队管理</div>
+        <div class="v21-cav-list">${cavHtml}</div>
+        <div class="v21-sec-title v21-sub2">遣使商队</div>
+        ${dispatchHtml}
+      </div>
+      <div class="v21-section">
+        <div class="v21-sec-title">◆ 驿站营建（增益丝路安全度）</div>
+        <div class="v21-station-list">${stationRows}</div>
+      </div>
+    `;
+    this._v21ModalShell('🐫 丝绸之路 · 货通天下', body, 'v21-wide');
+  }
+
+  // ---------- V21：丝路节点示意图（SVG，固定节点坐标） ----------
+  _v21SilkRouteMapSVG(owned) {
+    // 以相对坐标摆放四节点；陆上：长安-洛阳-姑臧；海上：广州单港
+    const nodes = {
+      changan:  { x: 30, y: 55, name: '长安' },
+      luoyang:  { x: 52, y: 40, name: '洛阳' },
+      guzang:   { x: 14, y: 32, name: '姑臧' },
+      guangzhou:{ x: 62, y: 82, name: '广州' }
+    };
+    const segs = [['changan', 'luoyang'], ['luoyang', 'guzang']];
+    const lines = segs.map(([a, b]) => {
+      const A = nodes[a], B = nodes[b];
+      const on = owned.has(a) && owned.has(b);
+      return `<line x1="${A.x}" y1="${A.y}" x2="${B.x}" y2="${B.y}" class="v21-silk-line ${on ? 'on' : ''}"/>`;
+    }).join('');
+    const dots = Object.entries(nodes).map(([id, p]) => {
+      const on = owned.has(id);
+      return `<g>
+        <circle cx="${p.x}" cy="${p.y}" r="${on ? 3.2 : 2.2}" class="v21-silk-node ${on ? 'on' : ''}"/>
+        ${on ? `<circle cx="${p.x}" cy="${p.y}" r="6" class="v21-silk-pulse"/>` : ''}
+        <text x="${p.x}" y="${p.y - 6}" class="v21-silk-city ${on ? 'on' : ''}">${p.name}</text>
+      </g>`;
+    }).join('');
+    return `<div class="v21-silk-map-wrap">
+      <svg class="v21-silk-map" viewBox="0 0 80 100" preserveAspectRatio="xMidYMid meet">${lines}${dots}</svg>
+      <div class="v21-silk-legend">
+        <span><i class="v21-lg on"></i>我方据有</span>
+        <span><i class="v21-lg off"></i>尚未据有</span>
+      </div>
+    </div>`;
+  }
+
+  // ---------- V21：遣使商队 ----------
+  _v21DispatchCaravan() {
+    const fromEl = document.getElementById('v21-cav-from');
+    const toEl = document.getElementById('v21-cav-to');
+    if (!fromEl || !toEl) { this.toast('请选择起讫城市'); return; }
+    const g = this.game;
+    const me = g.playerFaction;
+    let r = { ok: false, msg: '贸易系统未就绪' };
+    try {
+      if (typeof g.dispatchCaravan === 'function') r = g.dispatchCaravan(fromEl.value, toEl.value);
+      else if (g.tradeSystem && typeof g.tradeSystem.dispatchCaravan === 'function')
+        r = g.tradeSystem.dispatchCaravan(g, me, fromEl.value, toEl.value);
+      else r = { ok: false, msg: '当前版本暂不支持遣使商队' };
+    } catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.toast(r.msg);
+    if (r.ok && this.audio && typeof this.audio.playCoin === 'function') { try { this.audio.playCoin(); } catch (e) {} }
+    document.querySelectorAll('.v21-overlay').forEach(m => m.remove());
+    if (g.state === 'playing') this.showSilkRoadPanelV21();
+    this.refreshUI && this.refreshUI();
+  }
+
+  // ---------- V21：营建驿站 ----------
+  _v21BuildStation(cityId) {
+    const g = this.game;
+    const city = (g && g.cities) ? g.cities.get(cityId) : null;
+    if (!city) return;
+    if (city.owner !== g.playerFaction) { this.toast('非我方城邑，无法营建'); return; }
+    let r = { ok: false, msg: '建造接口未就绪' };
+    try {
+      if (typeof g.buildBuilding === 'function') r = g.buildBuilding(cityId, 'v14_post_station');
+      else if (typeof g.cityBuild === 'function') r = g.cityBuild(cityId, 'v14_post_station');
+      else r = { ok: false, msg: '当前版本暂不支持营建驿站' };
+    } catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.toast(r.msg);
+    if (r.ok && this.audio && typeof this.audio.playCoin === 'function') { try { this.audio.playCoin(); } catch (e) {} }
+    document.querySelectorAll('.v21-overlay').forEach(m => m.remove());
+    if (g.state === 'playing') {
+      this.showSilkRoadPanelV21();
+      if (this.game.selectedCity === cityId) this.showCityPanel(city);
+    }
+    this.refreshUI && this.refreshUI();
+  }
+
+  // ---------- V21：地图上绘制丝路节点标记（覆盖层，纯 CSS） ----------
+  _v21RenderSilkMarkers() {
+    const g = this.game;
+    const container = document.getElementById('map-container');
+    if (!g || !this.map || !this.map.isoToScreen || !container) return;
+    let layer = document.getElementById('v21-silk-overlay');
+    if (!layer) {
+      layer = document.createElement('div');
+      layer.id = 'v21-silk-overlay';
+      layer.className = 'v21-silk-overlay';
+      container.appendChild(layer);
+    }
+    let cities = [];
+    try { cities = g.getFactionCities(g.playerFaction) || []; } catch (e) { cities = []; }
+    const owned = new Set(cities.map(c => c.id));
+    const nodes = this._v21SilkNodes().filter(n => owned.has(n.id));
+    if (!nodes.length) { layer.innerHTML = ''; return; }
+    // 仅绘制我方据有的节点（≤4 个，性能无负担）
+    const marks = nodes.map(n => {
+      const c = g.cities.get(n.id);
+      if (!c || typeof c.isoX !== 'number') return '';
+      const pos = this.map.isoToScreen(c.isoX, c.isoY);
+      return `<div class="v21-silk-mark" style="left:${pos.x}px;top:${pos.y - 14}px" title="丝路节点 · ${n.name}（${n.route}）">🐫</div>`;
+    }).join('');
+    layer.innerHTML = marks;
+  }
+
+  // ============================================================
+  // 二、家族联姻 UI（家族树 / 联姻 / 声望 / 继承）
+  // ============================================================
+
+  // ---------- V21：读取我方皇室/家族数据 ----------
+  _v21FamilyData() {
+    const g = this.game;
+    const me = g.playerFaction;
+    let emperor = null, dynastyRec = null, rec = null, leg = 0;
+    try {
+      if (g.dynastySystem && typeof g.dynastySystem.get === 'function') {
+        dynastyRec = g.dynastySystem.get(me);
+        if (dynastyRec && dynastyRec.emperorId && typeof g.getGeneral === 'function') {
+          emperor = g.getGeneral(dynastyRec.emperorId);
+        }
+      }
+    } catch (e) { emperor = null; }
+    try { if (g.dynastySystem && typeof g.dynastySystem.calcLegitimacy === 'function') leg = g.dynastySystem.calcLegitimacy(g, me); } catch (e) { leg = 0; }
+    try { if (g.harem && typeof g.harem.get === 'function') rec = g.harem.get(me); } catch (e) { rec = null; }
+    return { g, me, emperor, dynastyRec, rec, leg };
+  }
+
+  // ---------- V21：家族声望（纯前端派生，0~100） ----------
+  _v21FamilyReputation() {
+    const { rec, leg, g, me } = this._v21FamilyData();
+    let score = 45;
+    // 后妃位分（皇后/贵妃加成厚）
+    if (rec && Array.isArray(rec.consorts)) {
+      for (const c of rec.consorts) {
+        if (c.rank === 'empress') score += 12;
+        else if (c.rank === 'guifei' || c.rank === 'noble') score += 6;
+        else score += 2;
+      }
+    }
+    // 子嗣
+    if (rec && Array.isArray(rec.children)) {
+      const males = rec.children.filter(c => c.gender === 'male');
+      score += Math.min(15, males.length * 3);
+      // 已立储
+      if (rec.heirId) score += 10;
+    }
+    //  active 联姻数量
+    let marr = 0;
+    try {
+      if (Array.isArray(g.marriages)) {
+        marr = g.marriages.filter(m => m.active && (m.faction1 === me || m.faction2 === me)).length;
+      }
+    } catch (e) { marr = 0; }
+    score += Math.min(15, marr * 5);
+    // 正统微调
+    score += this._v21Clamp(this._v21Num(leg) / 20, -8, 12);
+    return { score: this._v21Clamp(Math.round(score)), marriages: marr };
+  }
+
+  // ---------- V21：继承顺序 ----------
+  _v21InheritanceOrder() {
+    const { rec } = this._v21FamilyData();
+    if (!rec || !Array.isArray(rec.children)) return { heir: null, order: [] };
+    const kids = rec.children.slice();
+    // 太子居首；其余皇子按成年→年龄降序；皇女列后
+    const heir = kids.find(c => c.id === rec.heirId) || null;
+    const rest = kids.filter(c => c.id !== rec.heirId).sort((a, b) => {
+      if (a.gender !== b.gender) return a.gender === 'male' ? -1 : 1;
+      return this._v21Num(b.age) - this._v21Num(a.age);
+    });
+    const order = (heir ? [heir] : []).concat(rest).map((c, i) => ({
+      rank: i + 1,
+      id: c.id,
+      name: c.name,
+      gender: c.gender,
+      age: this._v21Num(c.age),
+      isHeir: rec.heirId === c.id,
+      adult: c.gender === 'male' && this._v21Num(c.age) >= 15
+    }));
+    return { heir, order };
+  }
+
+  // ---------- V21：家族树示意图（SVG） ----------
+  _v21FamilyTreeSVG() {
+    const { emperor, rec } = this._v21FamilyData();
+    if (!rec) return '<p class="v21-empty">皇室记录未初始化。</p>';
+    const empName = emperor ? emperor.name : '君主';
+    // 皇后/妃嫔（母）
+    const mothers = (rec.consorts || []).slice(0, 4);
+    const mY = 34;
+    const motherHtml = mothers.map((m, i) => {
+      const x = 18 + i * 20;
+      const star = m.rank === 'empress' ? '★' : '';
+      return `<g><circle cx="${x}" cy="${mY}" r="4.5" class="v21-fm-mother"/>
+        <text x="${x}" y="${mY + 15}" class="v21-fm-label">${this._v21Esc(m.name)}${star}</text>
+        <text x="${x}" y="${mY + 26}" class="v21-fm-sub">${this._v21Esc(m.rankName || '')}</text></g>`;
+    }).join('');
+    // 子女
+    const kids = (rec.children || []).slice(0, 10);
+    const kY = 78;
+    const kidHtml = kids.map((k, i) => {
+      const x = 12 + (i % 5) * 19;
+      const y = kY + Math.floor(i / 5) * 26;
+      const male = k.gender === 'male';
+      const isHeir = rec.heirId === k.id;
+      const married = k.marriedTo ? '💍' : '';
+      return `<g>
+        <circle cx="${x}" cy="${y}" r="4.5" class="v21-fm-kid ${male ? 'm' : 'f'} ${isHeir ? 'heir' : ''}"/>
+        <text x="${x}" y="${y + 13}" class="v21-fm-label ${isHeir ? 'heir' : ''}">${this._v21Esc(k.name)}${isHeir ? '★' : ''}${married}</text>
+      </g>`;
+    }).join('');
+    // 连接线（君主 → 母亲 → 子女，简化为竖线）
+    return `<div class="v21-fm-tree-wrap">
+      <svg class="v21-fm-tree" viewBox="0 0 96 118" preserveAspectRatio="xMidYMid meet">
+        <line x1="48" y1="10" x2="48" y2="${mY - 5}" class="v21-fm-link"/>
+        <g><circle cx="48" cy="10" r="6" class="v21-fm-emperor"/>
+          <text x="48" y="12" class="v21-fm-etxt">帝</text></g>
+        <text x="48" y="-2" class="v21-fm-title">${this._v21Esc(empName)}</text>
+        ${motherHtml}
+        ${kidHtml || `<text x="48" y="82" class="v21-fm-empty">暂无子嗣</text>`}
+      </svg>
+      <div class="v21-fm-legend">
+        <span><i class="v21-lg m"></i>皇子</span>
+        <span><i class="v21-lg f"></i>皇女</span>
+        <span><i class="v21-lg heir"></i>太子</span>
+      </div>
+    </div>`;
+  }
+
+  // ============================================================
+  // 三、家族主面板
+  // ============================================================
+  showFamilyPanelV21() {
+    if (!this.game) { this.toast('开始游戏后可见家族'); return; }
+    const { g, me, emperor, rec, leg } = this._v21FamilyData();
+    const rep = this._v21FamilyReputation();
+    const inh = this._v21InheritanceOrder();
+    const famName = emperor ? emperor.name : '君主';
+
+    // --- 家族声望条 ---
+    const repPct = rep.score;
+    const repColor = repPct >= 75 ? '#6FCF6F' : repPct >= 55 ? '#e6c25a' : '#e08a5a';
+
+    // --- 家族树 ---
+    const treeSvg = this._v21FamilyTreeSVG();
+
+    // --- 继承面板 ---
+    const orderHtml = inh.order.length ? inh.order.map(o =>
+      `<div class="v21-inh-row ${o.isHeir ? 'v21-inh-heir' : ''}">
+        <span class="v21-inh-rank">${o.isHeir ? '★' : o.rank}</span>
+        <b>${o.gender === 'male' ? '👦' : '👧'} ${this._v21Esc(o.name)}</b>
+        <span class="v21-inh-tag">${o.gender === 'male' ? '皇子' : '皇女'} · ${o.age}岁</span>
+        ${o.adult ? '<span class="v21-inh-ready">可立储</span>' : ''}
+        ${o.isHeir ? '<span class="v21-inh-cur">现任太子</span>' :
+          (o.gender === 'male' && o.age >= 15 ? `<button class="btn-small" onclick="__ui_._v21AppointHeir('${o.id}')">立为太子</button>` : '')}
+      </div>`).join('')
+      : '<p class="v21-empty">尚无子嗣可承大统，宜广纳后妃、绵延皇嗣。</p>';
+
+    // --- 联姻对象列表 ---
+    let allies = [];
+    try {
+      if (g.diplomacy && typeof g.diplomacy.getRelation === 'function') {
+        allies = Object.values(FACTIONS).filter(f => f.id !== me).map(f => {
+          let rel = { relation: 0 };
+          try { rel = g.diplomacy.getRelation(me, f.id) || { relation: 0 }; } catch (e) {}
+          let has = false, partner = null;
+          try { if (g.diplomacy.getActiveMarriage) has = !!g.diplomacy.getActiveMarriage(g, me, f.id); } catch (e) {}
+          try { if (g.diplomacy.pickMarriagePartner) partner = g.diplomacy.pickMarriagePartner(g, f.id); } catch (e) {}
+          let cities = 0;
+          try { cities = (g.getFactionCities(f.id) || []).length; } catch (e) {}
+          return { f, rel: this._v21Num(rel.relation), has, partner, cities };
+        }).filter(x => x.cities > 0).sort((a, b) => b.rel - a.rel);
+      }
+    } catch (e) { allies = []; }
+
+    const marryRows = allies.map(a => {
+      const canPropose = a.rel > 0 && !a.has;
+      const partnerName = a.partner ? a.partner.name : '（暂无未婚适龄）';
+      const relColor = a.rel > 20 ? '#6FCF6F' : a.rel < -20 ? '#e05555' : '#c8b890';
+      return `<div class="v21-marry-row" style="--v21-fc:${a.f.color}">
+        <div class="v21-marry-head">
+          <i class="v21-dot" style="background:${a.f.color}"></i>
+          <b>${this._v21Esc(a.f.name)}</b>
+          <span class="v21-marry-rel" style="color:${relColor}">关系 ${a.rel}</span>
+          ${a.has ? '<span class="v21-marry-ok">已联姻</span>' : ''}
+        </div>
+        <div class="v21-marry-body">
+          <span>可联姻武将：<b>${this._v21Esc(partnerName)}</b></span>
+          <span class="v21-marry-eff">成婚后：关系+30 · 互不攻伐 · 通商厚利(经济+10%)</span>
+        </div>
+        ${a.has ? '' : `<button class="btn-small v21-marry-btn" ${canPropose ? '' : 'disabled'}
+          onclick="__ui_._v21ProposeMarriage('${a.f.id}')">${canPropose ? '提亲联姻' : (a.rel <= 0 ? '关系未睦' : '无适龄')}</button>`}
+      </div>`;
+    }).join('') || '<p class="v21-empty">无在世可联姻势力。</p>';
+
+    const body = `
+      <div class="v21-fam-summary">
+        <div class="v21-stat"><span>君主</span><b>${this._v21Esc(famName)}</b></div>
+        <div class="v21-stat"><span>后妃</span><b>${(rec && rec.consorts || []).length} 人</b></div>
+        <div class="v21-stat"><span>子嗣</span><b>${(rec && rec.children || []).length} 人</b></div>
+        <div class="v21-stat"><span>正统</span><b>${Math.round(this._v21Num(leg))}</b></div>
+        <div class="v21-stat"><span>结亲</span><b>${rep.marriages} 门</b></div>
+      </div>
+      <div class="v21-rep-bar">
+        <div class="v21-rep-head"><span>家族声望</span><b style="color:${repColor}">${rep.score}</b></div>
+        <div class="v21-rep-track"><span class="v21-rep-fill" style="width:${repPct}%;background:${repColor}"></span></div>
+      </div>
+      <div class="v21-section">
+        <div class="v21-sec-title">◆ 皇室家族树</div>
+        ${treeSvg}
+      </div>
+      <div class="v21-section">
+        <div class="v21-sec-title">◆ 继承顺序</div>
+        <div class="v21-inh-list">${orderHtml}</div>
+      </div>
+      <div class="v21-section">
+        <div class="v21-sec-title">◆ 联姻对象（永结秦晋之好）</div>
+        <div class="v21-marry-list">${marryRows}</div>
+      </div>
+    `;
+    this._v21ModalShell('👑 家族联姻 · 两姓之好', body, 'v21-wide');
+  }
+
+  // ---------- V21：提亲联姻 ----------
+  _v21ProposeMarriage(targetFid) {
+    const g = this.game;
+    const me = g.playerFaction;
+    // 取我方一名未婚武将作为提亲方
+    let myGeneral = null;
+    try {
+      const gens = (typeof g.getFactionGenerals === 'function') ? g.getFactionGenerals(me) : [];
+      myGeneral = gens.find(x => !x.married && !x.inArmy && x.role === '君主')
+        || gens.find(x => !x.married && !x.inArmy) || null;
+    } catch (e) { myGeneral = null; }
+    if (!myGeneral) { this.toast('我方暂无未婚适龄武将可供联姻'); return; }
+    let r = { ok: false, msg: '联姻系统未就绪' };
+    try {
+      if (g.diplomacy && typeof g.diplomacy.proposeMarriage === 'function')
+        r = g.diplomacy.proposeMarriage(g, me, targetFid, myGeneral.id);
+      else r = { ok: false, msg: '当前版本暂不支持联姻' };
+    } catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.toast(r.msg);
+    if (r.ok && this.audio && typeof this.audio.playTitleUnlock === 'function') { try { this.audio.playTitleUnlock(); } catch (e) {} }
+    document.querySelectorAll('.v21-overlay').forEach(m => m.remove());
+    if (g.state === 'playing') this.showFamilyPanelV21();
+    this.refreshUI && this.refreshUI();
+  }
+
+  // ---------- V21：立为太子 ----------
+  _v21AppointHeir(childId) {
+    const g = this.game;
+    let r = { ok: false, msg: '后宫系统未就绪' };
+    try {
+      if (g.harem && typeof g.harem.appointHeir === 'function')
+        r = g.harem.appointHeir(g.playerFaction, childId);
+    } catch (e) { r = { ok: false, msg: String(e.message || e) }; }
+    this.toast(r.msg);
+    if (r.ok && this.audio && typeof this.audio.playTitleUnlock === 'function') { try { this.audio.playTitleUnlock(); } catch (e) {} }
+    document.querySelectorAll('.v21-overlay').forEach(m => m.remove());
+    if (g.state === 'playing') this.showFamilyPanelV21();
+    this.refreshUI && this.refreshUI();
+  }
+
+
 
   // ---------- 城市面板 ----------
   showCityPanel(city) {
@@ -1233,6 +1784,7 @@ export class UI {
           <button class="btn-small" onclick="__ui_.showInternalAffairs('${city.id}')">🏛 内政</button>
           <button class="btn-small" onclick="__ui_.showUnitAdvance('${city.id}')">🎖 进阶</button>
           <button class="btn-small v20-pop-btn" onclick="__ui_.showPopulationPanelV20()">📊 户口</button>
+          <button class="btn-small v21-silk-btn" onclick="__ui_._v21BuildStation('${city.id}')" title="驿传通达：每级移动力/补给+5%，并增益丝路安全度">🐫 驿站</button>
           ${availableGenerals.length > 0 ? `
             <select id="mayor-select" class="select-small">
               ${availableGenerals.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}

@@ -5337,3 +5337,237 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
   .v20-pop-cell b { font-size: 13px; }
   .v20-resp-btn { flex: 1; }
 }
+
+/* ============================================================
+   V21.0「丝路情缘版」UI 精修 — 丝绸之路 / 家族联姻 / 通用提升
+   全部使用 v21- 前缀，独立 CSS 变量与 keyframes
+   ============================================================ */
+:root {
+  --v21-gold: #e6b25a;
+  --v21-silk: #c98a4a;
+  --v21-jade: #3f7a66;
+  --v21-rose: #b85a6a;
+  --v21-ink: #16100a;
+  --v21-paper: #ecd3a0;
+  --v21-line: rgba(230,178,90,0.34);
+  --v21-panel: rgba(22,16,10,0.96);
+  --v21-danger: #e05555;
+  --v21-warn: #e0a555;
+  --v21-safe: #6fcf6f;
+  --v21-radius: 10px;
+}
+
+@keyframes v21Enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes v21Pulse { 0%,100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 0.9; transform: scale(1.25); } }
+@keyframes v21BadgeGlow { 0%,100% { text-shadow: 0 0 6px rgba(230,178,90,0.35); } 50% { text-shadow: 0 0 18px rgba(230,178,90,0.8); } }
+@keyframes v21MenuBreath { 0%,100% { opacity: 0.45; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.08); } }
+@keyframes v21MarkFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes v21BarGrow { from { width: 0; } }
+
+/* ---------- 版本徽章 ---------- */
+.v21-version-badge {
+  border-color: var(--v21-gold) !important;
+  color: var(--v21-gold) !important;
+  animation: v21BadgeGlow 3.2s ease-in-out infinite;
+}
+
+/* ---------- 主菜单氛围光晕（黄沙驼铃暖光，纯 CSS） ---------- */
+.v21-menu-haze {
+  position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  background:
+    radial-gradient(60% 45% at 22% 78%, rgba(201,138,74,0.22), transparent 70%),
+    radial-gradient(45% 40% at 82% 22%, rgba(230,178,90,0.16), transparent 70%);
+  mix-blend-mode: screen;
+  animation: v21MenuBreath 9s ease-in-out infinite;
+}
+
+/* ---------- 通用弹窗骨架 ---------- */
+.v21-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(8,6,3,0.72); display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.v21-modal {
+  position: relative; width: 92%; max-width: 640px; max-height: 86vh;
+  background: var(--v21-panel); color: var(--v21-paper);
+  border: 1px solid var(--v21-line); border-radius: var(--v21-radius);
+  padding: 18px 18px 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  animation: v21Enter 0.28s ease-out;
+}
+.v21-modal.v21-wide { max-width: 760px; }
+.v21-scroll { overflow-y: auto; }
+.v21-scroll::-webkit-scrollbar { width: 8px; }
+.v21-scroll::-webkit-scrollbar-thumb { background: rgba(230,178,90,0.35); border-radius: 4px; }
+.v21-corner { position: absolute; width: 14px; height: 14px; border-color: var(--v21-gold); border-style: solid; }
+.v21-corner.tl { top: 6px; left: 6px; border-width: 2px 0 0 2px; }
+.v21-corner.tr { top: 6px; right: 6px; border-width: 2px 2px 0 0; }
+.v21-corner.bl { bottom: 6px; left: 6px; border-width: 0 0 2px 2px; }
+.v21-corner.br { bottom: 6px; right: 6px; border-width: 0 2px 2px 0; }
+.v21-title { text-align: center; color: #f0d08a; letter-spacing: 3px; margin-bottom: 14px; font-size: 20px; text-shadow: 0 0 12px rgba(230,178,90,0.3); }
+.v21-body { font-size: 13px; line-height: 1.6; }
+.v21-close { display: block; margin: 14px auto 0; }
+
+/* ---------- 顶栏入口按钮 ---------- */
+.v21-silk-btn, .v21-family-btn { border-color: rgba(230,178,90,0.5); color: var(--v21-gold); }
+
+/* ---------- 汇总统计格 ---------- */
+.v21-silk-summary, .v21-fam-summary {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px;
+}
+.v21-fam-summary { grid-template-columns: repeat(5, 1fr); }
+.v21-stat {
+  background: rgba(0,0,0,0.35); border: 1px solid var(--v21-line); border-radius: 8px;
+  padding: 8px 6px; text-align: center;
+}
+.v21-stat span { display: block; font-size: 10.5px; color: #a8926a; }
+.v21-stat b { font-size: 14px; color: var(--v21-paper); }
+
+/* ---------- 区块 ---------- */
+.v21-section { margin-bottom: 14px; }
+.v21-sec-title {
+  font-size: 13.5px; color: var(--v21-gold); letter-spacing: 2px;
+  border-left: 3px solid var(--v21-gold); padding-left: 8px; margin: 10px 0 8px;
+}
+.v21-sub2 { margin-top: 12px; }
+.v21-hint { font-size: 11px; color: #9a8b6a; margin: 6px 0; }
+.v21-empty { font-size: 12px; color: #8a7c5e; padding: 8px 4px; }
+
+/* ---------- 丝路路线 ---------- */
+.v21-route-list { display: flex; flex-direction: column; gap: 8px; }
+.v21-route {
+  border: 1px solid var(--v21-line); border-radius: 8px; padding: 8px 10px;
+  background: rgba(0,0,0,0.28);
+}
+.v21-route-on { border-color: rgba(111,207,111,0.5); }
+.v21-route-off { opacity: 0.75; }
+.v21-route-head { display: flex; align-items: center; gap: 8px; }
+.v21-route-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--v21-gold); }
+.v21-route-on .v21-route-dot { background: var(--v21-safe); box-shadow: 0 0 6px var(--v21-safe); }
+.v21-route-state { margin-left: auto; font-size: 11px; }
+.v21-route-on .v21-route-state { color: var(--v21-safe); }
+.v21-route-off .v21-route-state { color: #9a8b6a; }
+.v21-route-desc { font-size: 11.5px; color: #c8b488; margin: 4px 0; }
+.v21-route-foot { font-size: 12px; }
+.v21-route-miss { color: #c98a6a; }
+
+/* ---------- 丝路节点图 ---------- */
+.v21-silk-map-wrap { margin: 6px 0 10px; }
+.v21-silk-map { width: 100%; max-width: 300px; display: block; margin: 0 auto; }
+.v21-silk-line { stroke: rgba(154,139,106,0.4); stroke-width: 0.6; stroke-dasharray: 1.5 1; }
+.v21-silk-line.on { stroke: var(--v21-gold); stroke-width: 0.9; stroke-dasharray: none; }
+.v21-silk-node { fill: #5a4a2a; stroke: #1a1408; stroke-width: 0.4; }
+.v21-silk-node.on { fill: var(--v21-gold); }
+.v21-silk-pulse { fill: none; stroke: var(--v21-gold); stroke-width: 0.5; animation: v21Pulse 2.4s ease-in-out infinite; }
+.v21-silk-city { font-size: 3px; fill: #9a8b6a; text-anchor: middle; }
+.v21-silk-city.on { fill: var(--v21-paper); }
+.v21-silk-legend, .v21-fm-legend { display: flex; gap: 12px; justify-content: center; font-size: 11px; color: #a8926a; margin-top: 4px; }
+.v21-lg { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 4px; vertical-align: middle; background: #5a4a2a; }
+.v21-lg.on { background: var(--v21-gold); }
+.v21-lg.off { background: #3a3222; }
+.v21-lg.m { background: #5a8ad0; }
+.v21-lg.f { background: #d06a8a; }
+.v21-lg.heir { background: var(--v21-gold); }
+
+/* ---------- 商队 ---------- */
+.v21-cav-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.v21-cav-row {
+  display: grid; grid-template-columns: 1.2fr 1.6fr 0.9fr 0.8fr; gap: 6px; align-items: center;
+  border-bottom: 1px dashed rgba(230,178,90,0.18); font-size: 12.5px; padding: 4px 2px;
+}
+.v21-cav-profit { color: #FFD54F; text-align: right; }
+.v21-dispatch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.v21-select {
+  background: var(--v21-ink); color: var(--v21-paper); border: 1px solid var(--v21-line);
+  border-radius: 6px; padding: 5px 6px; font-size: 12px;
+}
+.v21-arrow { color: var(--v21-gold); }
+
+/* ---------- 驿站 ---------- */
+.v21-station-list { display: flex; flex-direction: column; gap: 6px; max-height: 30vh; overflow-y: auto; }
+.v21-station-row {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
+  border-bottom: 1px dashed rgba(230,178,90,0.14); padding: 4px 2px;
+}
+.v21-station-city { width: 70px; }
+.v21-station-lv { flex: 1; color: var(--v21-gold); letter-spacing: 2px; }
+.v21-station-lv small { color: #9a8b6a; letter-spacing: 0; }
+.v21-station-lv i { color: #6a5e44; letter-spacing: 0; font-style: normal; }
+.v21-station-full { color: var(--v21-safe); font-size: 12px; }
+
+/* ---------- 地图上的丝路节点标记 ---------- */
+.v21-silk-overlay { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
+.v21-silk-mark {
+  position: absolute; transform: translate(-50%, -50%); font-size: 15px;
+  filter: drop-shadow(0 0 4px rgba(230,178,90,0.8));
+  animation: v21MarkFloat 2.6s ease-in-out infinite;
+}
+
+/* ---------- 家族声望条 ---------- */
+.v21-rep-bar { margin-bottom: 12px; }
+.v21-rep-head { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 4px; }
+.v21-rep-track { height: 10px; background: rgba(0,0,0,0.5); border-radius: 5px; overflow: hidden; }
+.v21-rep-fill { display: block; height: 100%; border-radius: 5px; animation: v21BarGrow 0.6s ease-out; }
+
+/* ---------- 家族树 ---------- */
+.v21-fm-tree-wrap { margin: 6px 0; }
+.v21-fm-tree { width: 100%; max-width: 340px; display: block; margin: 0 auto; }
+.v21-fm-link { stroke: rgba(230,178,90,0.4); stroke-width: 0.5; }
+.v21-fm-emperor { fill: var(--v21-gold); stroke: #1a1408; stroke-width: 0.5; }
+.v21-fm-etxt { font-size: 4px; fill: #1a1408; text-anchor: middle; font-weight: bold; }
+.v21-fm-title { font-size: 3.4px; fill: var(--v21-paper); text-anchor: middle; }
+.v21-fm-mother { fill: #b85a6a; stroke: #1a1408; stroke-width: 0.4; }
+.v21-fm-kid { fill: #5a8ad0; stroke: #1a1408; stroke-width: 0.4; }
+.v21-fm-kid.f { fill: #d06a8a; }
+.v21-fm-kid.heir { fill: var(--v21-gold); stroke: #fff; stroke-width: 0.6; }
+.v21-fm-label { font-size: 3px; fill: #c8b488; text-anchor: middle; }
+.v21-fm-label.heir { fill: var(--v21-gold); font-weight: bold; }
+.v21-fm-sub { font-size: 2.4px; fill: #8a7c5e; text-anchor: middle; }
+.v21-fm-empty { font-size: 3.4px; fill: #6a5e44; text-anchor: middle; }
+
+/* ---------- 继承 ---------- */
+.v21-inh-list { display: flex; flex-direction: column; gap: 6px; max-height: 28vh; overflow-y: auto; }
+.v21-inh-row {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
+  border: 1px solid rgba(230,178,90,0.18); border-radius: 8px; padding: 6px 8px;
+}
+.v21-inh-heir { border-color: var(--v21-gold); background: rgba(230,178,90,0.08); }
+.v21-inh-rank { width: 18px; text-align: center; color: var(--v21-gold); }
+.v21-inh-tag { color: #9a8b6a; font-size: 11.5px; }
+.v21-inh-ready { color: var(--v21-safe); font-size: 11px; }
+.v21-inh-cur { color: var(--v21-gold); font-size: 11px; }
+
+/* ---------- 联姻 ---------- */
+.v21-marry-list { display: flex; flex-direction: column; gap: 8px; max-height: 36vh; overflow-y: auto; }
+.v21-marry-row {
+  border: 1px solid var(--v21-line); border-left: 4px solid var(--v21-fc, var(--v21-gold));
+  border-radius: 8px; padding: 8px 10px; background: rgba(0,0,0,0.28);
+}
+.v21-marry-head { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.v21-dot { width: 9px; height: 9px; border-radius: 50%; }
+.v21-marry-rel { margin-left: auto; font-size: 11.5px; }
+.v21-marry-ok { color: var(--v21-safe); font-size: 11px; }
+.v21-marry-body { display: flex; flex-direction: column; gap: 3px; margin: 6px 0; font-size: 12px; color: #c8b488; }
+.v21-marry-eff { color: #9a8b6a; font-size: 11px; }
+.v21-marry-btn { margin-top: 2px; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .v21-modal { width: 96%; padding: 14px; }
+  .v21-silk-summary { grid-template-columns: repeat(2, 1fr); }
+  .v21-fam-summary { grid-template-columns: repeat(3, 1fr); }
+  .v21-cav-row { grid-template-columns: 1fr 1fr; row-gap: 3px; }
+  .v21-cav-profit { text-align: left; }
+  .v21-marry-row { padding: 6px 8px; }
+}
+@media (max-width: 480px) {
+  .v21-title { font-size: 17px; }
+  .v21-stat b { font-size: 13px; }
+  .v21-dispatch { flex-direction: column; align-items: stretch; }
+  .v21-select { width: 100%; }
+}
+
+/* V21.0 补充：商队/路线列对齐细节 */
+.v21-route-income { font-weight: bold; }
+.v21-cav-goods { white-space: nowrap; }
+.v21-cav-path { color: #c8b488; }
+.v21-cav-eta { color: #9a8b6a; text-align: center; }

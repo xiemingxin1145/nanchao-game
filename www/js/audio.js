@@ -228,6 +228,24 @@ const BGM_TRACKS = {
     //   density 0.5，density 压低营造五谷丰登、四海升平的治世氛围）。
     bpm: 75, scale: ['F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5', 'D5', 'F5'],
     wave: 'triangle', bassWave: 'sine', stepMs: 800, hasDrum: true, density: 0.5
+  },
+
+  // ============================================================
+  // V21.0「音效扩充」新增 2 首 BGM
+  // ============================================================
+  silkRoad: { // 丝路异域：D小调，70BPM，西域风情——都塔尔(锯齿主奏)+手鼓+弹拨低音
+    // D 自然小调五声化：D F G A C D F G A（降三级小三度的西域苍凉感，
+    //   锯齿波主奏模拟都塔尔的金属弦鸣，方波低音模拟手鼓低频搏动，
+    //   stepMs=857(=70BPM四分音符)，density 0.62，营造驼队西行、风沙漫卷的西域行旅感）。
+    bpm: 70, scale: ['D3', 'F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5'],
+    wave: 'sawtooth', bassWave: 'square', stepMs: 857, hasDrum: true, density: 0.62
+  },
+  familyReunion: { // 家族团圆：C大调，80BPM，温馨民乐——古筝(三角主奏)+笛子+正弦低音
+    // C 大调五声：C D E G A C D E G A（明亮宫调 + 温润旋律，
+    //   三角主奏模拟古筝温润拨弦、正弦低音铺底，无战鼓，
+    //   stepMs=750(=80BPM四分音符)，density 0.5，营造阖家团圆、天伦之乐的温馨氛围）。
+    bpm: 80, scale: ['C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5', 'A5'],
+    wave: 'triangle', bassWave: 'sine', stepMs: 750, hasDrum: false, density: 0.5
   }
 };
 
@@ -270,7 +288,10 @@ export const BGM_INFO = {
   techLab:        { name: '格物致知', desc: '科技研究·A小调80BPM探索氛围' },
   // V20.0 新增
   turbulent:      { name: '风雨如晦', desc: '灾害乱世·B小调90BPM紧张不安' },
-  goldenAge:      { name: '河清海晏', desc: '盛世太平·F大调75BPM和平繁荣' }
+  goldenAge:      { name: '河清海晏', desc: '盛世太平·F大调75BPM和平繁荣' },
+  // V21.0 新增
+  silkRoad:       { name: '丝路驼铃', desc: '丝路异域·D小调70BPM都塔尔手鼓' },
+  familyReunion:  { name: '天伦之乐', desc: '家族团圆·C大调80BPM古筝竹笛' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -285,7 +306,9 @@ const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'end
   // V19.0：文化界面/科技研究两首新 BGM 默认解锁（随新系统开放即可用）
   'cultureHall', 'techLab',
   // V20.0：灾害乱世/盛世太平两首新 BGM 默认解锁（灾害与治世场景随版本开放即可用）
-  'turbulent', 'goldenAge'];
+  'turbulent', 'goldenAge',
+  // V21.0：丝路异域/家族团圆两首新 BGM 默认解锁（商路与皇室场景随版本开放即可用）
+  'silkRoad', 'familyReunion'];
 
 export class AudioManager {
   constructor() {
@@ -1543,54 +1566,16 @@ export class AudioManager {
   // ============================================================
   // V9.5 新增音效（10 个）：军团/会战/阵法/科举/赋税/徭役/节气/异象/皇子
   // 全部 OscillatorNode + GainNode 合成，复用 bell/horn/drum/tone 原语。
+  // BUG修复（audio.js V21.0 重复方法定义/死代码）：
+  //   下列 8 个方法（playLegionForm/playGrandBattleStart/playGrandBattleWin/
+  //   playFormationSwitch/playExamHuangbang/playTaxAdjust/playCelestialAnomaly/
+  //   playPrinceBorn）曾在本处与下方「V12.5 深化版」区块各定义了一次。
+  //   ES class 中同名方法后者覆盖前者，本处这 8 份旧实现（无 _sfxGate 重叠保护）
+  //   是永不执行的死代码，且与下方新版语义不一致——一旦有人误删下方区块，
+  //   音效会静默退回无保护版本，连击爆音/音量叠加问题回归。
+  //   修复：删除本处这 8 份死代码，仅保留下方带 _sfxGate 的深化版；
+  //   playCorveeConscript / playSolarTerm 在下方无同名新版，故保留在此处。
   // ============================================================
-  // 1. 军团编制：号角 + 整齐鼓点（集结感）
-  playLegionForm() {
-    this.resume(); if (!this.ctx) return;
-    this.horn(220.00, 0.5, 0.2, 0, null, 0);
-    this.horn(329.63, 0.5, 0.18, 0.15, null, 0);
-    [0, 0.2, 0.4, 0.6].forEach((t) => this.drum(0.4, t, 85, 'sfx'));
-  }
-  // 2. 会战开始：急促战鼓 + 号角三连（紧张激昂）
-  playGrandBattleStart() {
-    this.resume(); if (!this.ctx) return;
-    this._duckBGM();
-    this.horn(196.00, 0.4, 0.24, 0, null, 0);
-    this.horn(261.63, 0.4, 0.24, 0.15, null, 0);
-    this.horn(329.63, 0.6, 0.26, 0.3, null, 0);
-    [0, 0.12, 0.24, 0.36, 0.5, 0.66].forEach((t, i) => this.drum(0.45, t, 90 - i * 4, 'sfx'));
-  }
-  // 3. 会战胜利：大号角 + 编钟 + 鼓点进行曲（辉煌）
-  playGrandBattleWin() {
-    this.resume(); if (!this.ctx) return;
-    const chimes = [261.63, 329.63, 392.00, 523.25];
-    chimes.forEach((f, i) => this.bell(f, 1.6, 0.2, i * 0.12, 0));
-    this.horn(392.00, 1.2, 0.24, 0.3, null, 0);
-    [0, 0.2, 0.4, 0.6, 0.8].forEach((t) => this.drum(0.45, t, 75, 'sfx'));
-  }
-  // 4. 阵法切换：兵器轻鸣 + 古琴泛音（利落）
-  playFormationSwitch() {
-    this.resume(); if (!this.ctx) return;
-    this.tone(1500, 0.08, 'sine', 0.16, 0, null, 'sfx');
-    this.tone(523.25, 0.4, 'sine', 0.14, 0.08, null, 'sfx');
-    this.tone(783.99, 0.3, 'sine', 0.1, 0.16, null, 'sfx');
-  }
-  // 5. 科举放榜：扬琴琶音 + 小锣（喜庆）
-  playExamHuangbang() {
-    this.resume(); if (!this.ctx) return;
-    const seq = [523.25, 659.25, 783.99, 1046.5, 1318.5];
-    seq.forEach((f, i) => this.tone(f, 0.25, 'triangle', 0.2, i * 0.09, null, 'sfx'));
-    this.bell(2093.00, 0.8, 0.14, seq.length * 0.09, 0);
-    this.drum(0.3, seq.length * 0.09, 70, 'sfx');
-  }
-  // 6. 赋税调整：算盘拨珠（高频短促双音重复）+ 铜钱
-  playTaxAdjust() {
-    this.resume(); if (!this.ctx) return;
-    for (let i = 0; i < 3; i++) {
-      this.tone(1760 + i * 120, 0.06, 'square', 0.1, i * 0.08, null, 'sfx');
-    }
-    this.tone(2093.00, 0.15, 'sine', 0.12, 0.3, null, 'sfx');
-  }
   // 7. 徭役征发：号令声（低频号角）+ 沉重脚步鼓点
   playCorveeConscript() {
     this.resume(); if (!this.ctx) return;
@@ -1602,23 +1587,6 @@ export class AudioManager {
     this.resume(); if (!this.ctx) return;
     const notes = [880.00, 1046.5, 1174.66, 1318.5];
     notes.forEach((f, i) => this.tone(f, 0.5, 'sine', 0.1, i * 0.18, null, 'sfx', (i - 1.5) * 0.1));
-  }
-  // 9. 天文异象：悬疑下行不协和音 + 低音轰鸣
-  playCelestialAnomaly() {
-    this.resume(); if (!this.ctx) return;
-    this.tone(440.00, 1.0, 'sine', 0.16, 0, null, 'sfx');
-    this.tone(415.30, 1.0, 'sine', 0.14, 0.2, null, 'sfx');
-    this.tone(392.00, 1.2, 'sine', 0.14, 0.4, null, 'sfx');
-    this.drum(0.4, 0.3, 55, 'sfx');
-    this.tone(55, 1.2, 'sawtooth', 0.1, 0.3, 40, 'sfx');
-  }
-  // 10. 皇子出生：编钟吉庆 + 上行琶音（温润）
-  playPrinceBorn() {
-    this.resume(); if (!this.ctx) return;
-    const seq = [523.25, 659.25, 783.99, 1046.5];
-    seq.forEach((f, i) => this.bell(f, 1.0, 0.16, i * 0.12, (i - 1.5) * 0.15));
-    this.tone(261.63, 1.2, 'sine', 0.12, 0.4, null, 'sfx');
-    this.tone(392.00, 1.2, 'sine', 0.12, 0.45, null, 'sfx');
   }
 
   // ============================================================
@@ -2891,6 +2859,97 @@ export class AudioManager {
   }
 
   // ============================================================
+  // V21.0「音效扩充」新增 6 类程序化合成音效
+  // 全部 Web Audio 合成：驼铃/马蹄/风声 / 金币/香料 / 战斗/货物散落 /
+  //   喜庆民乐/花灯/同心结 / 婴儿笑/祥云钟 / 哀乐/白幡/落叶。
+  // 均经 _sfxGate 重叠保护，峰值音量收敛至 0.1~0.3。
+  // ============================================================
+
+  // 1. 商队行进：驼铃声（高频短促交替声像）+ 马蹄声（低频脉冲）+ 风声（低通噪声缓慢扫）
+  playCaravanMarch() {
+    this.resume(); if (!this.ctx || !this._sfxGate('caravan_march', 600)) return;
+    // 驼铃：周期性高频短促音，左右声像交替（模拟驼队左右摇晃）
+    for (let i = 0; i < 5; i++) {
+      this.tone(1244.51, 0.12, 'sine', 0.12, i * 0.22, null, 'sfx', (i % 2 ? 0.5 : -0.5));
+    }
+    // 马蹄：低频闷响脉冲，间隔渐密（队伍渐行渐近）
+    for (let i = 0; i < 6; i++) {
+      this.drum(0.22, i * 0.22, 70 - i * 2, 'sfx');
+    }
+    // 风声：低通噪声缓慢起伏（风沙扑面）
+    this._noiseBurst({ dur: 1.4, freq: 400, q: 0.8, type: 'lowpass', vol: 0.10,
+      offset: 0, bus: 'sfx', sweepTo: 180 });
+  }
+
+  // 2. 丝路贸易完成：金币叮当（高频短促弹跳）+ 香料香囊声（中频柔和泛音铃）
+  playSilkTradeDone() {
+    this.resume(); if (!this.ctx || !this._sfxGate('silk_trade_done', 300)) return;
+    // 金币叮当：高频短促双音弹跳，左右声像交替
+    for (let i = 0; i < 5; i++) {
+      this.tone(1567.98 + i * 90, 0.09, 'sine', 0.14, i * 0.08, null, 'sfx', (i % 2 ? 0.35 : -0.35));
+    }
+    // 香料香囊：中频柔和泛音（模拟香囊轻晃的温润铃音）
+    this.tone(880, 0.6, 'triangle', 0.10, 0.4, null, 'sfx', 0);
+    this.tone(1174.66, 0.5, 'sine', 0.07, 0.5, null, 'sfx', 0);
+    this.tone(1760, 0.3, 'sine', 0.06, 0.55, null, 'sfx', 0);
+  }
+
+  // 3. 商队被劫：战斗声（兵刃/呐喊）+ 货物散落（噪声散落 + 低频滚动）
+  playCaravanRobbed() {
+    this.resume(); if (!this.ctx || !this._sfxGate('caravan_robbed', 500)) return;
+    this._duckBGM();
+    // 兵刃相交
+    this.playSwordClash();
+    // 货物散落：高频噪声噼啪散落（带通噪声短扫）
+    this._noiseBurst({ dur: 0.35, freq: 2400, q: 1.5, type: 'bandpass', vol: 0.18,
+      offset: 0.05, bus: 'sfx', sweepTo: 500 });
+    // 货物滚动：低频闷响渐弱
+    this.tone(120, 0.6, 'sawtooth', 0.12, 0.15, 50, 'sfx', 0);
+    this.drum(0.25, 0.2, 60, 'sfx');
+  }
+
+  // 4. 联姻成功：喜庆民乐（上行五声琶音）+ 花灯声（高频铃铛泛音）+ 同心结声（柔和双音）
+  playMarriageSuccess() {
+    this.resume(); if (!this.ctx || !this._sfxGate('marriage_success', 600)) return;
+    // 喜庆民乐：上行五声琶音（扬琴式）
+    const notes = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.50];
+    notes.forEach((f, i) => this.tone(f, 0.25, 'triangle', 0.16, i * 0.1, null, 'sfx'));
+    // 花灯声：高频铃铛泛音（左右摇摆）
+    for (let i = 0; i < 3; i++) {
+      this.tone(1567.98, 0.5, 'sine', 0.08, notes.length * 0.1 + i * 0.25, null, 'sfx', (i - 1) * 0.3);
+    }
+    // 同心结声：柔和双音（C+E 三度叠置，温润）
+    this.tone(523.25, 0.8, 'sine', 0.10, notes.length * 0.1, null, 'sfx', 0);
+    this.tone(659.25, 0.8, 'sine', 0.08, notes.length * 0.1, null, 'sfx', 0);
+  }
+
+  // 5. 家族成员出生：婴儿笑声（高频断续笑音）+ 祥云钟声（编钟吉庆）
+  playFamilyBorn() {
+    this.resume(); if (!this.ctx || !this._sfxGate('family_born', 500)) return;
+    // 婴儿笑声：高频短促断续（模拟「咯咯」笑），左右声像微摆
+    for (let i = 0; i < 4; i++) {
+      this.tone(1318.5, 0.08, 'sine', 0.10, i * 0.12, 900, 'sfx', (i % 2 ? 0.2 : -0.2));
+    }
+    // 祥云钟声：编钟吉庆（上行双钟）
+    this.bell(783.99, 1.2, 0.16, 0.3, 0);
+    this.bell(1046.50, 1.0, 0.12, 0.5, 0);
+  }
+
+  // 6. 家族成员去世：哀乐（下行慢音）+ 白幡声（低频嗡鸣）+ 落叶声（高通噪声细碎）
+  playFamilyDeath() {
+    this.resume(); if (!this.ctx || !this._sfxGate('family_death', 600)) return;
+    // 哀乐：下行慢音（小三度下行，肃杀）
+    this.tone(440, 0.9, 'sine', 0.14, 0, null, 'sfx', 0);
+    this.tone(415.30, 0.9, 'sine', 0.12, 0.3, null, 'sfx', 0);
+    this.tone(392.00, 1.2, 'sine', 0.12, 0.6, null, 'sfx', 0);
+    // 白幡声：低频嗡鸣（白幡随风低哑飘动）
+    this.tone(80, 1.5, 'sawtooth', 0.08, 0.2, 50, 'sfx', 0);
+    // 落叶声：高通噪声细碎（秋风落叶沙沙）
+    this._noiseBurst({ dur: 0.8, freq: 4000, q: 1, type: 'highpass', vol: 0.06,
+      offset: 0.4, bus: 'sfx', sweepTo: 2000 });
+  }
+
+  // ============================================================
   // V15.0 结局 BGM：宏大交响（finale 曲目按评级变奏）。
   //   S：高密庆典（density 0.9 / 明亮 G 音阶 / 定音鼓）；
   //   B：温润和平（density 0.6 / C 宫 / 无鼓）；
@@ -3063,7 +3122,10 @@ export class AudioManager {
       'introAmbience', 'timelineTransition', 'ngPlusUnlock', 'tutorialHint',
       // V17.0 新增：战场音效（走 battleGain 总线）
       'moraleBreak', 'bowVolley', 'shieldRaise', 'navalBattle',
-      'weatherCombat', 'winStreakHorn'
+      'weatherCombat', 'winStreakHorn',
+      // V21.0 新增：丝路商队 / 家族皇室 6 类音效
+      'caravanMarch', 'silkTradeDone', 'caravanRobbed',
+      'marriageSuccess', 'familyBorn', 'familyDeath'
     ];
   }
 
@@ -3256,8 +3318,16 @@ export class AudioManager {
     // 性能优化（audio.js #4 多BGM切换资源管理）：先裁剪已自然收尾的活节点引用——
     //   旋律/低音 osc 会在 0.65/0.85s 后自停，但引用留在 _bgmLiveNodes 里会阻止 GC。
     //   每拍开头按 stopAt 时间戳丢弃已结束项，保证数组规模有界（≤ 最近 2 拍）。
+    // 性能优化（audio.js #4 多BGM切换资源管理 · V21.0 续）：
+    //   基准：原写法每拍开头 `this._bgmLiveNodes = this._bgmLiveNodes.filter(...)`——
+    //     filter 每拍都新建一个数组，把「仍在发声」的节点拷过去。BGM 常驻数小时，
+    //     stepMs=280~1000ms，每秒 1~3.5 拍 → 每分钟数十次临时数组分配，GC 压力累积。
+    //   优化：改为从后往前倒序遍历，用 splice 原地删除已收尾项（倒序 splice 不影响未遍历下标），
+    //     不再每拍分配新数组；MAX_LIVE 硬帽逻辑保持不变。
     if (this._bgmLiveNodes.length) {
-      this._bgmLiveNodes = this._bgmLiveNodes.filter(n => n.stopAt > t0);
+      for (let i = this._bgmLiveNodes.length - 1; i >= 0; i--) {
+        if (this._bgmLiveNodes[i].stopAt <= t0) this._bgmLiveNodes.splice(i, 1);
+      }
       // V20.0 加强：硬上限兜底——极端 Rapid 切歌/调度时钟漂移场景下，按 stopAt 裁剪
       //   可能仍残留少量活节点（如 osc 被外部 stop 但 stopAt 未到 t0）。此处加一道
       //   MAX_LIVE=32 硬帽：超过即丢弃最旧的一半引用并强制断连，防止 _bgmLiveNodes

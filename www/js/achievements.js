@@ -894,6 +894,133 @@ export const ACHIEVEMENTS = [
         return { current: mit + Math.min(3, med), total: 13 };
       } catch (e) { return { current: 0, total: 13 }; }
     }
+  },
+
+  // ==================== V21.0 新增（10 个 v21_ 前缀：丝路贸易深化 + 家族联姻） ====================
+  // ---- 丝绸之路贸易（6） ----
+  {
+    id: 'v21_silk_start', name: '凿空西域', icon: '🐫', category: 'economy', points: 20,
+    description: '控制长安、敦煌，贯通丝绸之路东端门户。', reward: { money: 2000 },
+    condition: (g) => {
+      try { return !!(g.tradeSystem && g.tradeSystem.v21 && g.tradeSystem.v21.started); }
+      catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v21_silk_stations_3', name: '驿骑星列', icon: '🏯', category: 'economy', points: 30,
+    description: '沿丝路建造 3 座驿站。', reward: { money: 2500 },
+    condition: (g) => {
+      try { return Object.keys(g.tradeSystem?.v21?.stations || {}).length >= 3; }
+      catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const n = Object.keys(g.tradeSystem?.v21?.stations || {}).length;
+        return { current: Math.min(3, n), total: 3 };
+      } catch (e) { return { current: 0, total: 3 }; }
+    }
+  },
+  {
+    id: 'v21_silk_stations_6', name: '丝路通衢', icon: '🛣️', category: 'economy', points: 40,
+    description: '沿丝路建造 6 座驿站，亭障相望。', reward: { money: 4000, title: '西州都护' },
+    condition: (g) => {
+      try { return Object.keys(g.tradeSystem?.v21?.stations || {}).length >= 6; }
+      catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const n = Object.keys(g.tradeSystem?.v21?.stations || {}).length;
+        return { current: Math.min(6, n), total: 6 };
+      } catch (e) { return { current: 0, total: 6 }; }
+    }
+  },
+  {
+    id: 'v21_silk_peace', name: '胡汉一家', icon: '🕊️', category: 'politics', points: 30,
+    description: '与诸戎修好，丝路安全度达到 80 以上。', reward: { money: 2000 },
+    condition: (g) => {
+      try {
+        if (!g.tradeSystem || typeof g.tradeSystem.getSilkRoadSecurity !== 'function') return false;
+        return g.tradeSystem.getSilkRoadSecurity(g, g.playerFaction).value >= 80;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        if (!g.tradeSystem || typeof g.tradeSystem.getSilkRoadSecurity !== 'function') return { current: 0, total: 80 };
+        const v = g.tradeSystem.getSilkRoadSecurity(g, g.playerFaction).value || 0;
+        return { current: Math.min(80, v), total: 80 };
+      } catch (e) { return { current: 0, total: 80 }; }
+    }
+  },
+  {
+    id: 'v21_silk_profit', name: '聚宝归府', icon: '💰', category: 'economy', points: 40,
+    description: '丝路商队累计获利 10000 金。', reward: { money: 5000 },
+    condition: (g) => {
+      try { return (g.tradeSystem?.v21?.stats?.profitEarned || 0) >= 10000; }
+      catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(10000, g.tradeSystem?.v21?.stats?.profitEarned || 0), total: 10000 }; }
+      catch (e) { return { current: 0, total: 10000 }; }
+    }
+  },
+  {
+    id: 'v21_silk_voyages', name: '西贾不绝', icon: '🧭', category: 'economy', points: 30,
+    description: '丝路商队平安往返 5 次。', reward: { food: 3000 },
+    condition: (g) => {
+      try { return (g.tradeSystem?.v21?.stats?.voyagesCompleted || 0) >= 5; }
+      catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(5, g.tradeSystem?.v21?.stats?.voyagesCompleted || 0), total: 5 }; }
+      catch (e) { return { current: 0, total: 5 }; }
+    }
+  },
+
+  // ---- 家族谱系 / 联姻（4） ----
+  {
+    id: 'v21_marriage_first', name: '秦晋之好', icon: '💍', category: 'person', points: 20,
+    description: '首次与他国势力缔结联姻。', reward: { money: 2000 },
+    condition: (g) => {
+      try { return (g.familySystem?.stats?.marriages || 0) >= 1; }
+      catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v21_marriage_3', name: '婚娅遍邦', icon: '👑', category: 'politics', points: 40,
+    description: '累计与他国缔结婚好 3 次，联姻网布列邦。', reward: { money: 4000, title: '天下婚亲' },
+    condition: (g) => {
+      try { return (g.familySystem?.stats?.marriages || 0) >= 3; }
+      catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(3, g.familySystem?.stats?.marriages || 0), total: 3 }; }
+      catch (e) { return { current: 0, total: 3 }; }
+    }
+  },
+  {
+    id: 'v21_prestige_clan', name: '四世三公', icon: '🎖️', category: 'person', points: 40,
+    description: '家族声望达到 80，门第冠于一时。', reward: { bgm: 'culture', title: '望族元戎' },
+    condition: (g) => {
+      try {
+        if (!g.familySystem || typeof g.familySystem.getFamilyPrestige !== 'function') return false;
+        return g.familySystem.getFamilyPrestige(g.playerFaction, g).value >= 80;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        if (!g.familySystem || typeof g.familySystem.getFamilyPrestige !== 'function') return { current: 0, total: 80 };
+        const v = g.familySystem.getFamilyPrestige(g.playerFaction, g).value || 0;
+        return { current: Math.min(80, v), total: 80 };
+      } catch (e) { return { current: 0, total: 80 }; }
+    }
+  },
+  {
+    id: 'v21_divorce', name: '恩断义绝', icon: '💔', category: 'special', points: 20,
+    description: '经历一次联姻破裂（和离），旧好成隙。', reward: { money: 1000 },
+    condition: (g) => {
+      try { return (g.familySystem?.stats?.divorces || 0) >= 1; }
+      catch (e) { return false; }
+    }
   }
 ];
 

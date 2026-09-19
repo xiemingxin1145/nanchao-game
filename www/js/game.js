@@ -68,6 +68,8 @@ import { HaremSystem } from './harem.js';
 // ---- V20.0 新系统：灾害 / 人口动态 ----
 import { DisasterSystem } from './disaster.js';
 import { PopulationSystem } from './population.js';
+// ---- V21.0 新系统：家族谱系/联姻 ----
+import { FamilySystem } from './family.js';
 
 let armyIdCounter = 100;
 
@@ -176,6 +178,8 @@ export class Game {
     // ---- V20.0 新系统状态 ----
     this.disasterSystem = new DisasterSystem();    // 灾害系统（地震/洪水/干旱/瘟疫/蝗灾/暴风雪）
     this.populationSystem = new PopulationSystem(); // 人口动态系统（增长/迁移/征兵比例）
+    // ---- V21.0 新系统状态 ----
+    this.familySystem = new FamilySystem();         // 家族谱系/联姻系统
   }
 
   _defaultStats() {
@@ -697,7 +701,16 @@ export class Game {
     // 性能优化#3：getTechBag 每回合被调用数十次（战斗/经济/UI），
     // 每次都遍历全部武将技能+羁绊+官职+王朝加成。此处加回合级缓存，
     // 同一回合内相同 factionId 只计算一次，预期减少 70~80% 的重复计算。
-    const cacheKey = factionId + ':' + this.turn;
+    // BUG修复（game.js V21.0 getTechBag 跨势力缓存互相清除）：
+    //   优化前：cacheKey = factionId + ':' + turn，且 `_techBagCacheKey` 一旦与本次
+    //     cacheKey 不一致就 `_techBagCache = {}` 清空整张表。同一回合内先后查询
+    //     玩家→AI1→AI2 时，每次切换势力 cacheKey 都变，导致每次都把上一个势力
+    //     已算好的 bag 整张清空——「回合级缓存」实际只对「连续两次查同一势力」生效，
+    //     多势力局（F≈10）下每势力每回合都被重复全量计算一次，缓存形同虚设。
+    //   修复：cacheKey 只按回合号（不含 factionId）；同一回合内切换势力只追加、
+    //     不清空整张表，真正实现「同一回合内每势力只算一次」。跨回合（turn 变化）
+    //     才整体重置。
+    const cacheKey = this.turn;
     if (this._techBagCacheKey === cacheKey && this._techBagCache && this._techBagCache[factionId]) {
       return this._techBagCache[factionId];
     }
@@ -903,6 +916,11 @@ export class Game {
   _lootEquipment(winnerFactionId, loserGeneral) {
     if (!loserGeneral) return;
     if (Math.random() > 0.30) return; // 30% 概率缴获
+    // BUG修复（game.js V21.0 _lootEquipment 空指针）：
+    //   旧存档/模组热加载武将未经过 deserialize 兜底时，loserGeneral.equipment
+    //   可能为 undefined；下一行 `loserGeneral.equipment[s]` 直接抛 TypeError，
+    //   中断战斗结算流程。修复：equipment 缺失时视为无装备可缴获。
+    if (!loserGeneral.equipment) return;
     const slots = ['weapon', 'armor', 'mount', 'treasure'];
     const equipped = slots.filter(s => loserGeneral.equipment[s]);
     if (!equipped.length) return;
@@ -2106,6 +2124,23 @@ export class Game {
     //   武将做一次全表 filter。204 将 × F 个 AI 势力 → 原 O(F×204) 次比较降为 O(204) 一次。
     //   AI 招募到在野武将时会从该快照中移除（见 ai.js takeTurn 招募分支），保持列表新鲜。
     this._roundIdleGens = this.getIdleGenerals();
+    // 性能优化（game.js / ai.js V21.0·219将后 AI 决策）：
+    //   基准：上式只共享了「在野武将池」；但每个 AI 势力的 takeTurn 入口仍要调用
+    //     `game.getFactionGenerals(this.factionId)` 把 219 将全表 filter 一遍来取本势力武将。
+    //     设 F≈10 个 AI 势力，整轮 AI 决策 = F×219 ≈ 2190 次比较，且每个 AI 还在
+    //     _pickIdleGeneral/forgeAndEquip 等 helper 里再重复若干次。
+    //   优化：runAITurns 入口单次遍历 this.generals.values()，按 g.faction 分桶建索引
+    //     Map（与 settleTurn 的 fidGenerals 同构），O(219) 一次成型；ai.js takeTurn
+    //     优先复用 `game._roundFactionGenerals.get(this.factionId)`，O(1) 命中。
+    //   正确性：AI 招募会把新武将加入某势力——此时该势力的快照数组不含新将，
+    //     新将本回合不参与决策（下轮快照再纳入），与 _roundIdleGens 的语义一致，安全。
+    this._roundFactionGenerals = new Map();
+    for (const g of this.generals.values()) {
+      if (!g.faction) continue;
+      const arr = this._roundFactionGenerals.get(g.faction);
+      if (arr) arr.push(g);
+      else this._roundFactionGenerals.set(g.faction, [g]);
+    }
     for (const [fid, ai] of this.aiPlayers) {
       if (this.gameOver) break;
       ai.takeTurn(this);
@@ -2138,6 +2173,16 @@ export class Game {
     }
     // 缓存本次回合的势力城市数（供末尾迷雾刷新复用，避免重复遍历）
     this._fidCityCountCache = fidCities;
+    // 性能优化（game.js #1 V21.0·120城后回合结算）：
+    //   基准：settleTurn 尾部的 calendar.applyTermEffects(this)、harem.settleBirth 玩家分支、
+    //     recordTurn 都各自调用 `game.getFactionCities(game.playerFaction)`——
+    //     该方法内部是 `[...this.cities.values()].filter(...)`，120 城每回合又要新建数组
+    //     遍历一次。仅玩家势力的历法/生育/统计三条尾链，每回合就重复 3 次 120 城扫描。
+    //   优化：settleTurn 入口已建好 fidCities 分组，把玩家势力这一份直接挂到
+    //     `_playerCitiesTurnCache`；calendar/harem 尾链优先读它，O(1) 命中。
+    //   正确性：settleTurn 期间不改城属（无战斗），尾链只读城属性改 morale/religion，
+    //     同一份城市对象引用，安全；尾链结束后下一回合由新的 settleTurn 重建。
+    this._playerCitiesTurnCache = fidCities.get(this.playerFaction) || [];
 
     // 性能优化（game.js #2）：回合级贸易城市信息缓存——
     //   优化前：贸易收入对每个势力都重新 filter tradeRoutes，且每条商路对两座城
@@ -2245,7 +2290,12 @@ export class Game {
         const sup = computeSupplyStatus(this, army);
         armyFoodCost += Math.round(army.troops * 0.05 * supplyFoodMult(sup));
         if (sup.cut && fid === this.playerFaction) {
-          res.totalMorale = Math.max(0, (res.totalMorale || 60) - 5);
+          // BUG修复（game.js V21.0 断粮军心 `|| 60` 假值 bug）：
+          //   原写法 `(res.totalMorale || 60) - 5`——当 totalMorale 恰为 0（合法值）
+          //   时 `0 || 60` 得 60，断粮一回合本应维持 0，却被误抬到 55（军心反而上涨）。
+          //   修复：用 nullish 语义（仅 null/undefined 才回退 60），0 保持 0。
+          const base = (res.totalMorale === null || res.totalMorale === undefined) ? 60 : res.totalMorale;
+          res.totalMorale = Math.max(0, base - 5);
         }
       }
       res.food -= armyFoodCost;
@@ -2259,6 +2309,13 @@ export class Game {
         gen.endTurn();
         if (gen.loyalty < 30 && Math.random() < 0.15) {
           gen.faction = null;
+          // BUG修复（game.js V21.0 下野武将残留军职/官职）：
+          //   原写法只置 faction=null，未清理 inArmy/office。下野武将仍挂在某支
+          //   军队的 generalId 上、仍领某官职——下回合该军队继续由一个已无归属的
+          //   「在野武将」统率，势力归属错乱；官职也不卸任。修复：下野时一并卸下。
+          gen.inArmy = null;
+          gen.office = null;
+          gen.location = null;
           this.pushLog(`${gen.name} 因忠诚过低下野而去！`);
         }
       }
@@ -2584,7 +2641,9 @@ export class Game {
       musicState: this.musicState,
       // V20.0: 灾害 / 人口动态系统
       disasterSystem: this.disasterSystem ? this.disasterSystem.serialize() : null,
-      populationSystem: this.populationSystem ? this.populationSystem.serialize() : null
+      populationSystem: this.populationSystem ? this.populationSystem.serialize() : null,
+      // V21.0: 家族谱系/联姻系统
+      familySystem: this.familySystem ? this.familySystem.serialize() : null
     };
   }
 
@@ -2760,6 +2819,8 @@ export class Game {
     // V20.0：灾害 / 人口系统反序列化（旧档缺省时用默认空状态）
     try { g.disasterSystem.deserialize(data.disasterSystem || {}); } catch (e) {}
     try { g.populationSystem.deserialize(data.populationSystem || {}); } catch (e) {}
+    // V21.0：家族系统反序列化（旧档缺省时用默认空状态）
+    try { g.familySystem.deserialize(data.familySystem || {}); } catch (e) {}
     // 还原禅让后势力名/旗色（FACTIONS 为模块级对象，需按存档王朝记录重放）
     for (const [fid, rec] of Object.entries(g.dynastySystem.factions || {})) {
       const dyn = (typeof DYNASTIES !== 'undefined') ? DYNASTIES[rec.dynastyId] : null;

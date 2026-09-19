@@ -60,7 +60,12 @@ export class AIPlayer {
     // getFactionGenerals/getFactionArmies 都会全表扫描。此处缓存一次结果，
     // 预期减少 40~60% 的 Map 遍历开销（势力数多时效果显著）。
     const _cachedCities = game.getFactionCities(this.factionId);
-    const _cachedGenerals = game.getFactionGenerals(this.factionId);
+    // 性能优化（ai.js V21.0·219将后 AI 决策）：
+    //   基准：原写法每势力都 `game.getFactionGenerals(this.factionId)` 全表 filter 219 将。
+    //   优化：优先复用 runAITurns 入口建好的 `_roundFactionGenerals` 分桶索引（O(1) 命中），
+    //     仅在索引缺失（非 AI 回合路径）时回退原全表 filter。
+    const _cachedGenerals = (game._roundFactionGenerals && game._roundFactionGenerals.get(this.factionId))
+      || game.getFactionGenerals(this.factionId);
     const _cachedArmies = game.getFactionArmies(this.factionId);
     // 性能优化（ai.js #2）：暴露到 this，供 buildBuildings/forgeAndEquip/advanceUnits 等
     //   helper 复用，避免每个 helper 再次全表扫描（72城/144将下每回合省下数十次 filter）。

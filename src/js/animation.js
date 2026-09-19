@@ -147,6 +147,24 @@ export class CharacterAnimator {
     this._disasterShakeMag = 0;     // 地震期间持续震屏强度（draw 时由 map.js 读取）
     this._disasterShakeDur = 0;     // 剩余震屏时间（真实秒）
     this._disasterEmitAcc = 0;     // 灾害持续粒子生成累计器（按 dt 节流）
+
+    // ============================================================
+    // V21.0 — 动画与地图增强：丝绸之路动画 + 家族动画
+    // 设计：与 V15~V20 一致——play* 只写入 _silkFXs / _familyFXs 状态机
+    //      + 触发一次性粒子；update(dt) 用真实时间推进 t；
+    //      drawSilkFX / drawFamilyFX 按 t/dur 渲染。
+    //      粒子走 _getParticle/_pushParticle 对象池 + 统一上限；
+    //      丝路/家族专属粒子另设预算，避免与战斗粒子争抢；
+    //      FX 列表有硬上限（超出淘汰最老）。
+    // ============================================================
+    this._silkFXs = [];            // 丝路FX [{type,x,y,x2,y2,goodsType,t,dur,seed}]
+    this._silkFXCap = 8;           // 同时存活丝路FX上限
+    this._silkParticleBudget = 100; // 丝路专属粒子预算（独立统计 _silk 标记）
+    this._silkEmitAcc = 0;         // 丝路持续粒子生成累计器
+    this._familyFXs = [];          // 家族FX [{type,x,y,t,dur,seed}]
+    this._familyFXCap = 6;         // 同时存活家族FX上限
+    this._familyParticleBudget = 90; // 家族专属粒子预算
+    this._familyEmitAcc = 0;        // 家族持续粒子生成累计器
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -545,6 +563,9 @@ export class CharacterAnimator {
     this._updateDisasterFXs(deltaTime);
     // 地震持续震屏衰减
     if (this._disasterShakeDur > 0) this._disasterShakeDur -= deltaTime;
+    // ---- V21.0：丝路 / 家族 FX 时间线推进（真实时间，不受慢动作影响）----
+    this._updateSilkFXs(deltaTime);
+    this._updateFamilyFXs(deltaTime);
     // 士气条淡入淡出推进
     for (const [k, m] of this._moraleBars) {
       m.t += deltaTime;
@@ -5920,6 +5941,504 @@ export class CharacterAnimator {
     g.addColorStop(1, 'rgba(230,245,255,0)');
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(fx.x, fx.y, Math.min(fx.w, fx.h) * 0.6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V21.0 — 动画与地图增强：丝绸之路动画 + 家族动画
+  // ------------------------------------------------------------
+  // 公共 API：
+  //   playCaravanMarch(ctx, x1, y1, x2, y2)  商队沿丝路行进（骆驼/马队+尘土）
+  //   playSilkRoadTrade(ctx, x, y, goodsType) 丝路贸易完成（金币/宝石/香料粒子）
+  //   playCaravanRaided(ctx, x, y)            商队被劫（战斗+烟雾+货物散落）
+  //   playStationBuilt(ctx, x, y)             驿站建成（旗帜升起+建筑完成）
+  //   playMarriageSuccess(ctx, x, y)          联姻成功（红绸+花灯+同心结）
+  //   playFamilyBirth(ctx, x, y)              家族成员出生（婴儿光效+祥云）
+  //   playFamilyDeath(ctx, x, y)               家族成员去世（白幡+落叶+丧钟）
+  // 性能：粒子走 _getParticle/_pushParticle 对象池；FX 列表硬上限；
+  //       专属粒子预算独立统计；持续粒子按 dt 节流；行进时长按距离自适应。
+  // ============================================================
+
+  // 推入丝路 FX（带上限保护，超出淘汰最老）
+  _pushSilkFX(fx) {
+    if (this._silkFXs.length >= this._silkFXCap) this._silkFXs.shift();
+    fx.t = 0;
+    if (fx.seed == null) fx.seed = Math.random() * 1000;
+    this._silkFXs.push(fx);
+  }
+
+  // 推入家族 FX（带上限保护，超出淘汰最老）
+  _pushFamilyFX(fx) {
+    if (this._familyFXs.length >= this._familyFXCap) this._familyFXs.shift();
+    fx.t = 0;
+    if (fx.seed == null) fx.seed = Math.random() * 1000;
+    this._familyFXs.push(fx);
+  }
+
+  // 统计专属标记粒子数量（预算保护用）
+  _countTaggedParticles(tag) {
+    let n = 0;
+    for (const p of this.particles) if (p[tag]) n++;
+    return n;
+  }
+
+  // ---- 商队行进：骆驼/马队沿 (x1,y1)->(x2,y2) 移动，时长按距离自适应 ----
+  playCaravanMarch(ctx, x1, y1, x2, y2) {
+    x1 = x1 || 0; y1 = y1 || 0; x2 = x2 || 0; y2 = y2 || 0;
+    const dist = Math.hypot(x2 - x1, y2 - y1);
+    // 距离越远走得越久，限制在 1.8~4.5 秒之间
+    const dur = Math.max(1.8, Math.min(4.5, dist / 110));
+    this._pushSilkFX({ type: 'march', x1, y1, x2, y2, dur });
+    // 出发处一阵起步尘土
+    for (let i = 0; i < 5; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'silk_dust', _silk: true,
+        x: x1 + (Math.random() - 0.5) * 16, y: y1 + (Math.random() - 0.5) * 6,
+        vx: (Math.random() - 0.5) * 20, vy: -8 - Math.random() * 10,
+        gravity: -4, drag: 0.3,
+        life: 0.8 + Math.random() * 0.5, maxLife: 1.3,
+        size: 3 + Math.random() * 4, color: '#b89a6a' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 丝路贸易完成：按货物类型喷金/宝石/香料粒子 ----
+  // goodsType: 'gold' | 'gem' | 'spice'（缺省 gold）
+  playSilkRoadTrade(ctx, x, y, goodsType) {
+    x = x || 0; y = y || 0;
+    const gt = String(goodsType || 'gold').toLowerCase();
+    this._pushSilkFX({ type: 'trade', x, y, goodsType: gt, dur: 1.6 });
+    // 一次性爆发货物粒子
+    let colors, count, upBias;
+    if (gt === 'gem') {
+      colors = ['#7fe0d0', '#a88aff', '#ff8ad0', '#8affc0']; count = 16; upBias = 90;
+    } else if (gt === 'spice') {
+      colors = ['#d8a04a', '#a86a2a', '#e8c060', '#8a5a2a']; count = 14; upBias = 60;
+    } else {
+      colors = ['#FFD700', '#fff2b0', '#ffcf40', '#f0e090']; count = 18; upBias = 110;
+    }
+    for (let i = 0; i < count; i++) {
+      const s = this._getParticle();
+      const a = Math.random() * Math.PI * 2;
+      const sp = 40 + Math.random() * 120;
+      Object.assign(s, { type: 'silk_goods', _silk: true,
+        x: x + (Math.random() - 0.5) * 10, y: y + (Math.random() - 0.5) * 8,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - upBias,
+        gravity: 160, drag: 0.4,
+        life: 0.8 + Math.random() * 0.7, maxLife: 1.5,
+        size: 2 + Math.random() * 2.5,
+        color: colors[Math.floor(Math.random() * colors.length)],
+        seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+    // 贸易完成光环（扩散圆环）
+    const ring = this._getParticle();
+    Object.assign(ring, { type: 'silk_trade_ring', x, y, vx: 0, vy: 0,
+      gravity: 0, drag: 0, life: 1.2, maxLife: 1.2, size: 6,
+      color: gt === 'gem' ? '#8affc0' : (gt === 'spice' ? '#e8c060' : '#FFD700') });
+    this._pushParticle(ring);
+  }
+
+  // ---- 商队被劫：战斗火花 + 黑烟 + 货物散落 ----
+  playCaravanRaided(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushSilkFX({ type: 'raid', x, y, dur: 2.2 });
+    // 战斗红橙火花
+    this.spawnParticle(x, y, 'spark_burst');
+    // 黑烟团（半透明灰黑，上升飘散）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'silk_smoke', _silk: true,
+        x: x + (Math.random() - 0.5) * 22, y: y + (Math.random() - 0.5) * 8,
+        vx: (Math.random() - 0.5) * 16, vy: -18 - Math.random() * 14,
+        gravity: -6, drag: 0.2,
+        life: 1.6 + Math.random() * 1.0, maxLife: 2.6,
+        size: 7 + Math.random() * 9,
+        color: Math.random() < 0.5 ? 'rgba(50,45,40,0.6)' : 'rgba(80,72,64,0.5)' });
+      this._pushParticle(s);
+    }
+    // 散落货物（木箱/布袋，抛物下落）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'silk_cargo', _silk: true,
+        x: x + (Math.random() - 0.5) * 14, y: y - 6,
+        vx: (Math.random() - 0.5) * 90, vy: -60 - Math.random() * 70,
+        gravity: 220, drag: 0.3,
+        life: 1.2 + Math.random() * 0.6, maxLife: 1.8,
+        size: 2.5 + Math.random() * 2.5,
+        color: Math.random() < 0.5 ? '#8a6a3a' : '#a8854a',
+        seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 驿站建成：旗帜升起 + 建筑完成光效 ----
+  playStationBuilt(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushSilkFX({ type: 'station', x, y, dur: 2.0 });
+    // 落成金色碎屑
+    for (let i = 0; i < 10; i++) {
+      const s = this._getParticle();
+      const a = Math.random() * Math.PI * 2;
+      Object.assign(s, { type: 'silk_gold', _silk: true,
+        x: x + (Math.random() - 0.5) * 20, y: y + (Math.random() - 0.5) * 14,
+        vx: Math.cos(a) * 30, vy: -40 - Math.random() * 50,
+        gravity: 90, drag: 0.3,
+        life: 0.9 + Math.random() * 0.6, maxLife: 1.5,
+        size: 1.8 + Math.random() * 2, color: '#FFD700' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 联姻成功：红色彩带 + 花灯 + 同心结 ----
+  playMarriageSuccess(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushFamilyFX({ type: 'marriage', x, y, dur: 2.6 });
+    // 红色彩带飘落
+    for (let i = 0; i < 14; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'fam_ribbon', _family: true,
+        x: x + (Math.random() - 0.5) * 60, y: y - 30 - Math.random() * 30,
+        vx: (Math.random() - 0.5) * 30, vy: 18 + Math.random() * 22,
+        gravity: 6, drag: 0.1,
+        life: 1.8 + Math.random() * 1.0, maxLife: 2.8,
+        size: 2.5 + Math.random() * 2,
+        color: Math.random() < 0.6 ? '#d83a3a' : '#ff6a5a',
+        angle: Math.random() * Math.PI * 2, seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+    // 暖红灯花（向上漂浮发光）
+    for (let i = 0; i < 6; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'fam_lantern', _family: true,
+        x: x + (Math.random() - 0.5) * 40, y: y + (Math.random() - 0.5) * 10,
+        vx: (Math.random() - 0.5) * 12, vy: -16 - Math.random() * 12,
+        gravity: -3, drag: 0.1,
+        life: 1.6 + Math.random() * 0.8, maxLife: 2.4,
+        size: 3 + Math.random() * 2, color: '#ffb04a', seed: Math.random() * 100 });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 家族成员出生：婴儿柔光 + 祥云 ----
+  playFamilyBirth(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushFamilyFX({ type: 'birth', x, y, dur: 2.4 });
+    // 柔和金光（婴儿光晕）
+    const glow = this._getParticle();
+    Object.assign(glow, { type: 'fam_baby_glow', x, y, vx: 0, vy: 0,
+      gravity: 0, drag: 0, life: 1.6, maxLife: 1.6, size: 8, color: '#fff2c0' });
+    this._pushParticle(glow);
+    // 白色祥云团（蓬松上升）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'fam_cloud', _family: true,
+        x: x + (Math.random() - 0.5) * 30, y: y + (Math.random() - 0.5) * 10,
+        vx: (Math.random() - 0.5) * 10, vy: -8 - Math.random() * 8,
+        gravity: -2, drag: 0.1,
+        life: 1.8 + Math.random() * 0.8, maxLife: 2.6,
+        size: 8 + Math.random() * 8,
+        color: Math.random() < 0.5 ? 'rgba(255,250,235,0.7)' : 'rgba(255,245,220,0.6)' });
+      this._pushParticle(s);
+    }
+    // 金粉星星（细碎闪光上飘）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'fam_sparkle', _family: true,
+        x: x + (Math.random() - 0.5) * 24, y: y + (Math.random() - 0.5) * 8,
+        vx: (Math.random() - 0.5) * 16, vy: -20 - Math.random() * 16,
+        gravity: -2, drag: 0.2,
+        life: 1.2 + Math.random() * 0.8, maxLife: 2.0,
+        size: 1.5 + Math.random() * 1.5, color: '#ffe9a8' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 家族成员去世：白幡 + 落叶 + 丧钟 ----
+  playFamilyDeath(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushFamilyFX({ type: 'death', x, y, dur: 2.8 });
+    // 灰白落叶/纸钱（缓缓飘落）
+    for (let i = 0; i < 14; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'fam_leaf', _family: true,
+        x: x + (Math.random() - 0.5) * 50, y: y - 20 - Math.random() * 30,
+        vx: (Math.random() - 0.5) * 18, vy: 14 + Math.random() * 16,
+        gravity: 4, drag: 0.15,
+        life: 2.0 + Math.random() * 1.2, maxLife: 3.2,
+        size: 2 + Math.random() * 2,
+        color: Math.random() < 0.5 ? '#d8d0c0' : '#b0a898',
+        angle: Math.random() * Math.PI * 2, seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+    // 丧钟暗灰光环（低沉灰雾扩散）
+    const bell = this._getParticle();
+    Object.assign(bell, { type: 'fam_bell_ring', x, y, vx: 0, vy: 0,
+      gravity: 0, drag: 0, life: 2.0, maxLife: 2.0, size: 6, color: '#8a8578' });
+    this._pushParticle(bell);
+  }
+
+  // ---- 丝路 FX 时间线推进 + 持续粒子生成（行军途中持续尘土）----
+  _updateSilkFXs(dt) {
+    if (!dt || dt <= 0) return;
+    for (let i = this._silkFXs.length - 1; i >= 0; i--) {
+      const fx = this._silkFXs[i];
+      fx.t += dt;
+      if (fx.t >= fx.dur) { this._silkFXs.splice(i, 1); continue; }
+      // 行军途中持续撒尘土（按 dt 节流，受预算保护）
+      if (fx.type === 'march') {
+        this._silkEmitAcc += dt;
+        const step = 0.18;
+        if (this._silkEmitAcc >= step) {
+          this._silkEmitAcc = 0;
+          if (this._countTaggedParticles('_silk') < this._silkParticleBudget) {
+            const prog = fx.t / fx.dur;
+            const cx = fx.x1 + (fx.x2 - fx.x1) * prog;
+            const cy = fx.y1 + (fx.y2 - fx.y1) * prog;
+            const s = this._getParticle();
+            Object.assign(s, { type: 'silk_dust', _silk: true,
+              x: cx + (Math.random() - 0.5) * 10, y: cy + 2,
+              vx: (Math.random() - 0.5) * 14, vy: -6 - Math.random() * 6,
+              gravity: -3, drag: 0.3,
+              life: 0.6 + Math.random() * 0.4, maxLife: 1.0,
+              size: 2.5 + Math.random() * 3, color: '#b89a6a' });
+            this._pushParticle(s);
+          }
+        }
+      }
+    }
+  }
+
+  // ---- 家族 FX 时间线推进 ----
+  _updateFamilyFXs(dt) {
+    if (!dt || dt <= 0) return;
+    for (let i = this._familyFXs.length - 1; i >= 0; i--) {
+      const fx = this._familyFXs[i];
+      fx.t += dt;
+      if (fx.t >= fx.dur) this._familyFXs.splice(i, 1);
+    }
+  }
+
+  // ---- 绘制所有激活的丝路 FX（map.js 每帧调用）----
+  drawSilkFX(ctx) {
+    if (!ctx || this._silkFXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._silkFXs) {
+      const p = fx.t / fx.dur;
+      if (p < 0 || p > 1) continue;
+      switch (fx.type) {
+        case 'march': this._drawMarchCaravan(ctx, fx, p); break;
+        case 'trade': this._drawTradeBurst(ctx, fx, p); break;
+        case 'raid': this._drawRaidScene(ctx, fx, p); break;
+        case 'station': this._drawStationBuilt(ctx, fx, p); break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 行进中的骆驼商队剪影（沿路线插值，带起伏步态）
+  _drawMarchCaravan(ctx, fx, p) {
+    const cx = fx.x1 + (fx.x2 - fx.x1) * p;
+    const cy = fx.y1 + (fx.y2 - fx.y1) * p;
+    const dirX = fx.x2 - fx.x1;
+    const dirY = fx.y2 - fx.y1;
+    const ang = Math.atan2(dirY, dirX);
+    const walking = Math.sin(this.time * 10 + fx.seed);
+    ctx.save();
+    ctx.translate(cx, cy + walking * 1.2);
+    ctx.rotate(0); // 等距俯视角不旋转，保持剪影
+    // 3 头骆驼/马，前后错落
+    for (let i = 0; i < 3; i++) {
+      const back = i * 5;
+      const bx = -Math.cos(ang) * back;
+      const by = -Math.sin(ang) * back * 0.5;
+      ctx.save();
+      ctx.translate(bx, by + Math.sin(this.time * 10 + fx.seed + i * 1.3) * 1.0);
+      ctx.fillStyle = i === 1 ? '#6a4a2a' : '#7a5a3a';
+      // 身体（双驼峰轮廓）
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 4.2, 2.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath(); // 双峰
+      ctx.arc(-1.8, -1.8, 1.5, 0, Math.PI * 2);
+      ctx.arc(1.8, -1.8, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      // 头
+      ctx.beginPath();
+      ctx.arc(4.2, -1.2, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // 贸易完成：扩散金光圆环 + 货物色晕
+  _drawTradeBurst(ctx, fx, p) {
+    const colors = { gold: '#FFD700', gem: '#8affc0', spice: '#e8c060' };
+    const col = colors[fx.goodsType] || '#FFD700';
+    ctx.save();
+    // 扩散圆环（ease-out）
+    const rr = 8 + p * 46 * (1 - p * 0.3);
+    ctx.globalAlpha = (1 - p) * 0.9;
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2.5 * (1 - p) + 0.5;
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y, rr, rr * 0.5, 0, 0, Math.PI * 2); ctx.stroke();
+    // 中心光晕
+    ctx.globalAlpha = (1 - p) * 0.5;
+    const g = ctx.createRadialGradient(fx.x, fx.y, 2, fx.x, fx.y, 30);
+    g.addColorStop(0, col);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, 30, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // 被劫：红闪 + 烟尘漩涡 + 散落物轮廓
+  _drawRaidScene(ctx, fx, p) {
+    ctx.save();
+    // 红色战斗闪光（前 0.3s 快速闪过）
+    if (p < 0.35) {
+      ctx.globalAlpha = (1 - p / 0.35) * 0.6;
+      ctx.fillStyle = '#ff4030';
+      ctx.beginPath(); ctx.arc(fx.x, fx.y, 16, 0, Math.PI * 2); ctx.fill();
+    }
+    // 烟灰漩涡（半透明灰团旋升）
+    ctx.globalAlpha = 0.5 * (1 - p);
+    ctx.fillStyle = 'rgba(60,55,50,0.6)';
+    for (let i = 0; i < 3; i++) {
+      const ang = this.time * 2 + fx.seed + i * 2.1;
+      const rr = 6 + i * 5;
+      ctx.beginPath();
+      ctx.arc(fx.x + Math.cos(ang) * rr * 0.6, fx.y - 6 - i * 5, 5 - i, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 驿站建成：旗杆 + 红旗升起 + 底座建筑完成
+  _drawStationBuilt(ctx, fx, p) {
+    ctx.save();
+    ctx.translate(fx.x, fx.y);
+    // 底座（建筑轮廓随时间升高）
+    const buildH = 10 * Math.min(1, p * 2);
+    ctx.fillStyle = '#8a6a4a';
+    ctx.fillRect(-8, -buildH, 16, buildH);
+    // 旗杆
+    ctx.strokeStyle = '#5a4a3a';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(0, -buildH); ctx.lineTo(0, -buildH - 18); ctx.stroke();
+    // 旗帜升起（从底部升到顶，带飘动）
+    const flagProg = Math.min(1, Math.max(0, (p - 0.3) / 0.5));
+    const flagY = -buildH - (1 - flagProg) * 16;
+    if (flagProg > 0) {
+      ctx.fillStyle = '#d83a3a';
+      const wave = Math.sin(this.time * 8 + fx.seed) * 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, flagY);
+      ctx.lineTo(10 + wave, flagY + 2);
+      ctx.lineTo(0, flagY + 5);
+      ctx.closePath();
+      ctx.fill();
+    }
+    // 完成闪光（最后阶段）
+    if (p > 0.8) {
+      ctx.globalAlpha = (p - 0.8) / 0.2 * 0.7;
+      const g = ctx.createRadialGradient(0, -buildH - 8, 2, 0, -buildH - 8, 24);
+      g.addColorStop(0, '#ffe9a8');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(0, -buildH - 8, 24, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ---- 绘制所有激活的家族 FX（map.js 每帧调用）----
+  drawFamilyFX(ctx) {
+    if (!ctx || this._familyFXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._familyFXs) {
+      const p = fx.t / fx.dur;
+      if (p < 0 || p > 1) continue;
+      switch (fx.type) {
+        case 'marriage': this._drawMarriageFX(ctx, fx, p); break;
+        case 'birth': this._drawBirthFX(ctx, fx, p); break;
+        case 'death': this._drawDeathFX(ctx, fx, p); break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 联姻：同心结（红色双环相扣）+ 光晕
+  _drawMarriageFX(ctx, fx, p) {
+    ctx.save();
+    const fade = p < 0.2 ? p / 0.2 : (p > 0.8 ? (1 - p) / 0.2 : 1);
+    ctx.globalAlpha = fade;
+    // 光晕
+    const g = ctx.createRadialGradient(fx.x, fx.y, 2, fx.x, fx.y, 40);
+    g.addColorStop(0, 'rgba(255,120,110,0.5)');
+    g.addColorStop(1, 'rgba(255,120,110,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, 40, 0, Math.PI * 2); ctx.fill();
+    // 同心结：两个相扣的红环
+    ctx.strokeStyle = '#e03030';
+    ctx.lineWidth = 2.5;
+    const s = 1 + Math.sin(p * Math.PI) * 0.2; // 呼吸放大
+    ctx.save();
+    ctx.translate(fx.x, fx.y);
+    ctx.scale(s, s);
+    ctx.beginPath(); ctx.arc(-6, 0, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(6, 0, 6, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+    ctx.restore();
+  }
+
+  // 出生：婴儿柔光 + 祥云托举
+  _drawBirthFX(ctx, fx, p) {
+    ctx.save();
+    const fade = p < 0.2 ? p / 0.2 : (p > 0.8 ? (1 - p) / 0.2 : 1);
+    ctx.globalAlpha = fade;
+    // 中心暖光
+    const g = ctx.createRadialGradient(fx.x, fx.y, 2, fx.x, fx.y, 30);
+    g.addColorStop(0, 'rgba(255,245,200,0.85)');
+    g.addColorStop(1, 'rgba(255,245,200,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, 30, 0, Math.PI * 2); ctx.fill();
+    // 底部祥云（两朵蓬松云团）
+    ctx.fillStyle = 'rgba(255,252,240,0.8)';
+    for (let i = 0; i < 2; i++) {
+      const ox = (i - 0.5) * 18;
+      ctx.beginPath();
+      ctx.arc(fx.x + ox, fx.y + 8, 7, 0, Math.PI * 2);
+      ctx.arc(fx.x + ox + 5, fx.y + 6, 5, 0, Math.PI * 2);
+      ctx.arc(fx.x + ox - 5, fx.y + 6, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 去世：白幡垂挂 + 灰雾
+  _drawDeathFX(ctx, fx, p) {
+    ctx.save();
+    const fade = p < 0.2 ? p / 0.2 : (p > 0.8 ? (1 - p) / 0.2 : 1);
+    ctx.globalAlpha = fade * 0.9;
+    // 低沉灰雾
+    const g = ctx.createRadialGradient(fx.x, fx.y, 2, fx.x, fx.y, 36);
+    g.addColorStop(0, 'rgba(150,145,135,0.5)');
+    g.addColorStop(1, 'rgba(150,145,135,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, 36, 0, Math.PI * 2); ctx.fill();
+    // 两侧白幡（三角幡布随微风摆动）
+    ctx.fillStyle = 'rgba(240,238,232,0.9)';
+    for (let i = 0; i < 2; i++) {
+      const sx = (i === 0 ? -1 : 1) * 14;
+      const sway = Math.sin(this.time * 2 + fx.seed + i) * 2;
+      ctx.beginPath();
+      ctx.moveTo(fx.x + sx, fx.y - 18);
+      ctx.lineTo(fx.x + sx + sway + (i === 0 ? 6 : -6), fx.y - 6);
+      ctx.lineTo(fx.x + sx, fx.y - 4);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.restore();
   }
 }

@@ -185,6 +185,30 @@ export class IsometricMap {
     this._disasterTriggered = new Map();  // cityId -> signature 字符串
     this._DISASTER_VISIBLE_CAP = 24;      // 同屏最多绘制灾害标记数量保护
 
+    // ============================================================
+    // V21.0 — 动画与地图增强：丝绸之路可视化 + 家族联姻线
+    // 设计：
+    //   - 丝路路线：金色虚线 + 沿路线流动光点（stateless，按 _animTime 计算）
+    //   - 丝路节点标记：沿线城市画骆驼小图标
+    //   - 商队动画：2~3 支商队沿整条丝路往返循环（stateless）
+    //   - 家族关系线：联姻城市间红色脉冲连线
+    // 性能：
+    //   - 丝路城市序列由 setSilkRoadCities 注入；缺省按地名关键字自动识别
+    //   - 离屏不绘制（_onScreen 裁剪）；光点/商队数量硬上限
+    //   - 商队沿折线位置按时间分段插值，无逐帧可变状态
+    // ============================================================
+    this._silkRoadCities = null;        // 外部注入的丝路城市 id 序列（有序）
+    this._silkPathCache = null;         // 计算好的等距折线 [{isoX,isoY}]
+    this._silkPathScreen = null;        // 屏幕坐标折线缓存（每帧按 zoom 重算）
+    this._marriageLinks = [];           // 联姻城市对 [[idA,idB],...]
+    this._SILK_DOT_CAP = 14;            // 丝路流动光点上限
+    this._SILK_CARAVAN_CAP = 3;         // 同屏商队数量上限
+    this._SILK_NODE_CAP = 40;           // 丝路节点标记数量上限
+    // 默认丝路地名关键字（南北朝西北边地常见丝路重镇）
+    this._SILK_NAME_KEYS = ['长安','洛阳','敦煌','楼兰','龟兹','于阗','疏勒',
+      '张掖','酒泉','武威','凉州','高昌','伊吾','碎叶','阳关','玉门',
+      '甘州','肃州','瓜州','鄯善','且末','蒲昌','焉耆','轮台'];
+
     this._bindEvents();
     this._initView();
   }
@@ -1421,6 +1445,203 @@ export class IsometricMap {
     ctx.restore();
   }
 
+  // ============================================================
+  // V21.0 — 丝绸之路可视化 + 家族联姻线
+  // ============================================================
+
+  // 外部注入丝路城市 id 序列（有序，决定路线走向）。
+  // 传入 null/空数组时回退到按地名关键字自动识别。
+  setSilkRoadCities(ids) {
+    this._silkRoadCities = (Array.isArray(ids) && ids.length) ? ids.slice() : null;
+    this._silkPathCache = null;   // 使缓存失效
+  }
+
+  // 外部注入联姻城市对：pairs = [[idA,idB], ...]
+  setMarriageLinks(pairs) {
+    this._marriageLinks = Array.isArray(pairs) ? pairs.slice() : [];
+  }
+
+  // 解析丝路折线（等距坐标）。有外部注入用注入序列；否则按地名关键字自动识别。
+  // 返回 [{isoX,isoY}]，不足两点返回 null。
+  _resolveSilkPath() {
+    if (this._silkPathCache) return this._silkPathCache;
+    if (!this.game) return null;
+    let seq = null;
+    if (Array.isArray(this._silkRoadCities) && this._silkRoadCities.length) {
+      seq = this._silkRoadCities
+        .map(id => this.game.cities.get(id))
+        .filter(c => c && c.isoX != null);
+    } else {
+      // 自动识别：名字命中丝路关键字的城市
+      const hit = [];
+      for (const c of this.game.cities.values()) {
+        const nm = String(c.name || '');
+        if (this._SILK_NAME_KEYS.some(k => nm.includes(k))) hit.push(c);
+      }
+      // 按经度（isoX+isoY 近似东西向）排序，形成一条自东向西的折线
+      hit.sort((a, b) => (a.isoX + a.isoY) - (b.isoX + b.isoY));
+      seq = hit;
+    }
+    if (!seq || seq.length < 2) { this._silkPathCache = null; return null; }
+    // 数量硬上限保护
+    if (seq.length > this._SILK_NODE_CAP) seq = seq.slice(0, this._SILK_NODE_CAP);
+    this._silkPathCache = seq.map(c => ({ isoX: c.isoX, isoY: c.isoY, city: c }));
+    return this._silkPathCache;
+  }
+
+  // 折线总长（屏幕坐标，用于按距离调整光点速度）
+  _polylineScreenLength(pts) {
+    let L = 0;
+    for (let i = 1; i < pts.length; i++) L += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    return L;
+  }
+
+  // 在折线上按累计距离比例 f(0~1) 取点（屏幕坐标）
+  _pointOnPolyline(pts, f) {
+    const L = this._polylineScreenLength(pts);
+    if (L <= 0 || pts.length < 2) return pts[0] || { x: 0, y: 0 };
+    let target = f * L;
+    for (let i = 1; i < pts.length; i++) {
+      const seg = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+      if (target <= seg) {
+        const t = seg > 0 ? target / seg : 0;
+        return {
+          x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t,
+          y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t
+        };
+      }
+      target -= seg;
+    }
+    return pts[pts.length - 1];
+  }
+
+  // 丝路路线：金色虚线 + 流动光点 + 节点骆驼标记 + 行进商队
+  _drawSilkRoad(ctx) {
+    if (!this.game) return;
+    const path = this._resolveSilkPath();
+    if (!path || path.length < 2) return;
+    // 转屏幕坐标
+    const pts = path.map(p => this.isoToScreen(p.isoX, p.isoY));
+    // 视口裁剪：整条折线都在视口外则跳过
+    let anyVisible = false;
+    for (const p of pts) {
+      if (this._onScreen(p.x, p.y, 200)) { anyVisible = true; break; }
+    }
+    if (!anyVisible) return;
+
+    const t = this._animTime;
+    const lineW = Math.max(1.5, 2.2 * this.scale);
+    ctx.save();
+
+    // 1) 金色虚线路线
+    ctx.strokeStyle = 'rgba(212,175,55,0.55)';
+    ctx.lineWidth = lineW;
+    ctx.setLineDash([7, 6]);
+    ctx.lineDashOffset = -t * 20;   // 虚线流动
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 2) 流动光点（沿折线匀速移动，多个相位错开）
+    const L = this._polylineScreenLength(pts);
+    const dots = Math.min(this._SILK_DOT_CAP, Math.max(3, Math.floor(L / 60)));
+    for (let d = 0; d < dots; d++) {
+      // 光点速度按距离调整：折线越长速度越快，保证视觉周期稳定
+      const f = ((t * 0.12 + d / dots) % 1 + 1) % 1;
+      const pt = this._pointOnPolyline(pts, f);
+      if (!this._onScreen(pt.x, pt.y, 40)) continue;
+      ctx.fillStyle = 'rgba(255,225,130,0.95)';
+      ctx.shadowColor = '#ffd24a';
+      ctx.shadowBlur = 6;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, Math.max(1.6, 2.4 * this.scale), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    // 3) 节点骆驼标记（沿丝路城市顶部）
+    for (let i = 0; i < pts.length && i < this._SILK_NODE_CAP; i++) {
+      const p = pts[i];
+      if (!this._onScreen(p.x, p.y, 60)) continue;
+      this._drawCamelIcon(ctx, p.x, p.y - 14 * this.scale, t + i * 0.7);
+    }
+
+    // 4) 行进商队（沿整条丝路往返，数量按长度自适应，硬上限）
+    const caravanN = Math.min(this._SILK_CARAVAN_CAP, Math.max(1, Math.floor(L / 260)));
+    for (let c = 0; c < caravanN; c++) {
+      // 0→1→0 往返三角波
+      const raw = (t * 0.05 + c / caravanN) % 1;
+      const f = raw < 0.5 ? raw * 2 : 2 - raw * 2;
+      const pt = this._pointOnPolyline(pts, f);
+      if (!this._onScreen(pt.x, pt.y, 60)) continue;
+      this._drawCamelIcon(ctx, pt.x, pt.y, t + c * 2.0, true);
+    }
+
+    ctx.restore();
+  }
+
+  // 骆驼小图标（节点用静态版，商队用行进版带步态起伏）
+  _drawCamelIcon(ctx, x, y, time, walking = false) {
+    const bob = walking ? Math.sin(time * 9) * 1.0 : Math.sin(time * 2) * 0.6;
+    const s = Math.max(0.8, this.scale);
+    ctx.save();
+    ctx.translate(x, y + bob);
+    ctx.scale(s, s);
+    ctx.fillStyle = '#7a5a34';
+    // 身体
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 4, 2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // 双峰
+    ctx.beginPath(); ctx.arc(-1.6, -1.6, 1.3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(1.6, -1.6, 1.3, 0, Math.PI * 2); ctx.fill();
+    // 头
+    ctx.beginPath(); ctx.arc(4.4, -1.0, 1.0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
+  // 家族联姻关系线：联姻城市间红色脉冲连线
+  _drawMarriageLines(ctx) {
+    if (!this.game || !this._marriageLinks.length) return;
+    const t = this._animTime;
+    ctx.save();
+    let drawn = 0;
+    const CAP = 12;   // 同屏联姻线上限保护
+    for (const pair of this._marriageLinks) {
+      if (drawn >= CAP) break;
+      const cA = this.game.cities.get(pair[0]);
+      const cB = this.game.cities.get(pair[1]);
+      if (!cA || !cB || cA.isoX == null || cB.isoX == null) continue;
+      const p1 = this.isoToScreen(cA.isoX, cA.isoY);
+      const p2 = this.isoToScreen(cB.isoX, cB.isoY);
+      if (!this._onScreen((p1.x + p2.x) / 2, (p1.y + p2.y) / 2, 200)) continue;
+      const pulse = 0.4 + 0.3 * Math.sin(t * 3 + drawn);
+      ctx.strokeStyle = `rgba(220,60,70,${pulse})`;
+      ctx.lineWidth = Math.max(1.2, 1.8 * this.scale);
+      ctx.setLineDash([4, 4]);
+      ctx.lineDashOffset = -t * 18;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // 中点一颗红心/喜点
+      const mx = (p1.x + p2.x) / 2;
+      const my = (p1.y + p2.y) / 2;
+      ctx.fillStyle = 'rgba(255,90,100,0.9)';
+      ctx.shadowColor = '#ff5060';
+      ctx.shadowBlur = 5;
+      ctx.beginPath();
+      ctx.arc(mx, my, Math.max(1.6, 2.2 * this.scale), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      drawn++;
+    }
+    ctx.restore();
+  }
+
   // 战争迷雾增强：对已探索但无视野的城市画柔和渐变雾团
   _drawWarFog(ctx) {
     if (!this.game) return;
@@ -1541,6 +1762,10 @@ export class IsometricMap {
     this._drawForestLayers(ctx);
     // V18.0：势力边境虚线（不同归属城市间流动虚线）
     this._drawFactionBorders(ctx);
+    // V21.0：丝绸之路路线（金色虚线+流动光点+节点骆驼+行进商队）
+    this._drawSilkRoad(ctx);
+    // V21.0：家族联姻关系线（联姻城市间红色脉冲连线）
+    this._drawMarriageLines(ctx);
     // V18.0：河上商船/战船（河流城市附近定期经过）
     this._drawRiverShips(ctx);
 
@@ -1617,6 +1842,14 @@ export class IsometricMap {
     }
     if (typeof Animator.drawDisasterFX === 'function') {
       Animator.drawDisasterFX(ctx);
+    }
+    // V21.0：丝绸之路动画 FX（商队行进/贸易爆发/被劫烟雾/驿站建成）
+    if (typeof Animator.drawSilkFX === 'function') {
+      Animator.drawSilkFX(ctx);
+    }
+    // V21.0：家族动画 FX（联姻红绸/出生祥云/去世白幡）
+    if (typeof Animator.drawFamilyFX === 'function') {
+      Animator.drawFamilyFX(ctx);
     }
   }
 

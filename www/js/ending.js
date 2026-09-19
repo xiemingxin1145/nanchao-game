@@ -344,6 +344,51 @@ export const ENDINGS = [
       } catch (e) { return false; }
     },
     achievement: 'v20_disaster_types_all'
+  },
+
+  // V21.0 新增：丝路霸主（S）— 贯通丝路、亭障相望、市利倍收
+  {
+    id: 'v21_silk_overlord', name: '丝路霸主', rank: 'S',
+    text: '自长安凿空，经敦煌逾葱岭，亭障驿骑相望数千里。' +
+          '我师护送商队，旌旗所指，胡羌帖服。于是蜀锦吴缣，西达于大秦；' +
+          '波斯之珠、安息之香、月氏之马，辐辏于王府。' +
+          '府库之积，不专于租税，而半出于互市。西域三十六国，皆重译献见。' +
+          '史臣曰：汉武通西域，劳费不赀；今我不烦兵革而商道自通，' +
+          '富强之术，岂在战阵乎。后世称「丝路霸主」，岂为过哉。',
+    condition: (game) => {
+      try {
+        const ts = game.tradeSystem;
+        if (!ts || !ts.v21 || !ts.v21.started) return false;
+        const stations = Object.keys(ts.v21.stations || {}).length;
+        const profit = ts.v21.stats?.profitEarned || 0;
+        const sec = (typeof ts.getSilkRoadSecurity === 'function')
+          ? ts.getSilkRoadSecurity(game, game.playerFaction).value : 0;
+        return stations >= 4 && profit >= 15000 && sec >= 70;
+      } catch (e) { return false; }
+    },
+    achievement: 'v21_silk_stations_6'
+  },
+
+  // V21.0 新增：皇室联姻（A）— 婚娅交结、望族冠时
+  {
+    id: 'v21_royal_marriage', name: '皇室联姻', rank: 'A',
+    text: '陛下以婚姻为结纳，帝女下嫁于强藩，宗女入嫔于邻邦。' +
+          '王谢袁萧，崔卢李郑，冠冕之族，世为婚媾。' +
+          '于时邻国之君，皆陛下之婿舅；疆场之事，往往以一杯酒解之。' +
+          '然姻亲虽笃，而势利之交难久；一旦反目，则唇齿转为戈矛。' +
+          '史臣曰：「婚姻者，合二姓之好，上以事宗庙，下以继后世。」' +
+          '以婚媾固邦交，此春秋以来之要道也，可不慎欤。',
+    condition: (game) => {
+      try {
+        const fs = game.familySystem;
+        if (!fs) return false;
+        const marriages = fs.stats?.marriages || 0;
+        const prestige = (typeof fs.getFamilyPrestige === 'function')
+          ? fs.getFamilyPrestige(game.playerFaction, game).value : 0;
+        return marriages >= 3 && prestige >= 60;
+      } catch (e) { return false; }
+    },
+    achievement: 'v21_marriage_3'
   }
 ];
 

@@ -124,7 +124,8 @@ export class HaremSystem {
       if (fid === game.playerFaction) {
         game.pushLog(`👶 【${c.rankName} ${c.name}】诞下${gender === 'male' ? '皇子' : '皇女'}【${child.name}】！大赦天下，民心大振。`);
         // 皇子出生：民心 +3
-        for (const city of game.getFactionCities(fid)) city.morale = Math.min(100, city.morale + 3);
+        // 性能优化（harem.js V21.0·120城回合结算）：优先复用 settleTurn 玩家城市缓存。
+        for (const city of (game._playerCitiesTurnCache || game.getFactionCities(fid))) city.morale = Math.min(100, city.morale + 3);
         if (game.eventSystem) game._pendingRoyalBirth = child.id;
       }
     }

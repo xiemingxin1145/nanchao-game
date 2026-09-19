@@ -111,11 +111,22 @@ export function saveGame(game, slot = 0) {
     //   故阈值取 ~3.2M 字符），直接一步把日志截到 120 条再做首次 LZ77 压缩——
     //   把「首包→再包」的两次 LZ77 重活合并为一次，最坏压缩次数从 3 次降到 2 次。
     //   日志仅展示用途，截断不影响玩法。
-    const _preJson = JSON.stringify(_shrink(data));
-    if (_preJson.length > 3_200_000 && Array.isArray(data.log) && data.log.length > 120) {
+    // 性能优化（save.js V21.0·更大存档写入）：
+    //   基准：原流程先 `_preJson = JSON.stringify(_shrink(data))` 做长度预估，
+    //     随后 `_pack(data)` 内部又重新 `_shrink(data)` + `JSON.stringify` 一次——
+    //     120城/219将的结构化数据同一张对象图被完整 stringify 两遍，
+    //     第二次纯属重复开销（大存档下 ~数十 ms）。
+    //   优化：先构造一次 shrunk 对象 + JSON 串；若无需进一步截日志，
+    //     直接对该串做 LZ77 并包信封，跳过 _pack 内的二次 _shrink+stringify。
+    //     仅当预估超阈值需再截日志时才重建一次 shrunk/JSON。
+    let _shrunkObj = _shrink(data);
+    let _json = JSON.stringify(_shrunkObj);
+    if (_json.length > 3_200_000 && Array.isArray(data.log) && data.log.length > 120) {
       data.log = data.log.slice(-120);
+      _shrunkObj = _shrink(data);
+      _json = JSON.stringify(_shrunkObj);
     }
-    let packed = _pack(data);
+    let packed = JSON.stringify({ lz: 6, data: lz77Compress(_json) });
     // 性能优化（save.js 大存档写入 V19.0·96城/189将）：
     //   基准：旧流程为「首包 500 条日志 → 超 4.2M 再包 200 条 → 写盘仍超配额再包 100 条」，
     //   最坏要跑 3 次 JSON.stringify + 3 次 LZ77 压缩。96 城/189将的结构化数据已很大，
