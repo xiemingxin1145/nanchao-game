@@ -84,7 +84,15 @@ export class CalendarSystem {
       logs.push(`军心${eff.milFlat >= 0 ? '+' : ''}${eff.milFlat}`);
     }
     if (eff.legitFlat && game.dynastySystem) {
-      game.dynastySystem.calcLegitimacy(game, game.playerFaction);
+      // BUG修复（calendar.js 正统加成失效）：原实现只调用
+      //   game.dynastySystem.calcLegitimacy()——而该方法每回合会按古都数/君主政治从头
+      //   重算正统（完全不读 eff.legitFlat），随后却打日志「正统+X」。
+      //   结果：节气的正统加成从未真正生效（日志与实际不符，玩家吃亏）。
+      //   修复：先按现状重算，再把本节气的 flat 加成叠加上去并钳制到 [0,100]；
+      //   该加成是当回合临时增益（下一回合 settleTurn 会再按现状重算，符合「节气当令」语义）。
+      const rec = game.dynastySystem.get(game.playerFaction);
+      const baseLegit = game.dynastySystem.calcLegitimacy(game, game.playerFaction);
+      if (rec) rec.legitimacy = Math.max(0, Math.min(100, baseLegit + eff.legitFlat));
       logs.push(`正统+${eff.legitFlat}`);
     }
     // 一次性钱粮/金钱加成（按比例）

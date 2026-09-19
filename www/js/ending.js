@@ -7,6 +7,8 @@
 // 每个结局含名称、文本（300~500字）、触发条件、评分（S/A/B/C/D）、解锁成就。
 // ============================================================
 
+import { V19_TECH_IDS } from './tech.js';
+
 // 工具：统计某势力存活城市数 / 武将数
 function factionCities(game, fid) { return game.getFactionCities(fid).length; }
 function aliveFactionIds(game) {
@@ -256,6 +258,41 @@ export const ENDINGS = [
       } catch (e) { return false; }
     },
     achievement: 'v16_ach_gallery'
+  },
+
+  // V19.0 新增：文化盛世（S）— 文化值突破 900
+  {
+    id: 'v19_culture_heyday', name: '文化盛世', rank: 'S',
+    text: '自永嘉南渡，文物衣冠，萃于江左。陛下临御，大兴学宫，广开书院，' +
+          '国子监弦歌不辍，藏书阁缃帙万卷。文士辐辏，远夷慕化，' +
+          '虽北魏遣使求书，高丽遣子入学。' +
+          '史臣曰：三代之英，荡荡乎无能名。文治之盛，于斯为极。' +
+          '后世但知江左有文章，不复知中原有干戈矣。',
+    condition: (game) => {
+      try {
+        if (!game.cultureSystem) return false;
+        return game.cultureSystem.getCulture(game.playerFaction) > 900;
+      } catch (e) { return false; }
+    },
+    achievement: 'v19_culture_900'
+  },
+
+  // V19.0 新增：科技领先（S）— 研究完成全部 v19 科技
+  {
+    id: 'v19_tech_lead', name: '科技领先', rank: 'S',
+    text: '铁甲精骑，强弩楼船，曲辕翻车，漕运通淮。' +
+          '府兵、租庸、科举、国子监，制度粲然大备。' +
+          '虽强敌环伺，而我军械精利、仓廪充实、人才汇征。' +
+          '邻邦闻风，皆遣使求教。史臣曰：' +
+          '有为之君，不恃一时之兵威，而垂万世之法度。此所谓「制人而不制于人」者也。',
+    condition: (game) => {
+      try {
+        if (!game.techs || V19_TECH_IDS.length === 0) return false;
+        const done = new Set(game.techs);
+        return V19_TECH_IDS.every(id => done.has(id));
+      } catch (e) { return false; }
+    },
+    achievement: 'v19_tech_all'
   }
 ];
 

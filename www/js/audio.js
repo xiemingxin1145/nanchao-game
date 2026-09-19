@@ -192,6 +192,24 @@ const BGM_TRACKS = {
     //   快鼓+高 density，模拟云梯蚁附、槌撞城门的攻城节奏）
     bpm: 120, scale: ['C3', 'D3', 'Eb3', 'F3', 'G3', 'Bb3', 'C4', 'D4', 'Eb4', 'F4', 'G4', 'Bb4', 'C5'],
     wave: 'sawtooth', bassWave: 'square', stepMs: 280, hasDrum: true, density: 0.92
+  },
+
+  // ============================================================
+  // V19.0「音效扩充」新增 2 首 BGM
+  // ============================================================
+  cultureHall: { // 文化界面：D宫调，60BPM，雅致宁静——古琴+箫，文人雅集之境
+    // D 宫五声：D E F# A B D E F# A B（F# 用既有 F3s/F4s 键，不新增频率）
+    //   正弦主奏+正弦低音，无战鼓，stepMs=1000(=60BPM四分音符)，density 压低，
+    //   营造书卷丹青、悠然自得的雅致氛围。
+    bpm: 60, scale: ['D3', 'E3', 'F3s', 'A3', 'B3', 'D4', 'E4', 'F4s', 'A4', 'B4', 'D5'],
+    wave: 'sine', bassWave: 'sine', stepMs: 1000, hasDrum: false, density: 0.42
+  },
+  techLab: {     // 科技研究：A小调，80BPM，探索氛围——弦乐铺底+笛音，求索未知
+    // A 小调五声：A C D E G A C D E G（小三度暗色调 + 稀疏旋律，
+    //   三角主奏温润、正弦低音铺底，无战鼓，stepMs=750(=80BPM四分音符)，
+    //   density 0.55，模拟伏案推演、豁然开朗的探索节奏）
+    bpm: 80, scale: ['A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5'],
+    wave: 'triangle', bassWave: 'sine', stepMs: 750, hasDrum: false, density: 0.55
   }
 };
 
@@ -228,7 +246,10 @@ export const BGM_INFO = {
   plainfield:     { name: '平野鏖兵', desc: '平原战场·G大调80BPM' },
   // V18.0 新增
   strategy:       { name: '运筹帷幄', desc: '战略界面·F大调70BPM' },
-  siege:          { name: '云梯蚁附', desc: '攻城战·C小调120BPM' }
+  siege:          { name: '云梯蚁附', desc: '攻城战·C小调120BPM' },
+  // V19.0 新增
+  cultureHall:    { name: '文渊翰墨', desc: '文化界面·D宫调60BPM雅致宁静' },
+  techLab:        { name: '格物致知', desc: '科技研究·A小调80BPM探索氛围' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -239,7 +260,9 @@ const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'end
   // V17.0：两首新战斗 BGM 默认解锁
   'battleMarch', 'plainfield',
   // V18.0：战略界面/攻城战两首新 BGM 默认解锁
-  'strategy', 'siege'];
+  'strategy', 'siege',
+  // V19.0：文化界面/科技研究两首新 BGM 默认解锁（随新系统开放即可用）
+  'cultureHall', 'techLab'];
 
 export class AudioManager {
   constructor() {
@@ -264,6 +287,10 @@ export class AudioManager {
     this._bgmStep = 0;
     this._bgmOn = false;
     this._currentTrack = null;
+    // 性能优化（audio.js #4 多BGM切换资源管理）：记录本首 BGM 正在发声的旋律/低音 osc 节点。
+    //   切歌/停止时统一显式 stop+disconnect，避免 Rapid 切歌场景下旧节点残留为「活节点」
+    //   （虽会自然自停，但在 0.65~0.85s 收尾前一直占用音频图资源）。
+    this._bgmLiveNodes = [];
 
     // V8.1 环境音状态
     this._ambientTimer = null;
@@ -2010,6 +2037,68 @@ export class AudioManager {
     this.drum(0.35, 1.0, 70, BUS);
   }
 
+  // ============================================================
+  // V19.0「音效扩充」新增音效（全部 Web Audio 程序化合成）
+  // 总线：默认走 sfxGain；与既有科技/文化音效风格一致。
+  // ============================================================
+
+  // 科技研究完成（V19.0 版）：书卷翻开 + 灵光嗡鸣 + 编钟
+  // 设计：
+  //   1) 书卷翻开——两缕短促纸感噪声（带通 2.5~4kHz，快速起音），模拟翻页；
+  //   2) 灵光嗡鸣——C 大调分解和弦（C5/E5/G5/C6）慢速长音渐起渐落，
+  //      叠加高频正弦微光上滑，营造"灵光乍现"的通透感；
+  //   3) 编钟——C5/G5 双钟叠非谐泛音，庄严收束。
+  playTechResearchEpic() {
+    this.resume(); if (!this.ctx || !this._sfxGate('tech_research_epic', 600)) return;
+    this._duckBGM(); this._sfxDuck();
+    // 1) 书卷翻开：两页纸感噪声（先左后右，立体）
+    this._noiseBurst({ dur: 0.12, freq: 2600, q: 1.2, type: 'bandpass', vol: 0.14, offset: 0.0, bus: 'sfx', pan: -0.25 });
+    this._noiseBurst({ dur: 0.14, freq: 3200, q: 1.1, type: 'bandpass', vol: 0.13, offset: 0.12, bus: 'sfx', pan: 0.25 });
+    // 2) 灵光嗡鸣：分解和弦慢速渐起（0.15s 起音，2.0s 长尾）
+    const glow = [523.25, 659.25, 783.99, 1046.5];
+    glow.forEach((f, i) => {
+      this.tone(f, 1.8, 'sine', 0.10, 0.25 + i * 0.05, null, 'sfx', (i - 1.5) * 0.12);
+      this.tone(f * 2, 1.2, 'sine', 0.04, 0.25 + i * 0.05, null, 'sfx', (i - 1.5) * 0.12); // 灵光泛光
+    });
+    // 高频微光上滑（C6→E6）
+    this.tone(2093.0, 1.2, 'sine', 0.07, 0.5, 2637.0, 'sfx');
+    // 3) 编钟：C5/G5 双钟齐鸣
+    this.bell(523.25, 1.8, 0.20, 0.55, -0.1);
+    this.bell(783.99, 1.5, 0.15, 0.7, 0.15);
+  }
+
+  // 文化建筑建成（V19.0）：钟声 + 祥云音效
+  // 设计：
+  //   1) 钟声——编钟 D 宫主音（D4/A4）轻鸣，温润不喧；
+  //   2) 祥云——低通噪声缓慢向上扫频（sweep 400→2400Hz），长起音长尾音，
+  //      如云气舒卷；叠加一串极轻的五声上行泛音（D-E-#F-A），似祥云升腾。
+  playCultureHallBuilt() {
+    this.resume(); if (!this.ctx || !this._sfxGate('culture_hall_built', 700)) return;
+    this._duckBGM(); this._sfxDuck();
+    // 1) 钟声（D 宫主音）
+    this.bell(587.33 /*D5*/, 1.6, 0.18, 0.0, 0);
+    this.bell(440.00 /*A4*/, 1.4, 0.12, 0.18, 0.2);
+    // 2) 祥云：低通噪声缓慢上扫（云气舒卷）
+    this._noiseBurst({ dur: 1.6, freq: 400, q: 0.8, type: 'lowpass', vol: 0.10,
+                       offset: 0.1, bus: 'sfx', sweepTo: 2400, pan: 0 });
+    // 祥云升腾：极轻的 D 宫五声上行泛音
+    const cloud = [587.33, 659.25, 739.99 /*F#5*/, 880.00, 1174.66 /*D6*/];
+    cloud.forEach((f, i) => this.tone(f, 0.7, 'sine', 0.06, 0.25 + i * 0.16, null, 'sfx', (i % 2 ? 0.15 : -0.15)));
+  }
+
+  // 文化值提升（V19.0）：柔和上升音阶
+  // 设计：C 宫五声柔和上行（C4-D4-E4-G4-A4-C5），正弦/三角长音、低音量、
+  //   相邻音微微交叠，尾音自然消散，营造"涵养渐深、温润而升"的雅致感。
+  playCultureRise() {
+    this.resume(); if (!this.ctx || !this._sfxGate('culture_rise', 500)) return;
+    this._duckBGM();
+    const scale = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25];
+    scale.forEach((f, i) => {
+      this.tone(f, 0.55, 'sine', 0.11, i * 0.09, null, 'sfx', (i - 2.5) * 0.06);
+      this.tone(f * 2, 0.4, 'sine', 0.03, i * 0.09, null, 'sfx'); // 温润泛音
+    });
+  }
+
   // 3) 结局结算：按评级变奏（S 级庆典 / B 级和平 / D 级悲怆）。走 endingGain。
   playEndingSfx(rank = 'S') {
     this.resume(); if (!this.ctx || !this._sfxGate('ending_sfx', 1500)) return;
@@ -2953,10 +3042,20 @@ export class AudioManager {
   stopBGM() {
     this._bgmOn = false;
     if (this._bgmTimer) { clearInterval(this._bgmTimer); this._bgmTimer = null; }
+    // 性能优化（audio.js #4 多BGM切换资源管理）：切歌/停止时显式停掉上一首 BGM 正在发声的
+    //   旋律/低音 osc。此时 bgmGain 正被立刻钉到 0.0001（见 startBGM 瞬切逻辑），旧节点已
+    //   听不见，提前 stop+disconnect 不会产生可闻 click，却能立即释放音频图资源，避免 Rapid
+    //   切歌场景下旧节点拖到自然收尾（0.65~0.85s）才释放。
+    if (Array.isArray(this._bgmLiveNodes)) {
+      for (const n of this._bgmLiveNodes) {
+        try { n.osc && n.osc.stop(); } catch (e) {}
+        try { n.osc && n.osc.disconnect(); } catch (e) {}
+        try { n.gain && n.gain.disconnect(); } catch (e) {}
+      }
+      this._bgmLiveNodes = [];
+    }
     // 性能优化（audio.js #4 续）：淡出时长由 2s 缩短为 0.8s——
     //   切歌场景下旧 BGM 无需冗长淡出；常驻停止（如静音退出）仍保留平滑衰减。
-    //   正在发声的 _bgmTick osc 节点（旋律 0.65s / 低音 0.85s）会自然收尾，
-    //   不主动 stop 以免产生可闻的截断 click。
     if (this.bgmGain && this.ctx) {
       const t0 = this.ctx.currentTime;
       this.bgmGain.gain.cancelScheduledValues(t0);
@@ -2968,6 +3067,12 @@ export class AudioManager {
   _bgmTick(track) {
     if (!this.ctx || this.muted || !this._bgmOn) return;
     const t0 = this.ctx.currentTime;
+    // 性能优化（audio.js #4 多BGM切换资源管理）：先裁剪已自然收尾的活节点引用——
+    //   旋律/低音 osc 会在 0.65/0.85s 后自停，但引用留在 _bgmLiveNodes 里会阻止 GC。
+    //   每拍开头按 stopAt 时间戳丢弃已结束项，保证数组规模有界（≤ 最近 2 拍）。
+    if (this._bgmLiveNodes.length) {
+      this._bgmLiveNodes = this._bgmLiveNodes.filter(n => n.stopAt > t0);
+    }
     // 性能优化（audio.js #2）：直接用 startBGM 预建的频率数组，避免每拍
     //   PENTATONIC 属性链查找。_freqScale 缺省时（理论上不会）兜底现算。
     const freqScale = track._freqScale || track.scale.map(n => PENTATONIC[n] || 440);
@@ -2983,6 +3088,7 @@ export class AudioManager {
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.6);
       osc.connect(g); g.connect(this.bgmGain);
       osc.start(t0); osc.stop(t0 + 0.65);
+      this._bgmLiveNodes.push({ osc, gain: g, stopAt: t0 + 0.65 }); // 追踪
     }
     // 鼓点
     if (track.hasDrum && this._bgmStep % 4 === 0) this._bgmDrum(t0);
@@ -2998,6 +3104,7 @@ export class AudioManager {
       g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.8);
       osc.connect(g); g.connect(this.bgmGain);
       osc.start(t0); osc.stop(t0 + 0.85);
+      this._bgmLiveNodes.push({ osc, gain: g, stopAt: t0 + 0.85 }); // 追踪
     }
     this._bgmStep++;
   }

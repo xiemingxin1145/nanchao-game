@@ -144,7 +144,15 @@ export class DynastySystem {
     for (const cap of ANCIENT_CAPITALS) if (cityIds.has(cap)) leg += LEGIT_PER_CAPITAL;
     // 君主声望：政治/10 微调
     const emperor = rec.emperorId ? game.getGeneral(rec.emperorId) : null;
-    if (emperor) leg += Math.round((emperor.politics - 60) / 8);
+    if (emperor) {
+      // BUG修复（dynasty.js NaN 污染）：旧存档/模组武将 politics 可能为 undefined 或非数。
+      //   原 `(emperor.politics - 60)/8` 遇 undefined 得 NaN → leg=NaN → 经 Math.max/min
+      //   钳制后仍为 NaN（Math.min(100, NaN)=NaN）→ rec.legitimacy=NaN，顶栏正统显示空白/NaN，
+      //   禅让判定 `leg < ABDICATE_MIN_LEGIT` 恒为 false 而卡死。
+      //   修复：缺失/非数时回退到基准 60（与「无君主」分支一致），保证 leg 恒为有限数。
+      const pol = Number(emperor.politics);
+      leg += Math.round(((Number.isFinite(pol) ? pol : 60) - 60) / 8);
+    }
     // 一统判定
     if (cities.length >= (game.cities.size || 35) - 1) leg = 100;
     rec.legitimacy = Math.max(0, Math.min(100, Math.round(leg)));

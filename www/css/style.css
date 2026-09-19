@@ -4933,3 +4933,228 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
 /* V18 战报详析按钮 / 画布 id 兜底 */
 #v18-battle-detail-btn { margin-top: 4px; }
 #v18-fac-radar, #v18-troop-curve { max-width: 100%; }
+
+/* ============================================================
+   V19.0「文治武功版」UI 精修
+   约定：新类名一律 v19- 前缀；新增 CSS 变量与 keyframes。
+   ============================================================ */
+:root {
+  --v19-gold: #d4af37;
+  --v19-blue: #4a90d9;
+  --v19-jade: #3f7a66;
+  --v19-ink: #16130d;
+  --v19-paper: #e8d5a3;
+  --v19-line: rgba(212,175,55,0.35);
+  --v19-panel: rgba(20,17,11,0.97);
+  --v19-radius: 10px;
+  --v19-mute: #6a6a6a;
+}
+
+@keyframes v19FadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes v19Glow { 0%,100% { text-shadow: 0 0 6px rgba(212,175,55,0.35); } 50% { text-shadow: 0 0 18px rgba(212,175,55,0.8); } }
+@keyframes v19NodePulse { 0%,100% { box-shadow: 0 0 0 0 rgba(212,175,55,0.45); } 50% { box-shadow: 0 0 14px 3px rgba(212,175,55,0.3); } }
+@keyframes v19Breath { 0%,100% { opacity: 0.75; } 50% { opacity: 1; } }
+
+/* ---------- V19 弹窗骨架（与 v18 同源，独立变量） ---------- */
+.v19-overlay { position: fixed; inset: 0; z-index: 9100; background: rgba(0,0,0,0.74); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
+.v19-modal {
+  position: relative; width: min(720px, 92vw); max-height: 86vh;
+  background: var(--v19-panel); border: 1px solid var(--v19-line); border-radius: var(--v19-radius);
+  box-shadow: 0 14px 44px rgba(0,0,0,0.72), inset 0 0 60px rgba(212,175,55,0.06);
+  padding: 18px 20px 20px; color: var(--v19-paper);
+  animation: v19FadeUp .32s ease;
+}
+.v19-modal.v19-wide { width: min(880px, 94vw); }
+.v19-scroll { overflow-y: auto; }
+.v19-scroll::-webkit-scrollbar { width: 8px; }
+.v19-scroll::-webkit-scrollbar-thumb { background: rgba(212,175,55,0.4); border-radius: 4px; }
+.v19-corner { position: absolute; width: 14px; height: 14px; border: 2px solid var(--v19-gold); opacity: .7; }
+.v19-corner.tl { top: 6px; left: 6px; border-right: 0; border-bottom: 0; }
+.v19-corner.tr { top: 6px; right: 6px; border-left: 0; border-bottom: 0; }
+.v19-corner.bl { bottom: 6px; left: 6px; border-right: 0; border-top: 0; }
+.v19-corner.br { bottom: 6px; right: 6px; border-left: 0; border-top: 0; }
+.v19-title { text-align: center; color: #f0d98a; letter-spacing: 3px; margin-bottom: 14px; font-size: 20px; text-shadow: 0 0 12px rgba(212,175,55,0.3); }
+.v19-body { margin-bottom: 12px; }
+.v19-close { display: block; margin: 0 auto; }
+.v19-sec-title { font-size: 14px; color: var(--v19-gold); margin: 14px 0 8px; border-left: 3px solid var(--v19-gold); padding-left: 8px; }
+.v19-empty { color: #8a7a55; font-size: 12px; padding: 6px 0; }
+.v19-bad { color: #e06050 !important; }
+
+/* ---------- V19 版本徽章 ---------- */
+.v19-version-badge { animation: v19Glow 3.2s ease-in-out infinite; border-color: var(--v19-gold) !important; color: #ffe9b0 !important; }
+
+/* ---------- V19 顶栏文化值 ---------- */
+.v19-culture-item { cursor: pointer; }
+.v19-culture-item:hover { color: var(--v19-gold); }
+.v19-culture-btn { animation: v19Breath 3s ease-in-out infinite; }
+
+/* ============================================================
+   科技树（树状图）
+   ============================================================ */
+.v19-tech-summary { display: flex; gap: 8px; justify-content: center; margin-bottom: 12px; flex-wrap: wrap; }
+.v19-ts-chip { padding: 3px 12px; border-radius: 12px; font-size: 12px; border: 1px solid var(--v19-line); background: rgba(0,0,0,0.25); }
+.v19-ts-done { color: #ffd54f; border-color: #d4af37; }
+.v19-ts-run { color: #ff9d5c; border-color: #c8783a; }
+.v19-ts-lock { color: #8a8a8a; }
+
+.v19-tech-tabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; }
+.v19-tech-tab {
+  padding: 6px 16px; font-size: 14px; cursor: pointer;
+  background: rgba(0,0,0,0.25); border: 1px solid var(--v19-line); border-radius: 6px;
+  color: #b8a575; font-family: inherit; transition: all .2s;
+}
+.v19-tech-tab .v19-tt-icon { margin-right: 4px; }
+.v19-tech-tab.active {
+  background: linear-gradient(180deg, rgba(212,175,55,0.25), rgba(212,175,55,0.08));
+  color: #ffe9b0; border-color: var(--v19-gold); box-shadow: 0 0 10px rgba(212,175,55,0.25);
+}
+
+.v19-tech-tree { display: flex; flex-direction: column; align-items: stretch; max-height: 52vh; overflow-y: auto; padding: 4px 6px; }
+.v19-connector {
+  width: 3px; height: 22px; margin: 0 auto;
+  background: var(--v19-line, rgba(212,175,55,0.35));
+  position: relative;
+}
+.v19-connector::after {
+  content: ''; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px;
+  transform: translate(-50%,-50%) rotate(45deg);
+  background: var(--v19-line, rgba(212,175,55,0.5));
+}
+
+.v19-node {
+  display: flex; gap: 12px; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid #5a4a2a; background: rgba(255,255,255,0.02);
+  transition: all .2s; position: relative;
+}
+.v19-node-ladder { display: flex; flex-direction: column; align-items: center; }
+.v19-node-pos {
+  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 24px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: bold; border: 1px solid #5a4a2a; background: rgba(0,0,0,0.3);
+}
+.v19-node-body { flex: 1; min-width: 0; }
+.v19-node-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.v19-node-name { font-size: 15px; color: #e8d5a3; }
+.v19-node-cost { font-size: 12px; color: #c8b890; white-space: nowrap; }
+.v19-node-desc { font-size: 12px; color: #9a8b6a; line-height: 1.5; margin-bottom: 5px; }
+.v19-node-eff { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.v19-eff-chip {
+  display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 10px;
+  background: rgba(212,175,55,0.12); border: 1px solid var(--v19-line); color: #e0c88a;
+}
+.v19-node-status { font-size: 12px; margin-top: 2px; }
+.v19-node-status.done { color: #6fbf6a; }
+.v19-node-status.run { color: #ff9d5c; }
+.v19-node-status.avail { color: #7ab8ff; }
+.v19-node-status.lock { color: #8a8a8a; }
+
+.v19-progress { height: 7px; background: rgba(0,0,0,0.45); border-radius: 4px; margin-top: 6px; overflow: hidden; border: 1px solid var(--v19-line); }
+.v19-progress-fill {
+  display: block; height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, #c8783a, #ffb84a);
+  transition: width .5s ease;
+}
+
+/* 状态色：已研究=金 / 可研究=蓝 / 研究中=金脉冲 / 未解锁=灰 */
+.v19-node.researched { border-color: #d4af37; background: rgba(212,175,55,0.10); }
+.v19-node.researched .v19-node-pos { background: #d4af37; color: #1a1408; border-color: #d4af37; }
+.v19-node.researched .v19-node-name { color: #ffd54f; }
+.v19-node.available { border-color: #4a90d9; background: rgba(74,144,217,0.10); cursor: pointer; }
+.v19-node.available:hover { border-color: #7ab8ff; box-shadow: 0 0 14px rgba(74,144,217,0.35); transform: translateX(3px); }
+.v19-node.available .v19-node-pos { background: #4a90d9; color: #0a1420; border-color: #4a90d9; }
+.v19-node.researching { border-color: #c8783a; background: rgba(200,120,58,0.10); animation: v19NodePulse 2s ease-in-out infinite; }
+.v19-node.researching .v19-node-pos { background: #c8783a; color: #1a1008; border-color: #c8783a; }
+.v19-node.locked { opacity: 0.5; }
+.v19-node.locked .v19-node-pos { color: #8a8a8a; }
+
+.v19-tech-legend { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; font-size: 11px; color: #b8a060; margin-top: 10px; }
+.v19-tech-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.v19-lg-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+/* ============================================================
+   文化面板
+   ============================================================ */
+.v19-cul-hero { display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 6px; }
+.v19-cul-total {
+  flex: 1; min-width: 160px; text-align: center; padding: 14px 10px;
+  border: 1px solid var(--v19-line); border-radius: 10px; background: rgba(212,175,55,0.08);
+}
+.v19-cul-total-label { display: block; font-size: 12px; color: #b8a060; }
+.v19-cul-total-num { display: block; font-size: 34px; font-weight: bold; color: #ffd54f; line-height: 1.1; text-shadow: 0 0 14px rgba(212,175,55,0.4); }
+.v19-cul-perturn { display: inline-block; margin-top: 4px; font-size: 12px; color: #6fbf6a; }
+.v19-cul-win { flex: 1.4; min-width: 240px; padding: 12px 14px; border: 1px solid var(--v19-line); border-radius: 10px; background: rgba(0,0,0,0.25); }
+.v19-cul-win-row { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+.v19-cul-win-row b { color: #f0d98a; }
+.v19-cul-win-row.small { font-size: 11px; color: #9a8b6a; margin-top: 6px; }
+.v19-cul-winbar { height: 9px; background: rgba(0,0,0,0.45); border-radius: 5px; overflow: hidden; border: 1px solid var(--v19-line); }
+.v19-cul-winbar.streak { height: 6px; margin-top: 2px; }
+.v19-cul-winfill { display: block; height: 100%; background: linear-gradient(90deg, #9a7ac9, #c9a8e8); transition: width .6s ease; }
+.v19-cul-winbar.streak .v19-cul-winfill { background: linear-gradient(90deg, #3f7a66, #6fbf9a); }
+
+.v19-cul-src { display: flex; flex-direction: column; gap: 5px; }
+.v19-src-row { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 5px 10px; border-radius: 6px; background: rgba(0,0,0,0.22); }
+.v19-src-row b { margin-left: auto; color: #6fbf6a; }
+.v19-src-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 10px; }
+
+.v19-cul-eff { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.v19-cul-list { display: flex; flex-direction: column; gap: 8px; }
+.v19-cul-city { border: 1px solid var(--v19-line); border-radius: 8px; padding: 8px 10px; background: rgba(0,0,0,0.22); }
+.v19-cc-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.v19-cc-name { font-size: 14px; color: #e8d5a3; }
+.v19-cc-cul { font-size: 12px; color: #c9a86a; }
+.v19-cc-spread { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.v19-cc-pie { width: 26px; height: 26px; border-radius: 50%; flex: 0 0 26px; border: 1px solid var(--v19-line); }
+.v19-cc-levels { font-size: 12px; color: #b8a060; }
+.v19-cc-build { display: flex; flex-wrap: wrap; gap: 6px; }
+.v19-mini-btn {
+  padding: 3px 10px; font-size: 12px; cursor: pointer; font-family: inherit;
+  background: rgba(61,106,91,0.3); border: 1px solid #8B7A4A; border-radius: 5px; color: #d8c89a; transition: all .15s;
+}
+.v19-mini-btn:hover { border-color: var(--v19-gold); color: #ffe9b0; }
+.v19-grot-btn { background: rgba(154,122,201,0.25); border-color: #9a7ac9; color: #d8c2f0; }
+.v19-cul-hint { font-size: 12px; color: #9a8b6a; line-height: 1.6; margin-top: 10px; padding: 8px; border-left: 2px solid var(--v19-line); }
+
+/* ============================================================
+   势力情报深化
+   ============================================================ */
+.v19-mysummary { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.v19-ms-card {
+  flex: 1; min-width: 130px; text-align: center; padding: 10px 8px;
+  border: 1px solid var(--v19-line); border-radius: 10px; background: rgba(212,175,55,0.08);
+}
+.v19-ms-label { display: block; font-size: 11px; color: #b8a060; }
+.v19-ms-num { display: block; font-size: 26px; font-weight: bold; color: #ffd54f; line-height: 1.15; }
+.v19-ms-dim { font-size: 14px; color: #8a7a55; }
+.v19-ms-sub { display: block; font-size: 11px; color: #9a8b6a; margin-top: 2px; }
+
+.v19-intel-list { display: flex; flex-direction: column; gap: 6px; }
+.v19-intel-row {
+  padding: 8px 10px; border: 1px solid var(--v19-line); border-radius: 8px;
+  background: rgba(0,0,0,0.25); border-left: 4px solid var(--v19-fc, var(--v19-gold));
+}
+.v19-intel-row.mine { background: rgba(212,175,55,0.10); }
+.v19-ir-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+.v19-ir-rel { font-size: 11px; color: #9a8b6a; }
+.v19-ir-stats { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: #b8a060; margin-bottom: 5px; }
+.v19-ir-stats b { color: #e8d5a3; }
+.v19-ir-power { display: flex; align-items: center; gap: 8px; }
+.v19-ir-power-label { font-size: 11px; color: #c8b890; white-space: nowrap; }
+.v19-ir-powerbar { flex: 1; height: 8px; background: rgba(0,0,0,0.45); border-radius: 4px; overflow: hidden; border: 1px solid var(--v19-line); }
+.v19-ir-powerfill { display: block; height: 100%; background: linear-gradient(90deg, #8B6B2A, #d4af37); transition: width .6s ease; }
+
+/* ---------- V19 响应式 ---------- */
+@media (max-width: 768px) {
+  .v19-modal { padding: 14px; }
+  .v19-title { font-size: 17px; }
+  .v19-cul-hero { flex-direction: column; }
+  .v19-ms-card { min-width: 100%; }
+  .v19-node { padding: 8px; }
+  .v19-tech-tree { max-height: 60vh; }
+}
+@media (max-width: 480px) {
+  .v19-tech-tabs { gap: 5px; }
+  .v19-tech-tab { padding: 5px 10px; font-size: 13px; }
+  .v19-cc-build { gap: 4px; }
+  .v19-mini-btn { padding: 3px 8px; font-size: 11px; }
+}

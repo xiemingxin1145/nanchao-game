@@ -80,7 +80,10 @@ export function attackBarbarian(game, factionId, tribeId) {
   if (result.attackerWin && !result.draw) {
     const loot = Math.round(tribe.troops * BARBARIAN_ATTACK_LOOT);
     const res = game.factionRes.get(factionId);
-    res.money += loot;
+    // BUG修复（barbarian.js #4c 资源缺失兜底）：本函数开头只校验了军队存在，胜利结算时
+    //   直接 `res.money += loot`。热座/势力刚被灭/模组异常下 factionRes.get(factionId)
+    //   可能返回 undefined，必然抛 TypeError，中断战斗结算。此处做空值兜底。
+    if (res) res.money += loot;
     tribe.troops = Math.max(2000, Math.round(tribe.troops - result.defenderLoss * 1.5));
     tribe.relation = Math.max(-100, tribe.relation - 20);
     game.pushLog(`⚔ ${_factionName(factionId)} 大破${tribe.name}！缴获 ${loot} 金，蛮族远遁。`);

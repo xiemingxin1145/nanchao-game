@@ -746,6 +746,34 @@ export const SCENARIOS = {
     cityMorale: { xiwei: 78, dongwei: 30, nanchao: 52, hou_liang: 55 },
     generalLoyalty: { xiwei: 85, dongwei: 35, nanchao: 62, hou_liang: 60 },
     garrisonMult: { xiwei: 1.5, dongwei: 0.7, nanchao: 1.0, hou_liang: 0.9 }
+  },
+
+  // ============================================================
+  // V19.0 新增剧本（1个，30→31）
+  // ---- 剧本31：唐定中原（621年）----
+  // 历史背景：唐武德四年（621），秦王李世民围王世充于洛阳。
+  //   夏王窦建德自河北引十余众来救，太宗分兵围洛阳，自率骁骑三千五百
+  //   东据虎牢。建德屯军汜水，数战不利。太宗伺其饥惰，亲率轻骑直薄其阵，
+  //   建德军大溃，追奔三十里，俘五万余人，建德被槊走，追获之。遂降世充。
+  //   河南河北悉平。唐室统一之势成，唯刘黑闼、辅公祏余烬未熄。
+  // 此时江南杜伏威已入朝，江陵萧铣已平；北方突厥仍为边患。
+  // ============================================================
+  '621': {
+    id: '621', name: '唐定中原', year: 621,
+    description: '唐武德四年（621），秦王世民围王世充于洛阳。河北夏王窦建德率众十余万，自荥阳西上来救。太宗分兵围洛阳，自率骁骑三千五百东据虎牢，以拒建德。建德屯军汜水，数战不利。太宗伺其饥惰，亲率轻骑，东西汜水而上，直薄其阵。建德军大溃，追奔三十里，俘五万余人，建德被槊走，追获之。遂降世充。河南河北悉平，唐室统一之势已成。',
+    factions: ['xiwei', 'dongwei', 'nanchao'],
+    factionNameOverride: {
+      xiwei: '唐（李唐）', dongwei: '夏（窦建德）', nanchao: '郑（王世充）'
+    },
+    // 特殊规则：秦王新定关东，府兵精锐，谋臣猛将如云；窦建德起于河北，人多望附；王世充据洛阳孤城，内外离心
+    resources: {
+      xiwei: { money: 3800, food: 5200 },
+      dongwei: { money: 2600, food: 3600 },
+      nanchao: { money: 1800, food: 2600 }
+    },
+    cityMorale: { xiwei: 72, dongwei: 60, nanchao: 40 },
+    generalLoyalty: { xiwei: 88, dongwei: 65, nanchao: 45 },
+    garrisonMult: { xiwei: 1.35, dongwei: 1.1, nanchao: 0.85 }
   }
 };
 export const DEFAULT_SCENARIO = '550';
@@ -1083,7 +1111,49 @@ export const CITIES = [
   { id: 'v18_xizhou',   name: '西州', isoX: -1, isoY: 1, terrain: 'desert',  size: 2, capital: false,
     pop: 24000, agri: 35, comm: 58, defense: 52, prosperity: 48, taxRate: 30 },
   { id: 'v18_tingzhou', name: '庭州', isoX: -2, isoY: 0, terrain: 'desert',  size: 1, capital: false,
-    pop: 14000, agri: 22, comm: 40, defense: 55, prosperity: 30, taxRate: 30 }
+    pop: 14000, agri: 22, comm: 40, defense: 55, prosperity: 30, taxRate: 30 },
+
+  // ============================================================
+  // V19.0 新增城市十二（v19_ 前缀，84→96）
+  // 陇右/河西/河北边镇：原州/渭州/兰州/岷州/洮州/甘州/肃州/
+  //                   柳城(营州)/卢龙(平州)/云中(云州)/朔州/广昌(蔚州)
+  // ============================================================
+  // 原州（今宁夏固原，关中西北门户，萧关古道所经）
+  { id: 'v19_yuanzhou',  name: '原州', isoX: 3,  isoY: 2, terrain: 'plain',   size: 2, capital: false,
+    pop: 28000, agri: 48, comm: 52, defense: 65, prosperity: 48, taxRate: 30 },
+  // 渭州（今甘肃陇西，陇右东陲，秦州西出首镇）
+  { id: 'v19_weizhou',  name: '渭州', isoX: 2,  isoY: 4, terrain: 'mountain', size: 2, capital: false,
+    pop: 26000, agri: 46, comm: 45, defense: 60, prosperity: 44, taxRate: 30 },
+  // 兰州（今甘肃兰州，黄河金城关，陇右河西要津）
+  { id: 'v19_lanzhou',  name: '兰州', isoX: 1,  isoY: 3, terrain: 'mountain', size: 2, capital: false,
+    pop: 30000, agri: 42, comm: 58, defense: 62, prosperity: 50, taxRate: 30 },
+  // 岷州（今甘肃岷县，陇西重镇，氐羌故地）
+  { id: 'v19_minzhou',  name: '岷州', isoX: 1,  isoY: 5, terrain: 'mountain', size: 1, capital: false,
+    pop: 18000, agri: 35, comm: 32, defense: 55, prosperity: 32, taxRate: 30 },
+  // 洮州（今甘肃临潭，西番门户，边塞要冲）
+  { id: 'v19_taozhou',  name: '洮州', isoX: 0,  isoY: 5, terrain: 'mountain', size: 1, capital: false,
+    pop: 16000, agri: 30, comm: 28, defense: 58, prosperity: 30, taxRate: 30 },
+  // 甘州（今甘肃张掖，河西四郡之一，丝路咽喉）
+  { id: 'v19_ganzhou',  name: '甘州', isoX: -1, isoY: 2, terrain: 'desert',  size: 3, capital: false,
+    pop: 35000, agri: 40, comm: 68, defense: 65, prosperity: 60, taxRate: 30 },
+  // 肃州（今甘肃酒泉东，河西四郡之一，与酒泉同城而别）
+  { id: 'v19_suzhou',   name: '肃州', isoX: -1, isoY: 1, terrain: 'desert',  size: 2, capital: false,
+    pop: 24000, agri: 35, comm: 58, defense: 60, prosperity: 50, taxRate: 30 },
+  // 柳城（营州治所，今辽宁朝阳，东北边镇）
+  { id: 'v19_liucheng', name: '柳城', isoX: 6,  isoY: 0, terrain: 'plain',   size: 2, capital: false,
+    pop: 22000, agri: 40, comm: 45, defense: 62, prosperity: 42, taxRate: 30 },
+  // 卢龙（平州治所，今河北卢龙，幽燕东门）
+  { id: 'v19_lulong',   name: '卢龙', isoX: 5,  isoY: 0, terrain: 'mountain', size: 2, capital: false,
+    pop: 25000, agri: 45, comm: 50, defense: 65, prosperity: 46, taxRate: 30 },
+  // 云中（云州治所，今山西大同，代北重镇）
+  { id: 'v19_yunzhong', name: '云中', isoX: 4,  isoY: -1, terrain: 'mountain', size: 2, capital: false,
+    pop: 28000, agri: 42, comm: 48, defense: 68, prosperity: 48, taxRate: 30 },
+  // 朔州（善阳，今山西朔州，马邑故地）
+  { id: 'v19_shuozhou', name: '朔州', isoX: 4,  isoY: 1, terrain: 'plain',   size: 2, capital: false,
+    pop: 26000, agri: 48, comm: 45, defense: 65, prosperity: 46, taxRate: 30 },
+  // 广昌（蔚州治所，今河北蔚县，太行八陉北陉）
+  { id: 'v19_guangchang', name: '广昌', isoX: 5, isoY: 1, terrain: 'mountain', size: 1, capital: false,
+    pop: 18000, agri: 38, comm: 38, defense: 58, prosperity: 36, taxRate: 30 }
 ];
 
 // 城市邻接关系（行军路径，双向对称）— V6.5 覆盖全部 35 城
@@ -1097,21 +1167,21 @@ export const CITY_LINKS = {
   jiaozhou:   ['guangzhou', 'xiangzhou', 'v14_yaizhou'],
   // 河北
   yecheng:    ['jinyang', 'luoyang', 'pengcheng', 'xiangguo', 'xindu', 'puyang'],
-  jinyang:    ['yecheng', 'pingcheng', 'luoyang', 'xiangguo', 'dingzhou', 'shangdang'],
+  jinyang:    ['yecheng', 'pingcheng', 'luoyang', 'xiangguo', 'dingzhou', 'shangdang', 'v19_shuozhou'],
   luoyang:    ['yecheng', 'jinyang', 'shouyang', 'xiangyang', 'changan', 'runan', 'nanyang', 'huatai', 'shangdang', 'puyang', 'v14_huazhou'],
   pengcheng:  ['yecheng', 'qingzhou', 'shouyang', 'xindu', 'yuzhou', 'qiaojun', 'hefei', 'xiapi', 'zhongli2', 'licheng'],
   qingzhou:   ['pengcheng', 'youzhou', 'xindu', 'yingzhou', 'xiapi', 'longcheng', 'licheng', 'yuyang'],
-  youzhou:    ['qingzhou', 'pingcheng', 'dingzhou', 'yingzhou', 'zhongshan', 'yuyang'],
+  youzhou:    ['qingzhou', 'pingcheng', 'dingzhou', 'yingzhou', 'zhongshan', 'yuyang', 'v19_lulong', 'v19_guangchang', 'v19_yunzhong'],
   shouyang:   ['pengcheng', 'luoyang', 'xiangyang', 'jiankang', 'jiangling', 'yuzhou', 'runan', 'hefei', 'zhongli2'],
-  xiangguo:   ['jinyang', 'yecheng', 'dingzhou', 'xindu', 'zhongshan'],
+  xiangguo:   ['jinyang', 'yecheng', 'dingzhou', 'xindu', 'zhongshan', 'v19_guangchang'],
   xindu:      ['yecheng', 'qingzhou', 'pengcheng', 'xiangguo', 'yingzhou', 'qiaojun', 'zhongshan', 'puyang'],
-  dingzhou:   ['jinyang', 'youzhou', 'pingcheng', 'xiangguo'],
+  dingzhou:   ['jinyang', 'youzhou', 'pingcheng', 'xiangguo', 'v19_guangchang'],
   yingzhou:   ['youzhou', 'qingzhou', 'xindu', 'zhongshan', 'longcheng', 'yuyang'],
   // 关中巴蜀
   changan:    ['luoyang', 'tianshui', 'pingcheng', 'xiangyang', 'longyou', 'hanzhong', 'huatai', 'puban', 'tongwan', 'v14_yanzhou', 'v14_huazhou'],
-  tianshui:   ['changan', 'guzang', 'chengdu', 'longyou', 'puban', 'qiuchi', 'v14_qizhou'],
-  guzang:     ['tianshui', 'pingcheng', 'longyou', 'dunhuang', 'shuofang', 'jiuquan', 'v14_lingwu', 'v14_bingzhou'],
-  pingcheng:  ['guzang', 'changan', 'jinyang', 'youzhou', 'dingzhou', 'shangdang', 'shuofang', 'tongwan', 'v14_xiazhou', 'v14_yanzhou'],
+  tianshui:   ['changan', 'guzang', 'chengdu', 'longyou', 'puban', 'qiuchi', 'v14_qizhou', 'v19_weizhou'],
+  guzang:     ['tianshui', 'pingcheng', 'longyou', 'dunhuang', 'shuofang', 'jiuquan', 'v14_lingwu', 'v14_bingzhou', 'v19_ganzhou'],
+  pingcheng:  ['guzang', 'changan', 'jinyang', 'youzhou', 'dingzhou', 'shangdang', 'shuofang', 'tongwan', 'v14_xiazhou', 'v14_yanzhou', 'v19_liucheng', 'v19_yunzhong', 'v19_shuozhou', 'v19_guangchang'],
   longyou:    ['guzang', 'tianshui', 'changan', 'puban', 'shuofang', 'jiuquan', 'v14_qizhou', 'v14_bingzhou'],
   hanzhong:   ['changan', 'chengdu', 'xinye', 'qiuchi', 'v14_fengzhou', 'v14_lizhou', 'v18_dangzhou'],
   chengdu:    ['jiangling', 'tianshui', 'hanzhong', 'ningzhou', 'v14_lizhou'],
@@ -1139,7 +1209,7 @@ export const CITY_LINKS = {
   // ---- V10.0 新增城市连接（5座）----
   dunhuang:  ['guzang', 'jiuquan', 'v18_shazhou'],
   zhongshan:  ['xiangguo', 'youzhou', 'yingzhou', 'xindu'],
-  longcheng:  ['qingzhou', 'yingzhou', 'licheng', 'yuyang'],
+  longcheng:  ['qingzhou', 'yingzhou', 'licheng', 'yuyang', 'v19_liucheng'],
   shuofang:   ['pingcheng', 'guzang', 'longyou', 'tongwan', 'v14_lingwu', 'v14_xiazhou'],
   qiuchi:     ['hanzhong', 'tianshui', 'v14_lizhou'],
   // ---- V11.0 新增城市连接（5座）----
@@ -1155,18 +1225,18 @@ export const CITY_LINKS = {
   licheng:    ['qingzhou', 'pengcheng', 'xiapi', 'longcheng'],
   wuchang:    ['jiangxia', 'jiangling', 'xiangzhou', 'yuzhang', 'v14_xinzhou', 'v14_hengzhou'],
   // ---- V13.0 新增城市连接（5座）----
-  jiuquan:    ['dunhuang', 'guzang', 'longyou', 'v18_guazhou'],
+  jiuquan:    ['dunhuang', 'guzang', 'longyou', 'v18_guazhou', 'v19_ganzhou', 'v19_suzhou'],
   puyang:     ['yecheng', 'luoyang', 'runan', 'xindu', 'qiaojun'],
   jingling:   ['xiangyang', 'jiangling', 'runan', 'yiyang', 'xinye'],
   guiyang:    ['guangzhou', 'xiangzhou', 'wuling', 'yuzhang', 'v14_chenzhou'],
-  yuyang:     ['youzhou', 'yingzhou', 'zhongli2', 'qingzhou', 'longcheng'],
+  yuyang:     ['youzhou', 'yingzhou', 'zhongli2', 'qingzhou', 'longcheng', 'v19_lulong'],
   // ---- V14.0 新增城市连接（12座）----
   // 每座新城连接 2~3 座相邻城市，双向对称。
-  v14_lingwu:  ['guzang', 'shuofang', 'tongwan', 'v14_xiazhou', 'v18_yanshuo', 'v18_huizhou'],
+  v14_lingwu:  ['guzang', 'shuofang', 'tongwan', 'v14_xiazhou', 'v18_yanshuo', 'v18_huizhou', 'v19_yuanzhou'],
   v14_xiazhou: ['tongwan', 'shuofang', 'pingcheng', 'v14_lingwu', 'v14_yanzhou', 'v18_yanshuo'],
   v14_yanzhou: ['pingcheng', 'tongwan', 'changan', 'puban', 'v14_xiazhou', 'v14_huazhou'],
   v14_huazhou: ['changan', 'puban', 'luoyang', 'huatai', 'v14_yanzhou'],
-  v14_qizhou:  ['tianshui', 'longyou', 'puban', 'v14_bingzhou', 'v18_hezhou', 'v18_shanzhou', 'v18_huizhou'],
+  v14_qizhou:  ['tianshui', 'longyou', 'puban', 'v14_bingzhou', 'v18_hezhou', 'v18_shanzhou', 'v18_huizhou', 'v19_yuanzhou'],
   v14_bingzhou:['longyou', 'guzang', 'v14_qizhou', 'v18_hezhou'],
   v14_fengzhou:['hanzhong', 'xinye', 'v14_xinzhou', 'v14_lizhou'],
   v14_lizhou:  ['chengdu', 'hanzhong', 'qiuchi', 'v14_fengzhou'],
@@ -1176,17 +1246,30 @@ export const CITY_LINKS = {
   v14_yaizhou: ['jiaozhou', 'guangzhou'],
   // === V18.0 西北边疆十二州邻接 ===
   v18_yanshuo:  ['v14_lingwu', 'v14_xiazhou', 'v18_huizhou'],
-  v18_huizhou:  ['v14_lingwu', 'v14_qizhou', 'v18_yanshuo', 'v18_hezhou', 'v18_shazhou'],
-  v18_hezhou:   ['v14_qizhou', 'v14_bingzhou', 'v18_huizhou', 'v18_shanzhou', 'v18_shazhou'],
-  v18_shanzhou: ['v18_hezhou', 'v18_kuozhou', 'v18_dangzhou', 'v14_qizhou'],
+  v18_huizhou:  ['v14_lingwu', 'v14_qizhou', 'v18_yanshuo', 'v18_hezhou', 'v18_shazhou', 'v19_yuanzhou'],
+  v18_hezhou:   ['v14_qizhou', 'v14_bingzhou', 'v18_huizhou', 'v18_shanzhou', 'v18_shazhou', 'v19_lanzhou'],
+  v18_shanzhou: ['v18_hezhou', 'v18_kuozhou', 'v18_dangzhou', 'v14_qizhou', 'v19_taozhou'],
   v18_kuozhou:  ['v18_shanzhou', 'v18_diezhou', 'v18_guazhou'],
-  v18_diezhou:  ['v18_kuozhou', 'v18_dangzhou'],
+  v18_diezhou:  ['v18_kuozhou', 'v18_dangzhou', 'v19_taozhou'],
   v18_dangzhou: ['v18_diezhou', 'v18_shanzhou', 'hanzhong'],
-  v18_guazhou:  ['v18_kuozhou', 'v18_shazhou', 'v18_yizhou', 'jiuquan'],
-  v18_shazhou:  ['v18_guazhou', 'v18_hezhou', 'v18_xizhou', 'dunhuang', 'v18_huizhou'],
+  v18_guazhou:  ['v18_kuozhou', 'v18_shazhou', 'v18_yizhou', 'jiuquan', 'v19_ganzhou'],
+  v18_shazhou:  ['v18_guazhou', 'v18_hezhou', 'v18_xizhou', 'dunhuang', 'v18_huizhou', 'v19_suzhou'],
   v18_yizhou:   ['v18_guazhou', 'v18_xizhou', 'v18_tingzhou'],
   v18_xizhou:   ['v18_yizhou', 'v18_shazhou', 'v18_tingzhou'],
-  v18_tingzhou: ['v18_yizhou', 'v18_xizhou']
+  v18_tingzhou: ['v18_yizhou', 'v18_xizhou'],
+  // === V19.0 陇右/河西/河北边镇十二州邻接 ===
+  v19_yuanzhou:   ['v14_lingwu', 'v14_qizhou', 'v18_huizhou', 'v19_lanzhou', 'v19_weizhou'],
+  v19_weizhou:    ['tianshui', 'v19_lanzhou', 'v19_minzhou', 'v19_yuanzhou'],
+  v19_lanzhou:    ['v19_weizhou', 'v19_minzhou', 'v19_taozhou', 'v18_hezhou', 'v19_yuanzhou'],
+  v19_minzhou:    ['v19_weizhou', 'v19_lanzhou', 'v19_taozhou'],
+  v19_taozhou:    ['v19_minzhou', 'v19_lanzhou', 'v18_shanzhou', 'v18_diezhou'],
+  v19_ganzhou:    ['guzang', 'jiuquan', 'v19_suzhou', 'v18_guazhou'],
+  v19_suzhou:     ['jiuquan', 'v19_ganzhou', 'v18_shazhou'],
+  v19_liucheng:   ['longcheng', 'v19_lulong', 'pingcheng'],
+  v19_lulong:     ['youzhou', 'yuyang', 'v19_liucheng'],
+  v19_yunzhong:   ['pingcheng', 'v19_shuozhou', 'youzhou'],
+  v19_shuozhou:   ['pingcheng', 'jinyang', 'v19_yunzhong'],
+  v19_guangchang: ['youzhou', 'pingcheng', 'dingzhou', 'xiangguo']
 };
 
 // ---------- 50 位武将（V3.0 扩充） ----------
@@ -2051,7 +2134,124 @@ export const GENERALS = [
     command: 80, force: 76, intel: 68, politics: 60, loyalty: 65, portrait: 'v18_pei_renshi',
     age: 48, skills: ['dudu_zhongwai', 'shoucheng_mingjiang'],
     bonds: ['v18_li_mi', 'v17_qin_shubao'],
-    description: '河东人。少骁勇，善弓马，以军功为隋将。炀帝时，为光禄大夫，遣讨李密，监军怀荣。为御史所讥，惧而杀御史，以众降密。密待之厚，使与孟让袭回洛仓。后王世充密战，仁基与子行俨并力赴敌，行俨中流矢坠马，仁基驰救之，所杀数十人。后谋诛世充，复越王侗，事泄，为世充所杀。' }
+    description: '河东人。少骁勇，善弓马，以军功为隋将。炀帝时，为光禄大夫，遣讨李密，监军怀荣。为御史所讥，惧而杀御史，以众降密。密待之厚，使与孟让袭回洛仓。后王世充密战，仁基与子行俨并力赴敌，行俨中流矢坠马，仁基驰救之，所杀数十人。后谋诛世充，复越王侗，事泄，为世充所杀。' },
+
+  // ---- V19.0 隋末唐初群雄/唐初功臣（15）----
+  // 历史：杨玄感，司徒杨素之子，袭爵楚国公。隋炀帝伐高句丽，命黎阳督运。
+  // 见天下思乱，遂谋叛，屯黎阳，众至十余万。围东都不克，西欲图关右，
+  // 至弘农宫，为追兵所及，众溃，自杀。
+  { id: 'v19_yang_xuangan', name: '杨玄感', faction: null, role: '隋末叛臣',
+    command: 70, force: 65, intel: 72, politics: 68, loyalty: 30, portrait: 'v19_yang_xuangan',
+    age: 38, skills: ['xiaoxiong', 'mouliao_baichu'],
+    bonds: ['v18_li_mi', 'v15_yuwen_shu'],
+    description: '字崇山，弘农华阴人，司徒杨素之子。晚好读书，善骑射，以父勋拜柱国，累迁礼部尚书。炀帝伐高句丽，命于黎阳督运。时天下思乱，玄感遂谋叛，入黎阳，索舟屯，募运夫，得万余人，众至十余万。围东都，不克。西欲图关右，至弘农宫，为追兵所及，众溃，玄感自知不免，令其弟积善杀己。传首东都，磔于市。' },
+  // 历史：司马德戡，扶风雍人，隋末屯卫骁果将领。炀帝在江都，骁果思归，
+  // 德戡与宇文智及、裴虔通等合谋，夜率骁果作乱，弑炀帝。后为宇文化及所杀。
+  { id: 'v19_sima_dekan', name: '司马德戡', faction: null, role: '江都弑逆',
+    command: 65, force: 70, intel: 55, politics: 45, loyalty: 25, portrait: 'v19_sima_dekan',
+    age: 35, skills: ['xiaoxiong', 'mengjiang'],
+    bonds: ['v19_pei_qiantong', 'v17_yuwen_huaji'],
+    description: '扶风雍人。幼孤，以屠豕为业。有膂力，善骑射，走马若飞。仕隋，为大都督，从炀帝至江都，领左右骁果。时关中士马思归，德戡与宇文化及、智及、裴虔通等合谋，夜率骁果作乱，引帝出，弑之。化及自称大丞相，以德戡为礼部尚书，外示美迁，实夺其兵。德戡怨，谋攻化及，事泄，为所杀。' },
+  // 历史：裴虔通，河东人，炀帝为晋王时亲信。炀帝在江都，虔通与司马德戡
+  // 同谋弑逆，引兵入宫。唐贞观初，以弑君之罪除名徙边。
+  { id: 'v19_pei_qiantong', name: '裴虔通', faction: null, role: '江都弑逆',
+    command: 60, force: 65, intel: 50, politics: 40, loyalty: 20, portrait: 'v19_pei_qiantong',
+    age: 40, skills: ['mengjiang', 'xiaoxiong'],
+    bonds: ['v19_sima_dekan', 'v17_yuwen_huaji'],
+    description: '河东人。炀帝为晋王时，以亲信左右从入东宫。及即位，累迁监门直阁。江都之变，虔通与司马德戡同谋，夜领宫城门兵，引化及之众入玄武门。帝闻变，易服逃西阁，虔通引兵入，执帝。及化及僭号，以为光禄大夫。唐武德初，以罪徙岭表。贞观中，以弑逆之罪，除名削爵，徙于驩州而死。' },
+  // 历史：柴绍，晋州临汾人，唐初名将。娶李渊女平阳昭公主。从李渊起兵，
+  // 平长安，破薛举、破宋金刚、灭王世充、窦建德，又平梁师都。
+  // 凌烟阁二十四功臣之一。
+  { id: 'v19_chai_shao', name: '柴绍', faction: null, role: '唐初名将',
+    command: 84, force: 82, intel: 75, politics: 70, loyalty: 90, portrait: 'v19_chai_shao',
+    age: 38, skills: ['dudu_zhongwai', 'mengjiang'],
+    bonds: ['v17_li_jing', 'v18_li_gui'],
+    description: '字嗣昌，晋州临汾人。幼趫捷，有武力，任侠闻于关中。尚唐高祖女平阳昭公主。唐高祖起兵，绍即赴太原，领马军总管。从平长安，破薛举，破宋金刚，灭王世充、窦建德，皆有功。贞观初，迁右卫大将军，累转右骁卫大将军，柴绍又破突厥，平梁师都。图形凌烟阁。' },
+  // 历史：尉迟敬德，朔州善阳人，名恭，以字行。初从刘武周，后降唐。
+  // 从太宗讨王世充、破窦建德、破刘黑闼。玄武门之变，射杀李元吉，
+  // 功居第一。凌烟阁二十四功臣之一。
+  { id: 'v19_yuchi_jingde', name: '尉迟敬德', faction: null, role: '唐初名将',
+    command: 86, force: 92, intel: 70, politics: 65, loyalty: 92, portrait: 'v19_yuchi_jingde',
+    age: 38, skills: ['dudu_zhongwai', 'xiaoyong_shanzhan'],
+    bonds: ['v17_qin_shubao', 'v17_cheng_yaojin'],
+    description: '朔州善阳人，名恭，以字行。善骑射，善避矟，每单骑入贼阵，贼兵攒矟，终莫能伤。初从刘武周，为偏将。武周败，敬德举介州降唐。太宗素闻其勇，引为右一府统军。从讨王世充、破窦建德、破刘黑闼，每陷阵却敌。玄武门之变，敬德射杀李元吉，首建成、元吉二府，功居第一。累迁右武候大将军，封鄂国公。图形凌烟阁。' },
+  // 历史：长孙无忌，河南洛阳人，长孙晟之子，长孙皇后之兄。
+  // 从太宗起兵，为心腹，玄武门之变主谋。太宗朝，累迁尚书右仆射，
+  // 封赵国公。凌烟阁二十四功臣之首。
+  { id: 'v19_changsun_wuji', name: '长孙无忌', faction: null, role: '唐初宰相',
+    command: 55, force: 40, intel: 90, politics: 95, loyalty: 90, portrait: 'v19_changsun_wuji',
+    age: 35, skills: ['mouliao_baichu', 'guanlong_jituan'],
+    bonds: ['v19_fang_xuanling', 'v19_du_ruhui'],
+    description: '字辅机，河南洛阳人，右骁卫将军长孙晟之子，太宗长孙皇后之兄。贵戚好学，该博文史，性通悟，有筹略。太宗为秦王时，无忌常从征伐，引为心腹，出入卧内。玄武门之变，无忌与房玄龄、杜如晦等劝秦王定计，事平，转太子左庶子。太宗即位，累迁尚书右仆射，封赵国公。图形凌烟阁，位居第一。' },
+  // 历史：房玄龄，齐州临淄人，唐初名相。年十八，本州举进士。
+  // 太宗入渭北，玄龄杖策谒军门，太宗一见如旧识。
+  // 贞观朝为相十五年，与杜如晦合称房谋杜断。
+  { id: 'v19_fang_xuanling', name: '房玄龄', faction: null, role: '唐初宰相',
+    command: 30, force: 20, intel: 92, politics: 95, loyalty: 88, portrait: 'v19_fang_xuanling',
+    age: 38, skills: ['mouliao_baichu', 'guanlong_jituan'],
+    bonds: ['v19_changsun_wuji', 'v19_du_ruhui'],
+    description: '齐州临淄人，字乔。幼聪敏，博贯经史，善属文，书兼草隶。年十八，本州举进士。唐太宗徇地渭北，玄龄杖策谒于军门，一见便如旧识，署渭北道行军记室参军。每征伐，恒掌书记，军中书檄，驻马立成。贞观元年，为中书令，封邢国公。三年，拜尚书左仆射，总司百揆。与杜如晦共掌朝政，世称房谋杜断。' },
+  // 历史：杜如晦，京兆杜陵人，唐初名相。太宗为秦王，如晦为王府属，
+  // 从征四方，常典机要。贞观初，与房玄龄共掌朝政，世称房谋杜断。
+  { id: 'v19_du_ruhui', name: '杜如晦', faction: null, role: '唐初宰相',
+    command: 35, force: 25, intel: 90, politics: 92, loyalty: 88, portrait: 'v19_du_ruhui',
+    age: 36, skills: ['mouliao_baichu', 'guanlong_jituan'],
+    bonds: ['v19_changsun_wuji', 'v19_fang_xuanling'],
+    description: '字克明，京兆杜陵人。聪悟多能，克应机辨，同舍莫能屈。隋大业中，吏部侍郎高孝基深器重之，谓有栋梁之用。太宗平京城，引为秦王府兵曹参军，常参征伐，常典机要。隐太子以如晦、房玄龄为秦王心膂，谮之于高祖，遂与玄龄同逐。及玄武门事定，太宗即位，拜兵部尚书，封蔡国公。贞观二年，迁右仆射，与玄龄共掌朝政。世称房谋杜断。' },
+  // 历史：李孝恭，唐宗室，李渊从侄。唐高祖起兵，孝恭招慰山南，
+  // 自金川出击，所至多降下。平萧铣、辅公祏，经略江淮。
+  // 凌烟阁二十四功臣之一。
+  { id: 'v19_li_xiaogong', name: '李孝恭', faction: null, role: '唐初宗室名将',
+    command: 82, force: 75, intel: 78, politics: 80, loyalty: 85, portrait: 'v19_li_xiaogong',
+    age: 32, skills: ['dudu_zhongwai', 'mouliao_baichu'],
+    bonds: ['v17_li_jing', 'v18_fu_gongshi'],
+    description: '唐宗室，趡王李蔚之孙，唐高祖从父兄子。少有识量。唐高祖起兵，孝恭招慰山南，自金川出击，所至皆下。进击朱粲，破之。荆门纵兵，尽取岭南地。迁荆州总管，大治屯田，为政清易。及辅公祏反，命孝恭为行军元帅，李靖副之，东讨，破公祏，江南遂定。迁礼部尚书，封河间王。图形凌烟阁。' },
+  // 历史：李建成，唐高祖李渊长子。隋末，李渊起兵太原，建成率兵
+  // 定西河、下新丰、破长安。武德元年，立为皇太子。后与秦王李世民
+  // 有隙，武德九年玄武门之变，为李世民所射杀。
+  { id: 'v19_li_jiancheng', name: '李建成', faction: null, role: '唐太子',
+    command: 70, force: 65, intel: 70, politics: 75, loyalty: 75, portrait: 'v19_li_jiancheng',
+    age: 35, skills: ['wangzhe_qiqi', 'guanlong_jituan'],
+    bonds: ['v19_li_yuanji', 'v17_wei_zheng'],
+    description: '唐高祖李渊长子。隋末，高祖起兵太原，建成与弟世民率兵定西河、下永丰仓、破长安。武德元年，立为皇太子。时太宗功业日盛，建成与齐王元吉谋倾太宗，数以毒酒隐太子。武德九年，太白经天，秦王乃密奏建成、元吉淫乱后宫。六月四日，太宗伏兵玄武门，射杀建成，元吉亦为尉迟敬德所杀。高祖遂立太宗为太子。' },
+  // 历史：李元吉，唐高祖李渊第四子，封齐王。从太宗讨王世充、
+  // 刘黑闼。与太子建成谋倾太宗，玄武门之变，为尉迟敬德所杀。
+  { id: 'v19_li_yuanji', name: '李元吉', faction: null, role: '唐齐王',
+    command: 72, force: 80, intel: 55, politics: 50, loyalty: 72, portrait: 'v19_li_yuanji',
+    age: 24, skills: ['mengjiang', 'xiaoyong_shanzhan'],
+    bonds: ['v19_li_jiancheng', 'v19_yuchi_jingde'],
+    description: '唐高祖李渊第四子。初封姑臧郡公，进封齐王。从太宗平东都，破刘黑闼。元吉素骄侈，多养奴婢，纵左右侵扰百姓。及秦王与建成有隙，元吉劝建成早除秦王，许以天下。武德九年六月，太宗伏兵玄武门，建成先为太宗射杀，元吉驰赴，敬德跃马叱之，元吉坠马，为敬德所射杀。' },
+  // 历史：刘黑闼，贝州漳南人，隋末从窦建德为将，建德败，黑闼归乡里。
+  // 建德故将畏罪，复推黑闼为主，复建德故地，称汉东王。
+  // 后为太宗、太子建成所破，败走突厥，复来，为唐将所斩。
+  { id: 'v19_liu_heita', name: '刘黑闼', faction: null, role: '隋末汉东王',
+    command: 82, force: 86, intel: 65, politics: 60, loyalty: 70, portrait: 'v19_liu_heita',
+    age: 40, skills: ['mengjiang', 'xiaoxiong'],
+    bonds: ['v17_dou_jiande', 'v18_li_mi'],
+    description: '贝州漳南人。隋末从郝孝德为盗，后归李密。密败，为王世充所获，使骑将。后亡归窦建德，建德以为将军，封汉东郡公。建德败，黑闼归乡里，杜门称疾。建德故将多残暴，畏不自安，乃相与求得建德故将刘雅，雅不从，杀之。因诣漳南，迎黑闼为主，举兵复建德故地，半年悉复。称汉东王，建元天造。唐太宗、太子建成相继讨之，黑闼数败，奔突厥，复引突厥来，至饶阳，为其部下诸葛德威所执，送太子建成，斩于洺州。' },
+  // 历史：单雄信，曹州济阴人，隋末与翟让同起瓦岗，善用马槊，
+  // 军中号飞将。李密败，降王世充。洛阳平，为李世民所斩。
+  { id: 'v19_dan_xiongxin', name: '单雄信', faction: null, role: '瓦岗飞将',
+    command: 80, force: 88, intel: 55, politics: 45, loyalty: 65, portrait: 'v19_dan_xiongxin',
+    age: 38, skills: ['mengjiang', 'xiaoyong_shanzhan'],
+    bonds: ['v18_zhai_rang', 'v18_li_mi', 'v19_wang_bodang'],
+    description: '曹州济阴人。少骁健，善用马槊，瓦岗军中号为飞将。隋末与翟让同起瓦岗，李密之让也，雄信与徐世勣俱属密。密与王世充战，雄信领内马军，屯偃师。密败，雄信遂降世充，世充以为大将军。秦王太宗围东都，雄信拒战，几及太宗，徐世勣呵止之，乃止。洛阳平，太宗命斩雄信于洛水之上。' },
+  // 历史：王伯当，隋末瓦岗军将。初从李密，密败，王伯当从之入关。
+  // 后密欲叛唐，伯当谏止，密不听，伯当曰：义士之举，不系成败，
+  // 吾荷公恩，当与公共死。遂与密同被杀。
+  { id: 'v19_wang_bodang', name: '王伯当', faction: null, role: '瓦岗义将',
+    command: 72, force: 78, intel: 68, politics: 60, loyalty: 88, portrait: 'v19_wang_bodang',
+    age: 32, skills: ['mengjiang', 'shoucheng_mingjiang'],
+    bonds: ['v18_li_mi', 'v19_dan_xiongxin'],
+    description: '隋末瓦岗军将。初从李密，为密腹心。密之败也，伯当随密入关，唐授密光禄卿，封邢国公。密自以失位，意不平，遂谋叛，谓伯当曰：今若复叛，吾必以众还山东。伯当谏曰：天下事岂有如此！明公，世之丈夫，义之所在，不系成败。然荷公恩深，不敢负耳。密不听，遂与密同起兵桃林，袭其县，驱掠徒党，南趣南山，诡言往襄城。唐将盛彦师邀击之，遂与密同被害。' },
+  // 历史：苏定方，冀州武邑人，唐初名将。隋末从窦建德，后归唐。
+  // 从李靖袭突厥颉利于碛口，灭西突厥，平葱岭，灭百济，
+  // 封邢国公。图像凌烟阁。
+  { id: 'v19_su_dingfang', name: '苏定方', faction: null, role: '唐初名将',
+    command: 88, force: 85, intel: 78, politics: 70, loyalty: 85, portrait: 'v19_su_dingfang',
+    age: 35, skills: ['dudu_zhongwai', 'mengjiang'],
+    bonds: ['v17_li_jing', 'v17_xu_shiji'],
+    description: '冀州武邑人，名烈，以字行。少慷慨，有奇节，年十余岁，从父讨贼，先驱陷阵。隋末，依窦建德，建德将高雅之爱之，养为子。及建德败，归乡里。贞观初，李靖辟为匡道府折冲。从李靖袭突厥颉利于碛口，率二百骑为前锋，乘雾而行，去颉利牙帐七里，雾止，见其庐帐，掩击之，斩获数万。累迁伊丽道行军大总管，西突厥沙钵罗可汗，悉收其地。又东渡海，灭百济，执其王义慈。封邢国公。' }
 ];
 
 // ---------- V3.0 新武将技能映射 ----------
@@ -2323,6 +2523,28 @@ export const V180_NEW_GENERAL_SKILLS = {
   v18_pei_renshi:    ['dudu_zhongwai', 'shoucheng_mingjiang'] // 裴仁基：隋末名将
 };
 Object.assign(NEW_GENERAL_SKILLS, V180_NEW_GENERAL_SKILLS);
+
+// ============================================================
+// V19.0 新武将技能映射（15位，v19_ 前缀）
+// ============================================================
+export const V190_NEW_GENERAL_SKILLS = {
+  v19_yang_xuangan:    ['xiaoxiong', 'mouliao_baichu'],        // 杨玄感：黎阳叛隋
+  v19_sima_dekan:      ['xiaoxiong', 'mengjiang'],             // 司马德戡：江都骁果
+  v19_pei_qiantong:    ['mengjiang', 'xiaoxiong'],            // 裴虔通：宫门禁旅
+  v19_chai_shao:       ['dudu_zhongwai', 'mengjiang'],         // 柴绍：唐初驸马
+  v19_yuchi_jingde:    ['dudu_zhongwai', 'xiaoyong_shanzhan'], // 尉迟敬德：马槊无双
+  v19_changsun_wuji:   ['mouliao_baichu', 'guanlong_jituan'],  // 长孙无忌：凌烟阁首
+  v19_fang_xuanling:   ['mouliao_baichu', 'guanlong_jituan'],  // 房玄龄：贞观贤相
+  v19_du_ruhui:        ['mouliao_baichu', 'guanlong_jituan'],  // 杜如晦：房谋杜断
+  v19_li_xiaogong:     ['dudu_zhongwai', 'mouliao_baichu'],    // 李孝恭：江南元帅
+  v19_li_jiancheng:    ['wangzhe_qiqi', 'guanlong_jituan'],   // 李建成：东宫太子
+  v19_li_yuanji:       ['mengjiang', 'xiaoyong_shanzhan'],    // 李元吉：齐王勇鸷
+  v19_liu_heita:       ['mengjiang', 'xiaoxiong'],            // 刘黑闼：汉东复起
+  v19_dan_xiongxin:    ['mengjiang', 'xiaoyong_shanzhan'],     // 单雄信：瓦岗飞将
+  v19_wang_bodang:     ['mengjiang', 'shoucheng_mingjiang'],  // 王伯当：死义之士
+  v19_su_dingfang:     ['dudu_zhongwai', 'mengjiang']         // 苏定方：灭三国
+};
+Object.assign(NEW_GENERAL_SKILLS, V190_NEW_GENERAL_SKILLS);
 
 // ---------- 事件表 ----------
 export const EVENTS = [
@@ -5500,6 +5722,173 @@ export const EVENTS = [
       { text: '收其入以实边廪（粮+3000，军心+4）', effect: { food: 3000, armyMorale: 4 } },
       { text: '归其耕牛于兵（兵+1000，粮+1000）', effect: { armyLoss: -1000, food: 1000 } }
     ]
+  },
+
+  // === V19.0 随机事件二十（军事5/政治4/经济4/文化4/特殊3）===
+  // ---- 军事 5 ----
+  {
+    id: 'v19_mu_yanmen', name: '雁门被围', illustration: 'city_siege',
+    description: '边将急奏：突厥始毕可汗率数十万骑入塞，围天子于雁门，城中兵民十五万，粮仅支二旬。',
+    options: [
+      { text: '发诸郡兵勤王（损兵2000，金-800，军心+8）', effect: { armyLoss: 2000, money: -800, armyMorale: 8 } },
+      { text: '间道遣使求援于义成公主（金-1500，民心+4）', effect: { money: -1500, morale: 4 } }
+    ]
+  },
+  {
+    id: 'v19_mu_xueye', name: '雪夜袭营', illustration: 'cavalry_charge',
+    description: '大雪数尺，边将言：敌营近塞，恃雪不设备，可遣精骑夜袭，必得其王庭。',
+    options: [
+      { text: '选精骑一万，赍二十日粮雪夜出塞（损兵800，金-600，歼敌万计）', effect: { armyLoss: 800, money: -600, armyMorale: 8 } },
+      { text: '雪寒道远，未可轻动（军心-4）', effect: { armyMorale: -4 } }
+    ]
+  },
+  {
+    id: 'v19_mu_houshao', name: '边谍来归', illustration: 'barbarian_invasion',
+    description: '有突厥小酋，因边人奉密图来降，言其国内虚实、部落强弱。',
+    options: [
+      { text: '厚赏留之，问其委曲（金-300，科技+5）', effect: { money: -300, tech: 5 } },
+      { text: '疑其为间，遣还（军心-2）', effect: { armyMorale: -2 } }
+    ]
+  },
+  {
+    id: 'v19_mu_jiehu', name: '突厥请和', illustration: 'harvest',
+    description: '突厥遣使请和亲，愿献马二千匹，求公主下嫁。',
+    options: [
+      { text: '许婚互市，以安北边（金+800，民心+4，军心+2）', effect: { money: 800, morale: 4, armyMorale: 2 } },
+      { text: '厉兵秣马，以伐其谋（军心+6，民心-3）', effect: { armyMorale: 6, morale: -3 } }
+    ]
+  },
+  {
+    id: 'v19_mu_jianchen', name: '降将献城', illustration: 'rebellion',
+    description: '敌镇副将密遣腹心，以城图来献，约以举事之日开门纳师。',
+    options: [
+      { text: '潜师应之，夜半薄城（损兵500，招募一将）', effect: { armyLoss: 500, recruitRandom: true } },
+      { text: '疑其有诈，按甲勿动（军心-3）', effect: { armyMorale: -3 } }
+    ]
+  },
+  // ---- 政治 4 ----
+  {
+    id: 'v19_zheng_tangyi', name: '朝堂议事', illustration: 'harvest',
+    description: '春正御殿，群臣朝贺，议及封禅、巡狩、征伐诸大事，争论久之不决。',
+    options: [
+      { text: '折衷群议，从其所长（民心+6，文化+3）', effect: { morale: 6, culture: 3 } },
+      { text: '独断独决，不恤群言（军心+4，民心-5）', effect: { armyMorale: 4, morale: -5 } }
+    ]
+  },
+  {
+    id: 'v19_zheng_laoqie', name: '老臣乞骨', illustration: 'plague',
+    description: '一位三朝老臣，以耄耋之年，累表乞骸骨，情辞哀切。',
+    options: [
+      { text: '赐几杖，听其归第（金-500，文化+4，民心+3）', effect: { money: -500, culture: 4, morale: 3 } },
+      { text: '优诏慰留，进位三公（金-300，军心+2，文化+2）', effect: { money: -300, armyMorale: 2, culture: 2 } }
+    ]
+  },
+  {
+    id: 'v19_zheng_wufang', name: '武备弛废', illustration: 'rebellion',
+    description: '有司言：天下久承平，州郡武备多弛，甲仗朽钝，士卒骄堕。',
+    options: [
+      { text: '诏诸州修缮甲兵，阅武教习（金-700，军心+6）', effect: { money: -700, armyMorale: 6 } },
+      { text: '置而不问，以彰文德（文化+2，军心-6）', effect: { culture: 2, armyMorale: -6 } }
+    ]
+  },
+  {
+    id: 'v19_zheng_jingcheng', name: '京师地震', illustration: 'drought',
+    description: '地大震，京师屋瓦皆飞，宫墙多圮，百姓讹言相惊。',
+    options: [
+      { text: '下诏罪己，赈恤灾民（金-800，民心+8）', effect: { money: -800, morale: 8 } },
+      { text: '命有司禳厌，不罪己（民心-4，文化+2）', effect: { morale: -4, culture: 2 } }
+    ]
+  },
+  // ---- 经济 4 ----
+  {
+    id: 'v19_jing_huanghe', name: '黄河水清', illustration: 'harvest',
+    description: '潼关以东，河清数千里，吏民称庆，以为千年之瑞。',
+    options: [
+      { text: '受贺改元，宣付史馆（文化+6，民心+5）', effect: { culture: 6, morale: 5 } },
+      { text: '以河清为偶然，却贺（金+500，军心+2）', effect: { money: 500, armyMorale: 2 } }
+    ]
+  },
+  {
+    id: 'v19_jing_chama', name: '茶马互市', illustration: 'harvest',
+    description: '突厥、吐谷浑诸部请以马易茶，岁以数万匹为率，边民便之。',
+    options: [
+      { text: '弛茶马之禁，厚来远人（商业+10，金+1200）', effect: { comm: 10, money: 1200 } },
+      { text: '重征其税，以实边廪（金+2000，商业-5）', effect: { money: 2000, comm: -5 } }
+    ]
+  },
+  {
+    id: 'v19_jing_yantie', name: '盐铁大熟', illustration: 'harvest',
+    description: '河东盐池、蜀中铁冶，比岁丰羡，盐铁之利十倍于常。',
+    options: [
+      { text: '弛盐铁之禁，与民共利（民心+6，金+1000）', effect: { morale: 6, money: 1000 } },
+      { text: '榷盐铁以专其利（金+2500，民心-5）', effect: { money: 2500, morale: -5 } }
+    ]
+  },
+  {
+    id: 'v19_jing_huangtun', name: '荒田垦辟', illustration: 'harvest',
+    description: '诸州奏：流民自占，垦辟荒田数千顷，岁入租课十余万石。',
+    options: [
+      { text: '免新垦田租三年（粮+4000，民心+6）', effect: { food: 4000, morale: 6 } },
+      { text: '依例征税，以实帑藏（金+1500，民心-3）', effect: { money: 1500, morale: -3 } }
+    ]
+  },
+  // ---- 文化 4 ----
+  {
+    id: 'v19_wen_shigu', name: '石鼓出土', illustration: 'ancient_ruins',
+    description: '岐州奏：于野中得古石鼓十，状如鼓而细，上刻古篆，莫能识者。',
+    options: [
+      { text: '诏秘书监考释，列于太学（文化+10，金-400）', effect: { culture: 10, money: -400 } },
+      { text: '以其奇怪，却而勿受（文化+2）', effect: { culture: 2 } }
+    ]
+  },
+  {
+    id: 'v19_wen_guozijian', name: '国子建学', illustration: 'harvest',
+    description: '有司奏：国子学倾圮，生徒离散，请加修葺，选经师以授诸生。',
+    options: [
+      { text: '大启学舍，广召生徒（文化+8，金-600）', effect: { culture: 8, money: -600 } },
+      { text: '权宜修补，勿大劳费（文化+3）', effect: { culture: 3 } }
+    ]
+  },
+  {
+    id: 'v19_wen_yuefu', name: '乐府新声', illustration: 'harvest',
+    description: '乐工献新曲数十篇，音辞清雅，云得之于河右诸胡。',
+    options: [
+      { text: '被之管弦，颁行天下（文化+6，民心+3）', effect: { culture: 6, morale: 3 } },
+      { text: '以郑卫之音，罢勿用（科技+3）', effect: { tech: 3 } }
+    ]
+  },
+  {
+    id: 'v19_wen_fangji', name: '方士献丹', illustration: 'harvest',
+    description: '有昆仑胡僧，献炼丹术，云可致黄金、延年寿。',
+    options: [
+      { text: '命试之于内殿，不亲饵（金-500，文化+4）', effect: { money: -500, culture: 4 } },
+      { text: '斥其妖妄，逐出境（民心+4，军心+2）', effect: { morale: 4, armyMorale: 2 } }
+    ]
+  },
+  // ---- 特殊 3 ----
+  {
+    id: 'v19_te_longmen', name: '龙门跃鳞', illustration: 'harvest',
+    description: '河津奏：黄河春冰初泮，有鱼跃龙门者，化龙而去，观者数千人。',
+    options: [
+      { text: '遣官致祭，以答灵贶（金-300，文化+5，民心+3）', effect: { money: -300, culture: 5, morale: 3 } },
+      { text: '曰此常事，不足异（军心+2）', effect: { armyMorale: 2 } }
+    ]
+  },
+  {
+    id: 'v19_te_yima', name: '义士献马', illustration: 'harvest',
+    description: '有边地义士，献天马一匹，龙颈麟身，骨相非凡，云得之于西极。',
+    options: [
+      { text: '拜献马者为郎，马入内厩（兵+1500，金-200）', effect: { armyLoss: -1500, money: -200 } },
+      { text: '厚赐遣归，马充战骑（兵+800）', effect: { armyLoss: -800 } }
+    ]
+  },
+  {
+    id: 'v19_te_baichan', name: '海国求兵', illustration: 'harvest',
+    description: '百济遣使浮海来告急，言高丽、新罗相攻，愿得师徒数千以纾国难。',
+    options: [
+      { text: '发兵数千，浮海赴救（损兵1000，金-500，文化+6）', effect: { armyLoss: 1000, money: -500, culture: 6 } },
+      { text: '外藩自相攻，不足恤（民心-3）', effect: { morale: -3 } }
+    ]
   }
 ];
 
@@ -6899,6 +7288,58 @@ export const HISTORICAL_EVENTS = [
       { text: '选贤任能，从谏如流（民心+15，文化+10）', effect: { factionMorale: 15, culture: 10 } },
       { text: '偃武修文，与民休息（粮+5000，民心+8）', effect: { food: 5000, morale: 8 } }
     ]
+  },
+
+  // === V19.0 历史事件五（隋末唐初扩展）===
+  // 雁门之围（615）：炀帝北巡，突厥始毕可汗围之于雁门
+  {
+    id: 'v19_yanmen_zhiwei', name: '雁门之围', illustration: 'city_siege',
+    minTurn: 50, factions: ['xiwei'],
+    description: '隋大业十一年（615），炀帝北巡，至雁门。突厥始毕可汗探知之，率数十万骑奄至，围雁门。城城中兵民十五万，粮仅支二旬。炀帝大惧，抱赵王杲而泣，目尽肿。乃下诏天下诸郡募兵赴难，来护儿、王世充等皆将兵至。始毕闻援兵大集，乃解围去。隋氏声威，自此尽矣。',
+    options: [
+      { text: '下诏诸郡勤王，厚赏战士（金-1500，军心+10）', effect: { money: -1500, armyMorale: 10 } },
+      { text: '间道遣使求援于义成公主（金-800，民心+5）', effect: { money: -800, morale: 5 } }
+    ]
+  },
+  // 浅水原之战（618）：李世民破薛仁杲
+  {
+    id: 'v19_qianshuiyuan', name: '浅水原之战', illustration: 'cavalry_charge',
+    minTurn: 52, factions: ['xiwei'],
+    description: '唐武德元年（618），薛举寇泾州，太宗李世民拒之。会太宗有疾，卧阁中，诸将为举所败。举死，子仁杲立，居于折墌城。太宗复总统诸军，曰：彼胜而骄，宜坚壁以老之。相持六十余日，仁杲粮尽，将多叛。太宗度其可击，遣庞玉阵于浅水原南，以诱之。大军自原北出其不意，仁杲大溃，太宗率骑追之，遂围折墌。仁杲计穷，出城降。陇西悉平。',
+    options: [
+      { text: '乘胜长驱，遂平陇西（自动大战，金+1500）', effect: { massBattle: true, money: 1500 } },
+      { text: '受其降，置吏抚之（民心+8，粮+3000）', effect: { morale: 8, food: 3000 } }
+    ]
+  },
+  // 唐平李轨（619）：安兴贵执李轨送长安
+  {
+    id: 'v19_ping_ligui', name: '唐平李轨', illustration: 'cavalry_charge',
+    minTurn: 53, factions: ['xiwei'],
+    description: '唐武德二年（619），李轨据河西，自称凉王，复称帝。高祖遣使招之，轨不受。轨将安修仁兄兴贵，先在长安，自请诣凉州图轨。兴仁至凉州，阴结诸胡，起兵攻轨。轨不能拒，城陷，遂执轨送长安，河西悉平。',
+    options: [
+      { text: '犁庭扫穴，遂定河西（金+1200，军心+6）', effect: { money: 1200, armyMorale: 6 } },
+      { text: '受其降，宥其妻子（民心+5，金+500）', effect: { morale: 5, money: 500 } }
+    ]
+  },
+  // 唐平萧铣（621）：李靖率水军围江陵
+  {
+    id: 'v19_ping_xiaoxian', name: '唐平萧铣', illustration: 'cavalry_charge',
+    minTurn: 55, factions: ['xiwei'],
+    description: '唐武德四年（621），高祖命赵郡王李孝恭为荆湘道行军总管，李靖为行军长史，统十二总管，自夔州顺流东下。时秋水泛涨，铣以江路险绝，官军必不能进，不设备。孝恭、靖乘水涨，骤兵至江陵。铣仓猝征兵，皆未至，遂空城出战。铣兵大败，孝恭围其城。铣困迫，率群臣降。江陵平，南方州县皆望风归附。',
+    options: [
+      { text: '顺流而下，遂平江陵（自动大战，金+1800）', effect: { massBattle: true, money: 1800 } },
+      { text: '受其降，抚安百姓（民心+8，文化+4）', effect: { morale: 8, culture: 4 } }
+    ]
+  },
+  // 唐平刘黑闼（623）：太子建成讨平汉东
+  {
+    id: 'v19_ping_liuheita', name: '唐平刘黑闼', illustration: 'cavalry_charge',
+    minTurn: 57, factions: ['xiwei'],
+    description: '唐武德五年（622），刘黑闼引突厥入寇，山东州县多叛应之。太宗太宗讨之，初战于洺水，破黑闼。黑闼奔突厥。未几，复引突厥入，陷沧州。太子建成、齐王元吉讨之。建成纳魏徵之策，悉解俘囚，以示恩信。黑闼食尽，众多亡。黑闼夜走，至饶阳，其下诸葛德威执之以降，斩于洺州。山东遂平。',
+    options: [
+      { text: '缓兵怀柔，不战而屈人之兵（民心+10，金+1000）', effect: { morale: 10, money: 1000 } },
+      { text: '长围急攻，必灭之而后已（自动大战，军心+8）', effect: { massBattle: true, armyMorale: 8 } }
+    ]
   }
 ];
 
@@ -7770,6 +8211,124 @@ export const CAMPAIGN_SCENARIOS = [
       { id: 'luoyang',     owner: 'player', garrison: 4000,  name: '洛阳（围王世充）' },
       { id: 'fanshui',     owner: 'enemy',  garrison: 15000, isObjective: true, name: '汜水（窦建德大军）' }
     ]
+  },
+
+  // ============================================================
+  // V19.0 新增战役关卡（5个，v19_ 前缀，15→20）
+  // ============================================================
+
+  // ---- 战役16：浅水原之战（618年）—— 李世民破薛仁杲 ----
+  {
+    id: 'v19_qianshuiyuan',
+    name: '浅水原之战',
+    description: '唐武德元年（618），薛举寇泾州，秦王世民拒之。会世民有疾，卧阁中，诸将为举所败。举死，子仁杲立，居于折墌城。世民复总统诸军，曰：彼胜而骄，宜坚壁以老之。相持六十余日，仁杲粮尽，将多叛。世民度其可击，遣庞玉阵于浅水原南以诱之。大军自原北出其不意，仁杲大溃。世民率骑追之，遂围折墌。仁杲计穷，出城降。陇西悉平。',
+    year: 618,
+    illustration: 'v19_qianshuiyuan',
+    objective: '坚壁相持，在 25 回合内击破薛仁杲主力，攻克折墌城。',
+    defeatCondition: '唐军主力被击溃，或长安受到威胁。',
+    startingState: {
+      troops: 18000,
+      money: 2500,
+      food: 4500,
+      generals: ['v17_xu_shiji', 'v18_qu_tutong', 'v19_chai_shao']
+    },
+    reward: { money: 5000, food: 8000 },
+    mapSetup: [
+      { id: 'qianyang',     owner: 'player', garrison: 6000,  isBase: true,  name: '泾州（唐军基地）' },
+      { id: 'qianshui_yuan', owner: 'enemy', garrison: 5000,  name: '浅水原（薛仁杲前军）' },
+      { id: 'zhezhi_cheng',  owner: 'enemy', garrison: 10000, isObjective: true, name: '折墌城（薛仁杲都城）' }
+    ]
+  },
+  // ---- 战役17：晋阳保卫战（619年）—— 李世民破刘武周 ----
+  {
+    id: 'v19_jinyang_baowei',
+    name: '晋阳保卫战',
+    description: '唐武德二年（619），刘武周遣大将宋金刚寇并州，破齐王元吉，并州陷。武周据并州，金刚逼龙门。关中震动。唐高祖欲弃河东，世民曰：太原王业所基，国之根本，河东殷实，京邑所资，若弃之，臣窃可恨。愿假精兵三万，必望平殄武周。高祖乃发关中之兵以益之。世民率众自龙门乘冰坚渡河，屯柏壁，与宋金刚相持。坚壁不战，遣兵抄其粮道。金刚食尽而遁，世民追之，一昼夜行二百余里，战数十合，大破金刚。武周惧，奔突厥。并州遂平。',
+    year: 619,
+    illustration: 'v19_jinyang_baowei',
+    objective: '在柏壁坚壁相持，在 30 回合内追击并击溃宋金刚主力，收复晋阳。',
+    defeatCondition: '唐军主力被击溃，或蒲津关失守。',
+    startingState: {
+      troops: 22000,
+      money: 3000,
+      food: 5000,
+      generals: ['v17_xu_shiji', 'v19_yuchi_jingde', 'v19_chai_shao']
+    },
+    reward: { money: 6000, food: 9000 },
+    mapSetup: [
+      { id: 'puban',        owner: 'player', garrison: 5000,  isBase: true,  name: '蒲坂（李世民渡河处）' },
+      { id: 'baibi',        owner: 'player', garrison: 4000,  name: '柏壁（相持要地）' },
+      { id: 'jinyang',      owner: 'enemy',  garrison: 8000,  name: '晋阳（刘武周据守）' },
+      { id: 'songjingang',  owner: 'enemy',  garrison: 12000, isObjective: true, name: '宋金刚大营（刘武周主力）' }
+    ]
+  },
+  // ---- 战役18：江陵平萧铣（621年）—— 李靖顺江而下 ----
+  {
+    id: 'v19_jingling_pingxiao',
+    name: '江陵平萧铣',
+    description: '唐武德四年（621），高祖命赵郡王李孝恭为荆湘道行军总管，李靖为行军长史，统十二总管，自夔州顺流东下。时秋水泛涨，萧铣以江路险绝，官军必不能进，不设备。孝恭、靖乘水涨，骤兵至夷陵，大破铣将文士弘，进逼江陵。铣仓猝征兵，皆未至，遂空城出战。铣兵大败，孝恭围其城。铣困迫，率群臣降。江陵平，南方州县皆望风归附。',
+    year: 621,
+    illustration: 'v19_jingling_pingxiao',
+    objective: '顺江而下，在 20 回合内攻克江陵，俘获萧铣。',
+    defeatCondition: '水军主力被歼灭，或李孝恭战死。',
+    startingState: {
+      troops: 20000,
+      money: 3000,
+      food: 5500,
+      generals: ['v17_li_jing', 'v19_li_xiaogong', 'v19_chai_shao']
+    },
+    reward: { money: 5500, food: 9000 },
+    mapSetup: [
+      { id: 'kuizhou',      owner: 'player', garrison: 5000,  isBase: true,  name: '夔州（水军基地）' },
+      { id: 'yingling',     owner: 'enemy',  garrison: 4000,  name: '夷陵（铣将文士弘）' },
+      { id: 'jiangling',    owner: 'enemy',  garrison: 10000, isObjective: true, name: '江陵（萧铣都城）' }
+    ]
+  },
+  // ---- 战役19：洺水破刘黑闼（622年）—— 李世民洺水之战 ----
+  {
+    id: 'v19_mingshui_pingheita',
+    name: '洺水破刘黑闼',
+    description: '唐武德五年（622），刘黑闼引突厥入寇，陷瀛州、贝州，山东州县多叛应之。太宗太宗讨之，屯于洺水。黑闼数挑战，太宗坚壁不战，以老其师。别遣奇兵绝其粮道。黑闼城中食尽，太宗度其必来决战，乃堰洺水上流，谓守吏曰：待我与贼战，乃可决水。既而黑闼率步骑二万南渡洺水，压唐营而阵。太宗亲率精骑，击其骑兵，破之，乘胜蹂其步卒。守吏乃决堰，水大至，深丈余。黑闼众大溃，斩首万余级，溺死数千人。黑闼与范愿等奔突厥。山东遂平。',
+    year: 622,
+    illustration: 'v19_mingshui_pingheita',
+    objective: '堰洺水，在 20 回合内击溃刘黑闼主力。',
+    defeatCondition: '唐军主力被击溃，或洺水防线被突破。',
+    startingState: {
+      troops: 18000,
+      money: 2800,
+      food: 5000,
+      generals: ['v17_xu_shiji', 'v19_yuchi_jingde', 'v17_qin_shubao']
+    },
+    reward: { money: 6000, food: 10000 },
+    mapSetup: [
+      { id: 'luonan',       owner: 'player', garrison: 6000,  isBase: true,  name: '洺南（唐军大营）' },
+      { id: 'ming_shui',   owner: 'player', garrison: 3000,  name: '洺水堰（决水之处）' },
+      { id: 'mingzhou',     owner: 'enemy',  garrison: 6000,  name: '洺州（黑闼据守）' },
+      { id: 'heita_daying', owner: 'enemy',  garrison: 12000, isObjective: true, name: '刘黑闼主力（决战之地）' }
+    ]
+  },
+  // ---- 战役20：渡江灭辅公祏（624年）—— 李孝恭李靖讨丹阳 ----
+  {
+    id: 'v19_dujiang_miefu',
+    name: '渡江灭辅公祏',
+    description: '唐武德七年（624），辅公祏据丹阳反，称帝，国号宋。高祖命赵郡王李孝恭为元帅，李靖副之，李勣、黄君汉等七总管并受节度。孝恭自荆州趣江州，李靖趋宣州，李勣自淮南，三道俱进。公祏遣将冯惠亮屯博望山，陈正通屯青林山，以拒之。孝恭乃以奇兵断其粮道，惠亮等军饥，夜薄孝恭营，孝恭坚卧不动。明日，遣老弱挑战，引锐士阵以待。贼众追，伏兵发，大破之。惠亮等单遁。公祏惧，弃城东走，欲趋突厥。至句容，从兵能属者裁五百人。为野人所执，送丹阳，斩之。江南遂平。',
+    year: 624,
+    illustration: 'v19_dujiang_miefu',
+    objective: '三道俱进，在 25 回合内攻克丹阳，俘获辅公祏。',
+    defeatCondition: '渡江主力被歼灭，或李孝恭战死。',
+    startingState: {
+      troops: 22000,
+      money: 3500,
+      food: 6000,
+      generals: ['v17_li_jing', 'v19_li_xiaogong', 'v17_xu_shiji']
+    },
+    reward: { money: 7000, food: 11000 },
+    mapSetup: [
+      { id: 'jiangling3',  owner: 'player', garrison: 5000,  isBase: true,  name: '江陵（李孝恭出师）' },
+      { id: 'bo_wang_shan', owner: 'enemy', garrison: 6000,  name: '博望山（冯惠亮）' },
+      { id: 'qinglin_shan', owner: 'enemy', garrison: 5000,  name: '青林山（陈正通）' },
+      { id: 'jiankang4',   owner: 'enemy',  garrison: 10000, isObjective: true, name: '丹阳（辅公祏都城）' }
+    ]
   }
 ];
 
@@ -7941,4 +8500,62 @@ export const V18_BALANCE = {
   campaignRewardMult: 1.05,
   // 战役模式：敌军兵力难度倍率（维持 V17=1.0）
   campaignEnemyMult: 1.0
+};
+
+// ============================================================
+// V19.0 — 平衡性调优常量
+// ============================================================
+// 说明：V19.0 新增 15 位武将、20 个随机事件、5 个历史事件、1 个剧本、
+//       5 个战役关卡、12 座陇右/河西/河北边镇城市。内容量再扩后，对数值做以下微调：
+//   1) 兵种克制加成维持 V18=0.27，名将密度继续上升，不再增强克制；
+//   2) AI 进攻阈值 V18=0.38 → V19=0.39，新城市拉长出击线，AI 略趋激进；
+//   3) 随机事件基础触发概率 V18=0.19 → V19=0.20，事件池扩至 397，略升触达；
+//   4) 忠诚自然衰减维持 V18=0.22；
+//   5) 新招募武将初始忠诚下限 V18=73 → V19=74，在野将池继续扩大；
+//   6) 边镇沙漠/山地补给惩罚沿用 V18=0.32；
+//   7) 战役模式胜利奖励倍率 V18=1.05 → V19=1.10，新战役战线更长，略增回报；
+//   8) 战役模式敌军难度倍率 V18=1.0 → V19=1.05，新战役关略增难度。
+// 注意：本常量仅作为数值配置集中声明，实际读取由 game.js/ai.js/tax.js 决定。
+// ------------------------------------------------------------
+export const V19_BALANCE = {
+  // 兵种克制加成（维持 V18=0.27）
+  counterBonus: 0.27,
+  // 阵型克制加成（维持 V18=0.22）
+  formationCounterBonus: 0.22,
+  // AI 进攻阈值（V18=0.38 → V19=0.39）
+  aiAttackThreshold: 0.39,
+  // AI 防御权重（维持 V18=0.60）
+  aiDefenseWeight: 0.60,
+  // 随机事件基础触发概率（V18=0.19 → V19=0.20）
+  eventBaseProbability: 0.20,
+  // 忠诚自然衰减速率（维持 V18=0.22）
+  loyaltyDecayRate: 0.22,
+  // 新招募武将初始忠诚下限（V18=73 → V19=74）
+  recruitInitialLoyalty: 74,
+  // 基础税率上限（维持 V18=45%）
+  maxTaxRate: 45,
+  // 税率超过 35% 后每 1% 的民心衰减（维持 V18=0.08）
+  taxOverThresholdMoraleDecay: 0.08,
+  // 税率低于 20% 时每 1% 的民心增益（维持 V18=0.05）
+  taxUnderThresholdMoraleBonus: 0.05,
+  // 城市收入人口系数（维持 V18=0.075）
+  incomePopFactor: 0.075,
+  // 冬季粮草消耗系数（维持 V18=0.05）
+  winterFoodWaste: 0.05,
+  // 科技研究费用系数（维持 V18=0.9）
+  techCostMult: 0.9,
+  // 困难模式 AI 资源倍率（维持 V18=1.4）
+  hardModeResourceMult: 1.4,
+  // 简单模式 AI 资源倍率（维持 V18=0.68）
+  easyModeResourceMult: 0.68,
+  // 新将招募费用折扣（维持 V18=0.15）
+  recruitCostDiscount: 0.15,
+  // 城市维护费系数（维持 V18=0.95）
+  cityUpkeepFactor: 0.95,
+  // 沙漠地形行军补给惩罚（沿用 V18=0.32）
+  desertSupplyPenalty: 0.32,
+  // 战役模式：胜利奖励倍率（V18=1.05 → V19=1.10）
+  campaignRewardMult: 1.10,
+  // 战役模式：敌军兵力难度倍率（V18=1.0 → V19=1.05）
+  campaignEnemyMult: 1.05
 };

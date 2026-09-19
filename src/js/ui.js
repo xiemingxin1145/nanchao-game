@@ -23,6 +23,8 @@ import { OFFICES, TITLES as RANKS, getOffice } from './office.js'; // V7.0 官�
 import { FORMATIONS, availableFormations, maxFormationLevel } from './formation.js'; // V9.0 阵法
 import { computeSupplyStatus } from './supply.js'; // V17.0 补给状态（军队面板深化）
 import { formatPlayTime } from './stats.js';
+// V19.0 文治武功版：文化系统面板所需常量（只读引用，不改 religion.js）
+import { RELIGIONS, RELIGION_BUILDINGS, CULTURE_VICTION_THRESHOLD, CULTURE_VICTION_TURNS, canBuildGrotto } from './religion.js';
 // V4.0: 模组系统
 import { modManager } from './modding.js';
 // V5.5: 局域网对战
@@ -154,7 +156,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge">V18.0 · 智计天下版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge">V19.0 · 文治武功版</div>
         </div>
       </div>
     `;
@@ -1013,10 +1015,14 @@ export class UI {
           <div class="top-item"><span class="res-icon">兵</span><b id="hdr-army">0</b></div>
           <div class="top-item" title="点击查看军团">军团 <b id="hdr-legion" class="era-click">0</b></div>
           <div class="top-item">民心 <b id="hdr-morale">60</b></div>
+          <div class="top-item v19-culture-item" id="hdr-culture" title="点击查看文化面板">
+            <span class="res-icon">文</span><b id="hdr-culture-val">0</b>
+          </div>
           <div class="top-bar-btns">
             <button class="btn-icon" id="btn-mute" title="静音">🔊</button>
             <button class="btn-icon" id="btn-music" title="乐府·音乐">🎵</button>
             <button class="btn-icon" id="btn-tech" title="科技树">📜</button>
+            <button class="btn-icon v19-culture-btn" id="btn-culture" title="V19.0 文化：文治昌明 / 宗教建筑 / 文化传播">☸️</button>
             <button class="btn-icon" id="btn-legion" title="军团会战">⚔</button>
             <button class="btn-icon" id="btn-ach" title="成就">🏆</button>
             <button class="btn-icon" id="btn-stats" title="统计">📊</button>
@@ -1086,6 +1092,11 @@ export class UI {
     document.getElementById('btn-recruit').onclick = () => this.showRecruitPanel();
     document.getElementById('btn-menu').onclick = () => this.showSettings();
     document.getElementById('btn-tech').onclick = () => this.showTechTree();
+    // V19.0：文化面板入口
+    const v19CulBtn = document.getElementById('btn-culture');
+    if (v19CulBtn) v19CulBtn.onclick = () => this.showCulturePanelV19();
+    const v19CulHdr = document.getElementById('hdr-culture');
+    if (v19CulHdr) v19CulHdr.onclick = () => this.showCulturePanelV19();
     const legionBtn = document.getElementById('btn-legion');
     if (legionBtn) legionBtn.onclick = () => this.showLegionPanel();
     const legionHdr = document.getElementById('hdr-legion');
@@ -3225,104 +3236,364 @@ export class UI {
   }
 
   // ============================================================
-  // 科技树
+  // 科技树（V19.0 文治武功版：三分支树状图 + 状态色 + 进度条）
   // ============================================================
+  // 科技效果键 → 中文标签（乘算/加算统一描述）
+  _v19TechEffectLabel(k, v) {
+    const map = {
+      cavalryMult: '骑兵战力', archerMult: '弓兵战力', infantryMult: '步兵战力',
+      siegeMult: '攻城战力', maxTroopsMult: '武将带兵', recruitCostMult: '征兵费用',
+      foodMult: '农业产出', incomeMult: '金钱收入', disasterMult: '灾害影响',
+      commMult: '商业', popMult: '人口', loyaltyFlat: '武将忠诚',
+      moraleFlat: '民心', prosperityFlat: '繁荣', politicsEffMult: '政治效果',
+      rebellionMult: '叛乱概率', recruitBonus: '招募成功率', allUnitMult: '全兵种',
+      formationMaxLevel: '阵型升级上限'
+    };
+    const name = map[k] || k;
+    if (k === 'unlockFormation') return `解锁阵型【${v}】`;
+    const pct = Math.round(Math.abs(v) * 100);
+    const sign = v < 0 ? '-' : '+';
+    if (k === 'loyaltyFlat' || k === 'moraleFlat' || k === 'prosperityFlat') return `${name} ${sign}${Math.abs(v)}`;
+    return `${name} ${sign}${pct}%`;
+  }
+
+  // 取某条科技线全部节点（含状态），并补算研究进度
+  _v19GetTechLine(lineKey) {
+    const tree = (typeof this.game.getTechTree === 'function') ? this.game.getTechTree() : {};
+    const line = tree[lineKey];
+    if (!line) return null;
+    const researching = this.game.researching || null;
+    const techs = (line.techs || []).map(t => {
+      let progress = 0, remainingTurns = 0;
+      if (t.researching && researching && researching.techId === t.id) {
+        const total = t.researchTurns || 1;
+        remainingTurns = researching.turnsLeft != null ? researching.turnsLeft : 0;
+        progress = Math.max(0, Math.min(100, Math.round((1 - remainingTurns / total) * 100)));
+      }
+      return { ...t, progress, remainingTurns };
+    });
+    return { ...line, techs };
+  }
+
   showTechTree() {
     if (typeof this.game.getTechTree !== 'function') {
       this.toast('科技树系统尚未开放');
       return;
     }
-    let tree;
-    try { tree = this.game.getTechTree(); } catch (e) { this.toast('科技数据异常'); return; }
-    if (!tree) { this.toast('暂无科技数据'); return; }
-    this._techCat = this._techCat || 'military';
+    // 三主分支：军事 / 经济 / 文化（政治线即文治改革），附阵法线
+    const lineDefs = [
+      { key: 'military',  name: '军事', icon: '⚔️' },
+      { key: 'economy',   name: '经济', icon: '💰' },
+      { key: 'political', name: '文化', icon: '📜' },
+      { key: 'formation', name: '阵法', icon: '🏯' }
+    ];
+    // 汇总统计（全科技）
+    let researched = 0, researching = 0, total = 0;
+    const tree = this.game.getTechTree() || {};
+    for (const lineKey of Object.keys(tree)) {
+      for (const t of (tree[lineKey].techs || [])) {
+        total++;
+        if (t.researched) researched++;
+        else if (t.researching) researching++;
+      }
+    }
+    this._v19TechCat = this._v19TechCat || 'military';
+    if (!tree[this._v19TechCat]) this._v19TechCat = lineDefs[0].key;
 
-    const catNames = { military: '军事', economic: '经济', political: '政治' };
     const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
+    modal.className = 'modal-overlay v19-overlay';
     modal.innerHTML = `
-      <div class="modal tech-modal">
-        <h2 class="modal-title">科技树</h2>
-        <div class="tech-tabs">
-          ${Object.keys(catNames).map(c =>
-            `<button class="tech-tab ${c === this._techCat ? 'active' : ''}" data-cat="${c}">${catNames[c]}</button>`
-          ).join('')}
+      <div class="modal v19-modal v19-wide v19-scroll">
+        <div class="v19-corner tl"></div><div class="v19-corner tr"></div>
+        <div class="v19-corner bl"></div><div class="v19-corner br"></div>
+        <h2 class="modal-title v19-title">🌳 科技树 · 文治武功</h2>
+        <div class="v19-tech-summary">
+          <span class="v19-ts-chip v19-ts-done">已研 ${researched}</span>
+          <span class="v19-ts-chip v19-ts-run">研究中 ${researching}</span>
+          <span class="v19-ts-chip v19-ts-lock">未研 ${total - researched - researching}</span>
         </div>
-        <div class="tech-grid" id="tech-grid"></div>
-        <button class="btn-ancient" style="margin-top:14px" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+        <div class="v19-tech-tabs">
+          ${lineDefs.map(l =>
+            `<button class="v19-tech-tab ${l.key === this._v19TechCat ? 'active' : ''}" data-cat="${l.key}">
+               <span class="v19-tt-icon">${l.icon}</span>${l.name}
+             </button>`).join('')}
+        </div>
+        <div class="v19-tech-tree" id="v19-tech-tree"></div>
+        <div class="v19-tech-legend">
+          <span><i class="v19-lg-dot" style="background:#d4af37"></i>已研究</span>
+          <span><i class="v19-lg-dot" style="background:#4a90d9"></i>可研究</span>
+          <span><i class="v19-lg-dot" style="background:#c8a54a"></i>研究中</span>
+          <span><i class="v19-lg-dot" style="background:#5a5a5a"></i>未解锁</span>
+        </div>
+        <button class="btn-ancient v19-close" onclick="this.closest('.v19-overlay').remove()">关闭</button>
       </div>
     `;
     document.body.appendChild(modal);
-    modal.querySelectorAll('.tech-tab').forEach(tab => {
+    modal.querySelectorAll('.v19-tech-tab').forEach(tab => {
       tab.onclick = () => {
-        this._techCat = tab.dataset.cat;
-        modal.querySelectorAll('.tech-tab').forEach(t => t.classList.toggle('active', t === tab));
-        this._renderTechGrid(tree);
+        this._v19TechCat = tab.dataset.cat;
+        modal.querySelectorAll('.v19-tech-tab').forEach(t => t.classList.toggle('active', t === tab));
+        this._v19RenderTechLine();
       };
     });
-    this._renderTechGrid(tree);
+    this._v19RenderTechLine();
   }
 
-  _renderTechGrid(tree) {
-    const grid = document.getElementById('tech-grid');
-    if (!grid) return;
-    const list = tree[this._techCat] || [];
-    if (list.length === 0) {
-      grid.innerHTML = '<p class="hint">该科技线暂无可研项目</p>';
+  _v19RenderTechLine() {
+    const wrap = document.getElementById('v19-tech-tree');
+    if (!wrap) return;
+    const line = this._v19GetTechLine(this._v19TechCat);
+    if (!line || !line.techs || line.techs.length === 0) {
+      wrap.innerHTML = '<p class="v19-empty">该分支暂无可研项目。</p>';
       return;
     }
-    const icons = {
-      military: '⚔️', economic: '💰', political: '🏛️'
-    };
-    grid.innerHTML = list.map(t => {
-      let cls = 'tech-card locked';
-      if (t.researched) cls = 'tech-card researched';
-      else if (t.researching) cls = 'tech-card researching';
-      else if (t.available) cls = 'tech-card available';
-      const pre = (t.prerequisites || []).join('、') || '无';
-      const progress = t.researching ? `
-        <div class="tech-meta">研究中 · 剩余 ${t.remainingTurns ?? '?'} 回合</div>
-        <div class="tech-progress"><div class="tech-progress-fill" style="width:${t.progress ?? 50}%"></div></div>
-      ` : `
-        <div class="tech-meta">费用 ${t.cost ?? '?'} 金 · 需 ${t.turns ?? '?'} 回合</div>
-        <div class="tech-meta">前置：${pre}</div>
-      `;
+    const lineColor = line.color || '#c8a54a';
+    // 一次性构建 科技id→名称 映射，避免重复调用 getTechTree()
+    const idName = {};
+    try {
+      const allTree = (typeof this.game.getTechTree === 'function') ? this.game.getTechTree() : {};
+      for (const lk of Object.keys(allTree)) {
+        for (const x of (allTree[lk].techs || [])) idName[x.id] = x.name;
+      }
+    } catch (e) {}
+    wrap.innerHTML = line.techs.map((t, idx) => {
+      let cls = 'v19-node locked';
+      if (t.researched) cls = 'v19-node researched';
+      else if (t.researching) cls = 'v19-node researching';
+      else if (t.available) cls = 'v19-node available';
+      const preNames = (t.requires || []).map(rid => idName[rid] || rid);
+      const pre = preNames.length ? preNames.join('、') : '无';
+      const eff = Object.entries(t.effect || {}).map(([k, v]) =>
+        `<span class="v19-eff-chip">${this._v19TechEffectLabel(k, v)}</span>`).join('');
+      let statusHtml;
+      if (t.researched) {
+        statusHtml = `<div class="v19-node-status done">✓ 已完成</div>`;
+      } else if (t.researching) {
+        statusHtml = `
+          <div class="v19-node-status run">研究中 · 剩 ${t.remainingTurns} 回合</div>
+          <div class="v19-progress"><div class="v19-progress-fill" style="width:${t.progress}%"></div></div>`;
+      } else if (t.available) {
+        statusHtml = `<div class="v19-node-status avail">费用 ${t.cost} 金 · 需 ${t.researchTurns} 回合 · 点击研究</div>`;
+      } else {
+        statusHtml = `<div class="v19-node-status lock">前置：${pre}</div>`;
+      }
       return `
-        <div class="${cls}" data-tid="${t.id}" data-name="${t.name}">
-          <div class="tech-head">
-            <span class="tech-icon">${icons[this._techCat] || '📜'}</span>
-            <span class="tech-name">${t.name}</span>
+        <div class="${cls}" data-tid="${t.id}" data-name="${this._escHtml(t.name)}" style="--v19-line:${lineColor}">
+          <div class="v19-node-ladder">
+            <span class="v19-node-pos">${idx + 1}</span>
           </div>
-          <div class="tech-desc">${t.description || ''}</div>
-          ${progress}
+          <div class="v19-node-body">
+            <div class="v19-node-head">
+              <span class="v19-node-name">${this._escHtml(t.name)}</span>
+              <span class="v19-node-cost">💰${t.cost}</span>
+            </div>
+            <div class="v19-node-desc">${this._escHtml(t.description || '')}</div>
+            <div class="v19-node-eff">${eff}</div>
+            ${statusHtml}
+          </div>
         </div>
+        ${idx < line.techs.length - 1 ? `<div class="v19-connector" style="--v19-line:${lineColor}"></div>` : ''}
       `;
     }).join('');
 
-    grid.querySelectorAll('.tech-card.available').forEach(card => {
-      card.onclick = () => this._techCardClick(card, tree);
+    // 可研究节点点击 → 二次确认研究
+    wrap.querySelectorAll('.v19-node.available').forEach(node => {
+      node.onclick = () => this._v19TechCardClick(node);
     });
   }
 
-  _techCardClick(card, tree) {
-    const tid = card.dataset.tid;
+  _v19TechCardClick(node) {
+    const tid = node.dataset.tid;
     if (this._pendingTechId === tid) {
-      // 二次确认
       if (typeof this.game.researchTech === 'function') {
         try {
           const r = this.game.researchTech(tid);
-          this.audio.playCoin();
-          this.toast((r && r.msg) || `开始研究 ${card.dataset.name}`);
+          if (r && r.ok) {
+            this.audio.playCoin();
+            this.toast(r.msg || `开始研究 ${node.dataset.name}`);
+          } else {
+            this.toast((r && r.msg) || '研究失败');
+          }
           this._pendingTechId = null;
-          this._renderTechGrid(tree);
+          this._v19RenderTechLine();
           this.refreshUI();
         } catch (e) { this.toast('研究失败'); }
       }
     } else {
       this._pendingTechId = tid;
-      this.toast('再次点击确认研究 ' + card.dataset.name);
+      this.toast('再次点击确认研究 ' + node.dataset.name);
       setTimeout(() => { if (this._pendingTechId === tid) this._pendingTechId = null; }, 3000);
     }
+  }
+
+  // ============================================================
+  // 文化系统面板（V19.0 文治武功版）
+  //  来源分解 / 效果加成 / 文化建筑列表与建造 / 文化传播可视化 / 文化胜利进度
+  // ============================================================
+  showCulturePanelV19() {
+    if (!this.game) { this.toast('开始游戏后可查看文化'); return; }
+    const g = this.game;
+    const me = g.playerFaction;
+    let cities = [];
+    try { cities = g.getFactionCities(me) || []; } catch (e) { cities = []; }
+
+    // ---- 总文化值（累积） ----
+    let totalCulture = 0;
+    try { totalCulture = (typeof g.getTotalCulture === 'function') ? g.getTotalCulture() : 0; } catch (e) {}
+
+    // ---- 来源分解（每回合产出，对齐 religion.js 公式） ----
+    // 基础 2/城 + 佛寺×5 + 道观×3 + 石窟×10
+    let baseSrc = 0, budSrc = 0, daoSrc = 0, grotSrc = 0;
+    let totBudLv = 0, totDaoLv = 0, totConLv = 0, totGrotLv = 0;
+    const perTurnTotal = cities.reduce((s, c) => {
+      const b = (c.buildings && c.buildings.buddhist_temple) || (c.religion && c.religion.buddhist) || 0;
+      const d = (c.buildings && c.buildings.daoist_temple) || (c.religion && c.religion.daoist) || 0;
+      const co = (c.buildings && c.buildings.confucian_temple) || (c.religion && c.religion.confucian) || 0;
+      const gr = (c.buildings && c.buildings.grotto) || 0;
+      totBudLv += b; totDaoLv += d; totConLv += co; totGrotLv += gr;
+      baseSrc += 2; budSrc += b * 5; daoSrc += d * 3; grotSrc += gr * 10;
+      return s + 2 + b * 5 + d * 3 + gr * 10;
+    }, 0);
+
+    // ---- 效果加成（聚合城市修正） ----
+    let moraleMod = 0, incomeMod = 0, techMod = 0;
+    for (const c of cities) {
+      const b = (c.buildings && c.buildings.buddhist_temple) || 0;
+      const d = (c.buildings && c.buildings.daoist_temple) || 0;
+      const gr = (c.buildings && c.buildings.grotto) || 0;
+      moraleMod += b * 2 + gr * 1;
+      incomeMod -= b * 0.01;
+      techMod += d * 3;
+    }
+
+    // ---- 文化胜利进度 ----
+    const threshold = (typeof CULTURE_VICTION_THRESHOLD === 'number') ? CULTURE_VICTION_THRESHOLD : 1000;
+    const needTurns = (typeof CULTURE_VICTION_TURNS === 'number') ? CULTURE_VICTION_TURNS : 10;
+    let streak = 0;
+    try { streak = (g.religionSystem && g.religionSystem.cultureStreak) || 0; } catch (e) {}
+    const winPct = Math.max(0, Math.min(100, Math.round(totalCulture / threshold * 100)));
+    const streakPct = Math.max(0, Math.min(100, Math.round(streak / needTurns * 100)));
+
+    // ---- 文化建筑列表 + 传播可视化 ----
+    const cityRows = cities.map(c => {
+      const bLv = (c.buildings && c.buildings.buddhist_temple) || (c.religion && c.religion.buddhist) || 0;
+      const dLv = (c.buildings && c.buildings.daoist_temple) || (c.religion && c.religion.daoist) || 0;
+      const cLv = (c.buildings && c.buildings.confucian_temple) || (c.religion && c.religion.confucian) || 0;
+      const gLv = (c.buildings && c.buildings.grotto) || 0;
+      const cul = (c.religion && c.religion.culture) || 0;
+      // 传播可视化：佛/道/儒 三色比例环
+      const sum = bLv + dLv + cLv;
+      const bPct = sum ? Math.round(bLv / sum * 100) : 0;
+      const dPct = sum ? Math.round(dLv / sum * 100) : 0;
+      const cStart = bPct + dPct;
+      const pie = sum
+        ? `conic-gradient(#c9a86a 0 ${bPct}%, #5a7a9a ${bPct}% ${cStart}%, #7a9a5a ${cStart}% 100%)`
+        : 'conic-gradient(#444 0 100%)';
+      const canGrot = (typeof canBuildGrotto === 'function') && canBuildGrotto(c);
+      return `
+        <div class="v19-cul-city" data-cid="${c.id}">
+          <div class="v19-cc-head">
+            <span class="v19-cc-name">${this._escHtml(c.name)}</span>
+            <span class="v19-cc-cul">文化 ${Math.round(cul)}</span>
+          </div>
+          <div class="v19-cc-spread">
+            <span class="v19-cc-pie" style="background:${pie}" title="佛${bLv}·道${dLv}·儒${cLv}"></span>
+            <span class="v19-cc-levels">
+              佛${bLv} 道${dLv} 儒${cLv}${gLv ? ` 窟${gLv}` : ''}
+            </span>
+          </div>
+          <div class="v19-cc-build">
+            <button class="v19-mini-btn" onclick="__ui_._v19BuildCulture('${c.id}','buddhist')">建佛寺</button>
+            <button class="v19-mini-btn" onclick="__ui_._v19BuildCulture('${c.id}','daoist')">建道观</button>
+            <button class="v19-mini-btn" onclick="__ui_._v19BuildCulture('${c.id}','confucian')">建孔庙</button>
+            ${canGrot ? `<button class="v19-mini-btn v19-grot-btn" onclick="__ui_._v19BuildCulture('${c.id}','grotto')">凿石窟</button>` : ''}
+          </div>
+        </div>`;
+    }).join('');
+
+    const body = `
+      <div class="v19-cul-hero">
+        <div class="v19-cul-total">
+          <span class="v19-cul-total-label">文化值</span>
+          <span class="v19-cul-total-num">${Math.round(totalCulture)}</span>
+          <span class="v19-cul-perturn">+${perTurnTotal}/回合</span>
+        </div>
+        <div class="v19-cul-win">
+          <div class="v19-cul-win-row">
+            <span>文化繁荣胜利</span>
+            <b>${Math.round(totalCulture)} / ${threshold}</b>
+          </div>
+          <div class="v19-cul-winbar"><div class="v19-cul-winfill" style="width:${winPct}%"></div></div>
+          <div class="v19-cul-win-row small">
+            <span>维持回合</span><b>${streak} / ${needTurns}</b>
+          </div>
+          <div class="v19-cul-winbar streak"><div class="v19-cul-winfill streak" style="width:${streakPct}%"></div></div>
+        </div>
+      </div>
+
+      <div class="v19-sec-title">文化来源 / 回合</div>
+      <div class="v19-cul-src">
+        <div class="v19-src-row"><span class="v19-src-dot" style="background:#888"></span>基础（每城）<b>+${baseSrc}</b></div>
+        <div class="v19-src-row"><span class="v19-src-dot" style="background:#c9a86a"></span>佛寺 ×${totBudLv}级<b>+${budSrc}</b></div>
+        <div class="v19-src-row"><span class="v19-src-dot" style="background:#5a7a9a"></span>道观 ×${totDaoLv}级<b>+${daoSrc}</b></div>
+        <div class="v19-src-row"><span class="v19-src-dot" style="background:#9a7ac9"></span>石窟 ×${totGrotLv}级<b>+${grotSrc}</b></div>
+      </div>
+
+      <div class="v19-sec-title">文治效果加成</div>
+      <div class="v19-cul-eff">
+        <div class="v19-eff-chip">民心修正 +${moraleMod}</div>
+        <div class="v19-eff-chip">科技产出 +${techMod}</div>
+        <div class="v19-eff-chip ${incomeMod < 0 ? 'v19-bad' : ''}">收入修正 ${incomeMod >= 0 ? '+' : ''}${(incomeMod * 100).toFixed(0)}%</div>
+        <div class="v19-eff-chip">孔庙 ×${totConLv}级（政治教化）</div>
+      </div>
+
+      <div class="v19-sec-title">文化建筑 · 逐城经营</div>
+      <div class="v19-cul-list">${cityRows || '<p class="v19-empty">暂无据有城市。</p>'}</div>
+      <p class="v19-cul-hint">佛寺旺民心文化，道观利科技招募，孔庙兴政治教化；石窟（仅平城/洛阳/建康）文化最盛。宗教建筑会向邻近城池自然传播。</p>
+    `;
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v19-overlay';
+    modal.innerHTML = `
+      <div class="modal v19-modal v19-wide v19-scroll">
+        <div class="v19-corner tl"></div><div class="v19-corner tr"></div>
+        <div class="v19-corner bl"></div><div class="v19-corner br"></div>
+        <h2 class="modal-title v19-title">☸️ 文化 · 文治昌明</h2>
+        <div class="v19-body">${body}</div>
+        <button class="btn-ancient v19-close" onclick="this.closest('.v19-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') {
+      try { this.audio.playPanelOpen(); } catch (e) {}
+    }
+  }
+
+  // 文化建筑建造（带 typeof 守卫，优雅降级）
+  _v19BuildCulture(cityId, kind) {
+    const g = this.game;
+    const city = (g.cities && typeof g.cities.get === 'function') ? g.cities.get(cityId) : null;
+    if (!city) { this.toast('城市不存在'); return; }
+    let result = { ok: false, msg: '建造接口未就绪' };
+    try {
+      if (kind === 'grotto') {
+        if (typeof g.buildGrotto === 'function') result = g.buildGrotto(cityId);
+        else result = { ok: false, msg: '石窟建造暂未开放' };
+      } else {
+        if (g.religionSystem && typeof g.religionSystem.buildReligiousSite === 'function') {
+          result = g.religionSystem.buildReligiousSite(city, kind, g);
+        } else {
+          result = { ok: false, msg: '宗教建筑建造暂未开放' };
+        }
+      }
+    } catch (e) { result = { ok: false, msg: String(e.message || e) }; }
+    this.toast(result.msg);
+    if (result.ok && this.audio && this.audio.playCoin) {
+      try { this.audio.playCoin(); } catch (e) {}
+    }
+    // 关闭旧文化面板并重开刷新
+    document.querySelectorAll('.v19-overlay').forEach(m => m.remove());
+    if (g.state === 'playing') this.showCulturePanelV19();
+    if (this.refreshUI) this.refreshUI();
   }
 
   // ============================================================
@@ -3489,35 +3760,101 @@ export class UI {
   // 势力情报
   // ============================================================
   showFactionIntel() {
+    const g = this.game;
     const modal = document.createElement('div');
-    modal.className = 'modal-overlay';
-    const rows = Object.values(FACTIONS).map(f => {
-      const cities = this.game.getFactionCities(f.id);
-      const armies = this.game.getFactionArmies(f.id);
-      const gens = this.game.getFactionGenerals(f.id);
+    modal.className = 'modal-overlay v19-overlay';
+
+    // ---- 综合国力评分（确定性公式）：城×100 + 兵/10 + 将×30 + 文化 + 金/10 ----
+    const facData = Object.values(FACTIONS).map(f => {
+      const cities = g.getFactionCities(f.id);
+      const armies = g.getFactionArmies(f.id);
+      const gens = g.getFactionGenerals(f.id);
       const totalTroops = armies.reduce((s, a) => s + a.troops, 0);
+      let culture = 0;
+      for (const c of cities) culture += (c.religion && c.religion.culture) || 0;
+      let money = 0;
+      try { const r = g.factionRes && g.factionRes.get(f.id); if (r) money = r.money || 0; } catch (e) {}
+      const power = Math.round(cities.length * 100 + totalTroops / 10 + gens.length * 30 + culture + money / 10);
       let relText = '我方';
-      if (f.id !== this.game.playerFaction && this.game.diplomacy) {
-        const rel = this.game.diplomacy.getRelation(this.game.playerFaction, f.id);
+      if (f.id !== g.playerFaction && g.diplomacy) {
+        const rel = g.diplomacy.getRelation(g.playerFaction, f.id);
         relText = rel.relation > 20 ? '友好' : rel.relation < -20 ? '敌对' : '中立';
       }
+      return { f, cities, totalTroops, gens, culture, power, relText };
+    });
+    // 按国力排序
+    facData.sort((a, b) => b.power - a.power);
+    const maxPower = Math.max(1, facData[0] ? facData[0].power : 1);
+
+    // ---- 我方科技树概览 ----
+    let techDone = 0, techRun = 0, techTotal = 0;
+    try {
+      const tree = (typeof g.getTechTree === 'function') ? g.getTechTree() : {};
+      for (const lk of Object.keys(tree)) {
+        for (const t of (tree[lk].techs || [])) {
+          techTotal++;
+          if (t.researched) techDone++;
+          else if (t.researching) techRun++;
+        }
+      }
+    } catch (e) {}
+    const techLeft = techTotal - techDone - techRun;
+
+    // 我方文化值
+    let myCulture = 0;
+    try { myCulture = (typeof g.getTotalCulture === 'function') ? g.getTotalCulture() : 0; } catch (e) {}
+    const meData = facData.find(d => d.f.id === g.playerFaction);
+    const myRank = meData ? facData.indexOf(meData) + 1 : '-';
+    const myPower = meData ? meData.power : 0;
+
+    const rows = facData.map((d, idx) => {
+      const mine = d.f.id === g.playerFaction;
+      const pct = Math.round(d.power / maxPower * 100);
       return `
-        <div class="intel-row" style="border-left-color:${f.color}">
-          <b style="color:${f.color}">${f.name}</b>
-          <div class="intel-stats">
-            <span>城市 <b>${cities.length}</b></span>
-            <span>兵力 <b>${totalTroops}</b></span>
-            <span>武将 <b>${gens.length}</b></span>
-            <span>关系 <b>${relText}</b></span>
+        <div class="v19-intel-row ${mine ? 'mine' : ''}" style="--v19-fc:${d.f.color}">
+          <div class="v19-ir-head">
+            <b style="color:${d.f.color}">${idx + 1}. ${this._escHtml(d.f.name)}</b>
+            <span class="v19-ir-rel">${d.relText}</span>
+          </div>
+          <div class="v19-ir-stats">
+            <span>城 <b>${d.cities.length}</b></span>
+            <span>兵 <b>${d.totalTroops}</b></span>
+            <span>将 <b>${d.gens.length}</b></span>
+            <span>文 <b>${Math.round(d.culture)}</b></span>
+          </div>
+          <div class="v19-ir-power">
+            <span class="v19-ir-power-label">国力 ${d.power}</span>
+            <div class="v19-ir-powerbar"><div class="v19-ir-powerfill" style="width:${pct}%"></div></div>
           </div>
         </div>
       `;
     }).join('');
+
     modal.innerHTML = `
-      <div class="modal">
-        <h2 class="modal-title">势力情报</h2>
-        ${rows}
-        <button class="btn-ancient" onclick="this.closest('.modal-overlay').remove()">关闭</button>
+      <div class="modal v19-modal v19-wide v19-scroll">
+        <div class="v19-corner tl"></div><div class="v19-corner tr"></div>
+        <div class="v19-corner bl"></div><div class="v19-corner br"></div>
+        <h2 class="modal-title v19-title">🏯 势力情报 · 文治武功</h2>
+        <div class="v19-mysummary">
+          <div class="v19-ms-card">
+            <span class="v19-ms-label">综合国力</span>
+            <b class="v19-ms-num">${myPower}</b>
+            <span class="v19-ms-sub">排名 ${myRank} / ${facData.length}</span>
+          </div>
+          <div class="v19-ms-card">
+            <span class="v19-ms-label">科技树</span>
+            <b class="v19-ms-num">${techDone}<span class="v19-ms-dim">/${techTotal}</span></b>
+            <span class="v19-ms-sub">研究中 ${techRun} · 未研 ${techLeft}</span>
+          </div>
+          <div class="v19-ms-card">
+            <span class="v19-ms-label">文化值</span>
+            <b class="v19-ms-num">${Math.round(myCulture)}</b>
+            <span class="v19-ms-sub">文教昌明</span>
+          </div>
+        </div>
+        <div class="v19-sec-title">群雄国力对比</div>
+        <div class="v19-intel-list">${rows}</div>
+        <button class="btn-ancient v19-close" onclick="this.closest('.v19-overlay').remove()">关闭</button>
       </div>
     `;
     document.body.appendChild(modal);
@@ -4201,6 +4538,19 @@ export class UI {
       ? Math.round(cities.reduce((s, c) => s + c.morale, 0) / cities.length) : 0;
     const moraleEl = document.getElementById('hdr-morale');
     if (moraleEl) moraleEl.textContent = avgMorale;
+
+    // V19.0：顶栏文化值（带变化浮动提示）
+    const culEl = document.getElementById('hdr-culture-val');
+    if (culEl) {
+      let culVal = 0;
+      try { culVal = (typeof this.game.getTotalCulture === 'function') ? this.game.getTotalCulture() : 0; } catch (e) {}
+      culVal = Math.round(culVal);
+      this.animateNumber(culEl, this._prevCulture, culVal, 500);
+      if (this._prevCulture != null && culVal !== this._prevCulture) {
+        this._spawnResourceFloat(culEl, culVal - this._prevCulture, '文');
+      }
+      this._prevCulture = culVal;
+    }
 
     // 消息日志（仅新行滑入）
     const logEl = document.getElementById('message-log');

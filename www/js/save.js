@@ -110,9 +110,16 @@ export function saveGame(game, slot = 0) {
     //   给键名/信封）时，在写盘前主动把日志再压到 200 条，避免「打包→失败→再打包」的
     //   双倍开销。日志仅展示用途，截断不影响玩法。
     let packed = _pack(data);
+    // 性能优化（save.js 大存档写入 V19.0·96城/189将）：
+    //   基准：旧流程为「首包 500 条日志 → 超 4.2M 再包 200 条 → 写盘仍超配额再包 100 条」，
+    //   最坏要跑 3 次 JSON.stringify + 3 次 LZ77 压缩。96 城/189将的结构化数据已很大，
+    //   长局时日志只是压垮上限的「最后一根稻草」，200 条往往仍超限 → 第三次压缩不可避免。
+    //   优化：首包一旦超限，直接一步到位截到 150 条日志再包一次（仅多 1 次压缩），
+    //   写盘时几乎必然落在 localStorage 5MB 上限内，从而把最坏压缩次数从 3 次降到 2 次。
+    //   日志仅展示用途，截断不影响玩法。
     if (typeof packed === 'string' && packed.length > 4_200_000 &&
-        Array.isArray(data.log) && data.log.length > 200) {
-      data.log = data.log.slice(-200);
+        Array.isArray(data.log) && data.log.length > 150) {
+      data.log = data.log.slice(-150);
       packed = _pack(data);
     }
     // 性能优化（save.js）：大存档序列化/写入容错——

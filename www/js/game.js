@@ -2126,11 +2126,32 @@ export class Game {
     //   轻量缓存，贸易收入计算改为 O(R) 查表。settleTurn 期间不改建筑，安全。
     const _cityTradeInfo = new Map();
     for (const c of this.cities.values()) {
+      // BUG修复（game.js #1 冗余调用）：原写法
+      //   `(c.buildingBag() && c.buildingBag().tradeMult)` 对同一城调用了两次
+      //   buildingBag()（内部遍历建筑数组）。96 城规模下每回合白白多跑 96 次建筑遍历。
+      //   修复：先取一次 buildingBag() 引用再读 tradeMult。
+      const _bb = c.buildingBag();
       _cityTradeInfo.set(c.id, {
         owner: c.owner,
         comm: c.comm || 0,
-        tradeMult: (c.buildingBag() && c.buildingBag().tradeMult) || 0
+        tradeMult: (_bb && _bb.tradeMult) || 0
       });
+    }
+    // 性能优化（game.js #3 96城回合结算）：按「拥有势力」预分组商路——
+    //   基准：原实现在 `for (const [fid, res] of this.factionRes)` 循环体内，
+    //   对每个势力都 `for (const r of this.tradeRoutes)` 全表扫描所有商路，
+    //   再用 `ci1.owner!==fid` 过滤。96 城/多势力/数十条商路下是 O(F×R) 次比较，
+    //   且每势力都遍历全表（绝大多数路由不属于本势力）。
+    //   优化：入口一次性扫描 tradeRoutes，按 city1 所在势力分桶（一条商路只属一座城
+    //   一方所有；两端 owner 不一致的跨界商路在结算时忽略——与原逻辑 `两端同属fid` 等价），
+    //   建立 fid → route[] 索引。结算时每势力只遍历自己的路由，总开销 O(R + F)。
+    const _tradeByOwner = new Map();
+    for (const r of this.tradeRoutes) {
+      const ci = _cityTradeInfo.get(r.city1);
+      if (ci && ci.owner) {
+        if (!_tradeByOwner.has(ci.owner)) _tradeByOwner.set(ci.owner, []);
+        _tradeByOwner.get(ci.owner).push(r);
+      }
     }
 
     // 玩家科技研究推进
@@ -2161,10 +2182,10 @@ export class Game {
         totalFood += food;
       }
       // V2.0：贸易路线收入（仅属于本势力的商路计入）
-      // 性能优化（game.js #2）：使用入口预建的 _cityTradeInfo 缓存，避免每势力
-      //   重复 cities.get + buildingBag()。
+      // 性能优化（game.js #2/#3）：使用入口预建的 _cityTradeInfo 与 _tradeByOwner 分组，
+      //   本势力只遍历自己名下的商路（而非全表 this.tradeRoutes），避免 O(F×R) 重复扫描。
       let tradeIncome = 0;
-      for (const r of this.tradeRoutes) {
+      for (const r of (_tradeByOwner.get(fid) || [])) {
         const ci1 = _cityTradeInfo.get(r.city1);
         const ci2 = _cityTradeInfo.get(r.city2);
         if (!ci1 || !ci2) continue;
@@ -2562,7 +2583,11 @@ export class Game {
       : { explored: [], intelVision: {} };
     // 关隘：旧存档缺省时按静态表初始化
     g.passes = data.passes && typeof data.passes === 'object' ? data.passes : initPasses();
-    for (const pid of Object.keys(initPasses())) {
+    // BUG修复（game.js #2 冗余构造）：原实现 `Object.keys(initPasses())` 为了取默认关隘
+    //   的 id 列表，又额外调用了一次 initPasses()（构造一整张临时关隘表随即丢弃）。
+    //   修复：先把默认关隘表存到局部变量，既用于缺省兜底、又用于补全遍历，避免重复构造。
+    const _defaultPasses = initPasses();
+    for (const pid of Object.keys(_defaultPasses)) {
       if (!g.passes[pid]) g.passes[pid] = { id: pid, built: false, owner: null, garrison: 0, pending: 0 };
     }
     g.supplyLines = data.supplyLines && typeof data.supplyLines === 'object' ? data.supplyLines : {};

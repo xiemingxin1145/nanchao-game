@@ -18,11 +18,11 @@
 //   game.stats / game.gameStats 累计数据（见 game.js / stats.js）
 // ============================================================
 
-import { TECHS } from './tech.js';
+import { TECHS, V19_TECH_IDS, isV19LineComplete } from './tech.js';
 import { FACTIONS } from './data.js';
 
 // 每条科技线 id → 全部科技 id
-const LINE_TECHS = { military: [], economy: [], political: [], formation: [] };
+const LINE_TECHS = { military: [], economy: [], political: [], formation: [], culture: [] };
 for (const t of TECHS) { if (LINE_TECHS[t.line]) LINE_TECHS[t.line].push(t.id); }
 
 // 全部科技 id 并集（百家争鸣用）
@@ -587,6 +587,160 @@ export const ACHIEVEMENTS = [
     description: '在雨雪天气条件下取得 5 场胜利。', reward: { food: 2500 },
     condition: (g) => (g.stats?.weatherWins || g.gameStats?.weatherWins || 0) >= 5,
     progress: (g) => ({ current: Math.min(5, g.stats?.weatherWins || g.gameStats?.weatherWins || 0), total: 5 })
+  },
+
+  // ==================== V19.0 新增（10 个 v19_ 前缀：科技树深化 + 文化系统） ====================
+  // ---- 科技树：研究 v19 高阶科技（3）----
+  {
+    id: 'v19_tech_military_first', name: '铁甲新锐', icon: '🗡️', category: 'military', points: 20,
+    description: '研究第一个 v19 军事科技。', reward: { money: 1500 },
+    condition: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        return (LINE_TECHS.military || []).some(id => id.startsWith('v19_') && done.has(id));
+      } catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v19_tech_economy_first', name: '曲辕初耕', icon: '🌱', category: 'economy', points: 20,
+    description: '研究第一个 v19 经济科技。', reward: { food: 1500 },
+    condition: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        return (LINE_TECHS.economy || []).some(id => id.startsWith('v19_') && done.has(id));
+      } catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v19_tech_culture_first', name: '文治肇始', icon: '📜', category: 'politics', points: 20,
+    description: '研究第一个 v19 文化科技。', reward: { money: 1500 },
+    condition: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        return (LINE_TECHS.culture || []).some(id => id.startsWith('v19_') && done.has(id));
+      } catch (e) { return false; }
+    }
+  },
+
+  // ---- 科技树：完成 v19 整条线（3）----
+  {
+    id: 'v19_tech_military_all', name: '武备极盛', icon: '🛡️', category: 'military', points: 40,
+    description: '完成全部 v19 军事科技。', reward: { money: 3000, title: '军神' },
+    condition: (g) => {
+      try { return isV19LineComplete('military', g.techs || []); } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        const ids = (LINE_TECHS.military || []).filter(id => id.startsWith('v19_'));
+        return { current: ids.filter(id => done.has(id)).length, total: ids.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+  {
+    id: 'v19_tech_economy_all', name: '富庶甲天下', icon: '💰', category: 'economy', points: 40,
+    description: '完成全部 v19 经济科技。', reward: { food: 4000 },
+    condition: (g) => {
+      try { return isV19LineComplete('economy', g.techs || []); } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        const ids = (LINE_TECHS.economy || []).filter(id => id.startsWith('v19_'));
+        return { current: ids.filter(id => done.has(id)).length, total: ids.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+  {
+    id: 'v19_tech_culture_all', name: '文教昌明', icon: '🎓', category: 'politics', points: 40,
+    description: '完成全部 v19 文化科技。', reward: { bgm: 'culture', title: '文宗' },
+    condition: (g) => {
+      try { return isV19LineComplete('culture', g.techs || []); } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        const ids = (LINE_TECHS.culture || []).filter(id => id.startsWith('v19_'));
+        return { current: ids.filter(id => done.has(id)).length, total: ids.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+
+  // ---- 科技树：全部 v19 科技（1）----
+  {
+    id: 'v19_tech_all', name: '科技集大成', icon: '🔬', category: 'special', points: 50,
+    description: '研究完成全部 v19 科技。', reward: { bgm: 'dynasty', money: 5000, title: '科技宗师' },
+    condition: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        return V19_TECH_IDS.length > 0 && V19_TECH_IDS.every(id => done.has(id));
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const done = new Set(g.techs || []);
+        return { current: V19_TECH_IDS.filter(id => done.has(id)).length, total: V19_TECH_IDS.length || 1 };
+      } catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+
+  // ---- 文化系统（3）----
+  {
+    id: 'v19_culture_500', name: '文教渐兴', icon: '📖', category: 'politics', points: 30,
+    description: '势力文化值达到 500。', reward: { money: 2000 },
+    condition: (g) => {
+      try {
+        const c = g.cultureSystem ? g.cultureSystem.getCulture(g.playerFaction) : 0;
+        return c >= 500;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const c = g.cultureSystem ? g.cultureSystem.getCulture(g.playerFaction) : 0;
+        return { current: Math.min(500, c), total: 500 };
+      } catch (e) { return { current: 0, total: 500 }; }
+    }
+  },
+  {
+    id: 'v19_culture_900', name: '文化盛世', icon: '🏮', category: 'politics', points: 50,
+    description: '势力文化值达到 900。', reward: { bgm: 'culture', title: '盛世文宗' },
+    condition: (g) => {
+      try {
+        const c = g.cultureSystem ? g.cultureSystem.getCulture(g.playerFaction) : 0;
+        return c >= 900;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const c = g.cultureSystem ? g.cultureSystem.getCulture(g.playerFaction) : 0;
+        return { current: Math.min(900, c), total: 900 };
+      } catch (e) { return { current: 0, total: 900 }; }
+    }
+  },
+  {
+    id: 'v19_culture_buildings', name: '广开学宫', icon: '🏫', category: 'economy', points: 30,
+    description: '累计建造 5 座文化建筑（学府/寺庙/书院/藏书阁）。', reward: { money: 2500 },
+    condition: (g) => {
+      try {
+        if (!g.cultureSystem || !g.cultureSystem.buildings) return false;
+        let n = 0;
+        for (const b of Object.values(g.cultureSystem.buildings)) {
+          n += Object.values(b).reduce((s, c) => s + c, 0);
+        }
+        return n >= 5;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        let n = 0;
+        if (g.cultureSystem && g.cultureSystem.buildings) {
+          for (const b of Object.values(g.cultureSystem.buildings)) {
+            n += Object.values(b).reduce((s, c) => s + c, 0);
+          }
+        }
+        return { current: Math.min(5, n), total: 5 };
+      } catch (e) { return { current: 0, total: 5 }; }
+    }
   }
 ];
 

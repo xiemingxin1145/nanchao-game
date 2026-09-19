@@ -1994,6 +1994,9 @@ export class IsometricMap {
       // V18.0：城市规模可视化——大城市多几栋建筑，小城市精简
       this._drawCityBuildings(ctx, r, this.getCitySizeLevel(city));
 
+      // V19.0：文化建筑标记 / 科技完成金星 / 高文化装饰（彩旗·灯笼·书卷）
+      this._drawV19CultureTechMarkers(ctx, city, r, t);
+
       // V15.0：冬季白雪覆盖（城市底座一层薄雪）
       if (this._seasonIdx() === 3) {
         ctx.fillStyle = 'rgba(245,250,255,0.45)';
@@ -3264,6 +3267,179 @@ export class IsometricMap {
         ctx.closePath(); ctx.fill();
       }
     ctx.restore();
+  }
+
+  // ============================================================
+  // V19.0 — 动画与地图增强：文化建筑 / 科技完成 / 高文化城市 视觉标记
+  // 设计：
+  //   1) 文化建筑（学府/太学·书院/佛寺/道观/石窟）在城市上方画小图标；
+  //   2) 玩家势力已完成科技 → 玩家城市头顶金色星标；
+  //   3) 高文化城市（culture 阈值）→ 彩旗/灯笼/书卷装饰环绕；
+  //   4) 距离 LOD：scale 越小（视野越远）装饰越简化，96 座城市不会过载。
+  // 性能：所有装饰在 ctx 已 translate 到城市原点后绘制，无额外坐标计算；
+  //      远处城市仅画最小星标/文化点，跳过彩旗/灯笼动画。
+  // ============================================================
+
+  // 读取城市文化值（兼容 religion.culture 字段）
+  _v19CityCulture(city) {
+    if (!city || !city.religion) return 0;
+    return city.religion.culture || 0;
+  }
+
+  // 读取城市是否拥有某文化建筑（level>=1）
+  _v19HasBuilding(city, bid) {
+    return !!(city && city.buildings && city.buildings[bid] && city.buildings[bid] >= 1);
+  }
+
+  // 是否有任意文化类建筑
+  _v19CultureBuildingKind(city) {
+    if (!city || !city.buildings) return null;
+    const b = city.buildings;
+    if (b['v14_academy'] >= 1) return 'academy';   // 学府
+    if (b['taixue'] >= 1) return 'academy';         // 太学≈书院
+    if (b['buddhist_temple'] >= 1) return 'temple'; // 佛寺
+    if (b['daoist_temple'] >= 1) return 'daoist';   // 道观
+    if (b['grotto'] >= 1) return 'grotto';          // 石窟
+    if (b['temple'] >= 1) return 'shrine';         // 庙宇
+    return null;
+  }
+
+  // 主入口：在城市原点（已 translate）绘制 V19 文化/科技标记
+  _drawV19CultureTechMarkers(ctx, city, r, t) {
+    if (!city) return;
+    const s = this.scale;
+    // ---- LOD：远处（scale<0.7）只画极简标记，跳过动画装饰 ----
+    const farLOD = s < 0.7;
+
+    // ---- 1) 科技完成金色星标（仅玩家势力城市）----
+    const playerFid = this.game && this.game.playerFaction;
+    const techs = (this.game && Array.isArray(this.game.techs)) ? this.game.techs : null;
+    if (playerFid && city.owner === playerFid && techs && techs.length > 0) {
+      const starY = -r - (farLOD ? 6 : 14) * s;
+      const pulse = 1 + 0.12 * Math.sin(t * 3 + city.isoX);
+      const starR = (farLOD ? 3 : 5) * s * pulse;
+      ctx.save();
+      ctx.shadowColor = '#FFD700';
+      ctx.shadowBlur = farLOD ? 0 : 6 * s;
+      this._v19DrawStar(ctx, starR, '#FFD700');
+      ctx.restore();
+    }
+
+    // ---- 2) 文化建筑小图标（学府/寺庙/书院）----
+    const kind = this._v19CultureBuildingKind(city);
+    if (kind && !farLOD) {
+      const iconY = -r - 24 * s;
+      const iconR = 4.5 * s;
+      ctx.save();
+      ctx.translate(0, iconY);
+      // 底圈
+      ctx.fillStyle = 'rgba(255,245,210,0.85)';
+      ctx.beginPath(); ctx.arc(0, 0, iconR + 1.5 * s, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#c9a86a'; ctx.lineWidth = 1 * s;
+      ctx.beginPath(); ctx.arc(0, 0, iconR + 1.5 * s, 0, Math.PI * 2); ctx.stroke();
+      // 按类型画小符号
+      if (kind === 'academy') {
+        // 学府：书卷
+        ctx.fillStyle = '#8a5a2a';
+        ctx.fillRect(-iconR * 0.7, -iconR * 0.5, iconR * 1.4, iconR);
+        ctx.fillStyle = '#fff6d8';
+        ctx.fillRect(-iconR * 0.55, -iconR * 0.35, iconR * 1.1, iconR * 0.7);
+      } else if (kind === 'temple' || kind === 'shrine') {
+        // 佛寺/庙宇：塔刹小三角
+        ctx.fillStyle = '#B83A2A';
+        ctx.beginPath();
+        ctx.moveTo(-iconR * 0.7, iconR * 0.4);
+        ctx.lineTo(0, -iconR * 0.6);
+        ctx.lineTo(iconR * 0.7, iconR * 0.4);
+        ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#FFD700';
+        ctx.fillRect(-iconR * 0.15, -iconR * 0.8, iconR * 0.3, iconR * 0.3);
+      } else if (kind === 'daoist') {
+        // 道观：太极阴阳（简化）
+        ctx.fillStyle = '#2a2a2a';
+        ctx.beginPath(); ctx.arc(0, 0, iconR * 0.7, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#f5f0e0';
+        ctx.beginPath(); ctx.arc(0, -iconR * 0.35, iconR * 0.35, 0, Math.PI * 2); ctx.fill();
+      } else if (kind === 'grotto') {
+        // 石窟：小佛龛
+        ctx.fillStyle = '#7a6a5a';
+        ctx.beginPath(); ctx.arc(0, iconR * 0.1, iconR * 0.6, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#FFE9A8';
+        ctx.beginPath(); ctx.arc(0, 0, iconR * 0.25, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // ---- 3) 高文化城市装饰：彩旗/灯笼/书卷 ----
+    const culture = this._v19CityCulture(city);
+    const HIGH_CULTURE = 60;     // 高文化阈值
+    const MID_CULTURE = 25;      // 中文化阈值
+    if (culture >= MID_CULTURE && !farLOD) {
+      const isHigh = culture >= HIGH_CULTURE;
+      // 彩旗（左右两侧，随风摆动）
+      const flagSwing = Math.sin(t * 4 + city.isoX) * 1.2 * s;
+      for (const side of [-1, 1]) {
+        const fx = side * r * 0.9;
+        const fy = -r * 0.3;
+        ctx.strokeStyle = '#c4a55a';
+        ctx.lineWidth = 1 * s;
+        ctx.beginPath();
+        ctx.moveTo(fx, fy);
+        ctx.lineTo(fx, fy - 10 * s);
+        ctx.stroke();
+        // 彩旗（朱红）
+        ctx.fillStyle = '#c0392b';
+        ctx.beginPath();
+        ctx.moveTo(fx, fy - 10 * s);
+        ctx.lineTo(fx + side * (6 * s + flagSwing), fy - 8 * s);
+        ctx.lineTo(fx, fy - 6 * s);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // 高文化：额外加灯笼（左右，暖黄光晕）+ 书卷小图标
+      if (isHigh) {
+        for (const side of [-1, 1]) {
+          const lx = side * r * 0.5;
+          const ly = r * 0.2;
+          const glow = 0.6 + 0.4 * Math.sin(t * 2.5 + city.isoY + side);
+          ctx.save();
+          ctx.shadowColor = '#ffb84a';
+          ctx.shadowBlur = (4 + glow * 4) * s;
+          ctx.fillStyle = `rgba(255,${180 + Math.floor(glow * 40)},80,0.95)`;
+          ctx.beginPath();
+          ctx.ellipse(lx, ly, 2.5 * s, 3.2 * s, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+          // 灯笼底座
+          ctx.fillStyle = '#6a4a2a';
+          ctx.fillRect(lx - 1 * s, ly + 3 * s, 2 * s, 1 * s);
+        }
+        // 书卷（城顶右侧小卷轴）
+        ctx.save();
+        ctx.translate(r * 0.6, -r * 0.6);
+        ctx.rotate(0.2);
+        ctx.fillStyle = '#f0e0b0';
+        ctx.fillRect(-3 * s, -1.5 * s, 6 * s, 3 * s);
+        ctx.fillStyle = '#8a6a3a';
+        ctx.fillRect(-3.5 * s, -2 * s, 1 * s, 4 * s);
+        ctx.fillRect(2.5 * s, -2 * s, 1 * s, 4 * s);
+        ctx.restore();
+      }
+    }
+  }
+
+  // 画一颗五角星（绕 (0,0)，半径 R）
+  _v19DrawStar(ctx, R, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const ang = -Math.PI / 2 + (i * 2 * Math.PI) / 5;
+      const ang2 = ang + Math.PI / 5;
+      ctx.lineTo(Math.cos(ang) * R, Math.sin(ang) * R);
+      ctx.lineTo(Math.cos(ang2) * R * 0.45, Math.sin(ang2) * R * 0.45);
+    }
+    ctx.closePath();
+    ctx.fill();
   }
 
   // 河流船只更新：定期从河流城市旁生成商船/战船，沿水平方向巡航

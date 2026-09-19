@@ -119,6 +119,17 @@ export class CharacterAnimator {
     this._battleFXCap = 24;        // 同时存活的战斗FX上限
     this._moraleBars = new Map();   // 军队士气条 {key:{x,y,morale,t}}  供 map.js 每帧绘制
     this._V17_CHARGE_HORN = false;  // 预留：马蹄声视觉标记（不接音频，仅视觉）
+
+    // ============================================================
+    // V19.0 — 动画与地图增强：科技研究 / 文化建筑 / 文化值提升 覆盖层
+    // 设计：与 V15/V16/V17 一致——play* 只写入状态机 + 触发一次性粒子；
+    //      update(dt) 用真实时间推进 t；draw* 按 t/dur 渲染。
+    //      粒子仍走 _getParticle/_pushParticle 对象池 + 统一上限。
+    // ============================================================
+    this._techFX = null;       // 科技研究完成 {techName,x,y,t,dur}
+    this._cultureBuildFX = null; // 文化建筑建成 {x,y,t,dur}
+    this._cultureRiseFX = null;  // 文化值提升 {x,y,t,dur}
+    this._v19FXCap = 3;        // 同时存活的 V19 覆盖层上限（同类型后到替换前到）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -499,6 +510,19 @@ export class CharacterAnimator {
       const fx = this._battleFXs[i];
       fx.t += deltaTime;
       if (fx.t >= fx.dur) this._battleFXs.splice(i, 1);
+    }
+    // ---- V19.0：科技/文化覆盖层时间线推进（真实时间，不受慢动作影响）----
+    if (this._techFX) {
+      this._techFX.t += deltaTime;
+      if (this._techFX.t >= this._techFX.dur) this._techFX = null;
+    }
+    if (this._cultureBuildFX) {
+      this._cultureBuildFX.t += deltaTime;
+      if (this._cultureBuildFX.t >= this._cultureBuildFX.dur) this._cultureBuildFX = null;
+    }
+    if (this._cultureRiseFX) {
+      this._cultureRiseFX.t += deltaTime;
+      if (this._cultureRiseFX.t >= this._cultureRiseFX.dur) this._cultureRiseFX = null;
     }
     // 士气条淡入淡出推进
     for (const [k, m] of this._moraleBars) {
@@ -3950,6 +3974,254 @@ export class CharacterAnimator {
     ctx.closePath();
   }
 
+  // ============================================================
+  // V19.0 — 科技研究完成 / 文化建筑建成 / 文化值提升 覆盖层动画
+  // 设计：play* 写入状态机 + 触发一次性粒子爆发（走对象池+上限）；
+  //      draw* 按 t/dur 用 delta time 推进渲染；rAF 驱动。
+  // ============================================================
+
+  // ---- 科技研究完成：金色光环 + 书本翻开 + 粒子上升 ----
+  // techName: 科技名（用于底部文字显示）
+  playTechResearch(ctx, x, y, techName = '科技研究') {
+    x = x || 0; y = y || 0;
+    this._techFX = { techName: String(techName || '科技研究'), x, y, t: 0, dur: 2.6 };
+    // 金色上升粒子（书页/光尘）
+    this._burstFXParticles(x, y, 22, {
+      colors: ['#FFD700', '#FFF3B0', '#FFE9A8', '#ffffff'],
+      minSpeed: 20, spread: 90, upBias: 110, gravity: -10,
+      lifeMin: 0.9, lifeMax: 1.8, sizeMin: 1.5, sizeMax: 3.5
+    });
+    // 书本翻页碎片（暖黄小三角）
+    this._burstFXParticles(x, y - 10, 10, {
+      colors: ['#FFF6D0', '#F5E6A8', '#FFD700'],
+      minSpeed: 30, spread: 130, upBias: 40, gravity: 90,
+      lifeMin: 0.6, lifeMax: 1.2, sizeMin: 1.5, sizeMax: 3
+    });
+    if (ctx) this.drawTechResearchFX(ctx);
+  }
+
+  // 绘制科技研究完成覆盖层（每帧调用）
+  drawTechResearchFX(ctx) {
+    const fx = this._techFX;
+    if (!fx || !ctx) return;
+    const { x, y, t, dur } = fx;
+    ctx.save();
+    // 阶段1：金色光环扩散（0~1.0s 展开，1.0~2.0s 衰减）
+    const ringP = Math.max(0, t / 1.0);
+    if (ringP > 0 && ringP < 1) {
+      const ringR = this._v15EaseOutCubic(ringP) * 70;
+      ctx.strokeStyle = `rgba(255,215,0,${0.85 * (1 - ringP)})`;
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(x, y, ringR, 0, Math.PI * 2); ctx.stroke();
+      // 第二圈细环
+      const ringP2 = Math.max(0, (t - 0.15) / 0.9);
+      if (ringP2 > 0 && ringP2 < 1) {
+        const ringR2 = this._v15EaseOutCubic(ringP2) * 55;
+        ctx.strokeStyle = `rgba(255,240,180,${0.6 * (1 - ringP2)})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(x, y, ringR2, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // 阶段2：书本翻开（0.3~1.3s 书本从中心弹出，左右翻开）
+    const bookP = this._v15EaseOutBack((t - 0.3) / 0.8);
+    if (bookP > 0) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(bookP, bookP);
+      ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 18;
+      // 书本底座
+      ctx.fillStyle = '#6a4a2a';
+      ctx.fillRect(-18, -4, 36, 8);
+      // 左页（向左翻开，翻转角 0→0.6π）
+      const openL = this._v15EaseOutCubic(Math.max(0, (t - 0.5) / 0.7));
+      const openR = this._v15EaseOutCubic(Math.max(0, (t - 0.5) / 0.7));
+      ctx.fillStyle = '#FFF6D8';
+      ctx.save();
+      ctx.translate(0, -4);
+      ctx.scale(1 - openL * 0.85, 1);
+      ctx.fillRect(-18, 0, 18, 9);
+      ctx.restore();
+      // 右页
+      ctx.save();
+      ctx.translate(0, -4);
+      ctx.scale(1 - openR * 0.85, 1);
+      ctx.fillRect(0, 0, 18, 9);
+      ctx.restore();
+      // 中缝
+      ctx.strokeStyle = '#8a6a3a';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(0, -4); ctx.lineTo(0, 5); ctx.stroke();
+      ctx.restore();
+    }
+    // 阶段3：科技名浮现（1.2s 后淡入）
+    const textP = this._v15EaseOutCubic((t - 1.2) / 0.6);
+    if (textP > 0) {
+      ctx.globalAlpha = textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 8;
+      ctx.font = 'bold 15px "STSong", serif';
+      ctx.fillStyle = '#FFE9A8';
+      ctx.fillText('★ 科技研究完成 ★', x, y + 28);
+      ctx.font = 'bold 18px "STSong", serif';
+      ctx.lineWidth = 4; ctx.strokeStyle = '#5a3a00';
+      ctx.strokeText(fx.techName, x, y + 48);
+      ctx.fillStyle = '#FFD700';
+      ctx.fillText(fx.techName, x, y + 48);
+    }
+    ctx.restore();
+  }
+
+  // ---- 文化建筑建成：光芒扩散 + 祥云 ----
+  playCultureBuild(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._cultureBuildFX = { x, y, t: 0, dur: 2.4 };
+    // 暖金光芒粒子（向外扩散+上升）
+    this._burstFXParticles(x, y, 20, {
+      colors: ['#FFE9A8', '#FFD700', '#FFF6D8', '#f0e0c0'],
+      minSpeed: 20, spread: 120, upBias: 30, gravity: 30,
+      lifeMin: 0.8, lifeMax: 1.6, sizeMin: 2, sizeMax: 4
+    });
+    // 祥云微粒（奶白，缓慢飘散）
+    this._burstFXParticles(x, y - 10, 12, {
+      colors: ['#ffffff', '#f5f0e0', '#e8e0d0'],
+      minSpeed: 8, spread: 50, upBias: 10, gravity: -5,
+      lifeMin: 1.2, lifeMax: 2.0, sizeMin: 3, sizeMax: 6
+    });
+    if (ctx) this.drawCultureBuildFX(ctx);
+  }
+
+  // 绘制文化建筑建成覆盖层（每帧调用）
+  drawCultureBuildFX(ctx) {
+    const fx = this._cultureBuildFX;
+    if (!fx || !ctx) return;
+    const { x, y, t, dur } = fx;
+    ctx.save();
+    // 阶段1：光芒从中心向外扩散（3 层同心环，依次展开）
+    for (let k = 0; k < 3; k++) {
+      const ringP = Math.max(0, (t - k * 0.18) / 0.8);
+      if (ringP > 0 && ringP < 1) {
+        const ringR = this._v15EaseOutCubic(ringP) * (50 + k * 15);
+        ctx.strokeStyle = `rgba(255,220,140,${(0.7 - k * 0.15) * (1 - ringP)})`;
+        ctx.lineWidth = (2.5 - k * 0.5);
+        ctx.beginPath(); ctx.arc(x, y, ringR, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // 阶段2：祥云（4 朵奶白云团从底部升起并左右飘开）
+    const cloudP = this._v15EaseOutCubic(t / 1.2);
+    if (cloudP > 0 && t < 1.8) {
+      for (let i = 0; i < 4; i++) {
+        const ang = (i / 4) * Math.PI * 2 + 0.4;
+        const cx = x + Math.cos(ang) * cloudP * 35;
+        const cy = y - cloudP * (20 + (i % 2) * 10);
+        const cr = (5 + (i % 2) * 3) * (0.6 + cloudP * 0.4);
+        ctx.fillStyle = `rgba(255,250,235,${0.85 * (1 - Math.max(0, (t - 1.2) / 0.6))})`;
+        ctx.beginPath();
+        ctx.arc(cx, cy, cr, 0, Math.PI * 2);
+        ctx.arc(cx + cr * 0.7, cy + 1, cr * 0.7, 0, Math.PI * 2);
+        ctx.arc(cx - cr * 0.7, cy + 1, cr * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    // 阶段3：建筑小图（简笔飞檐亭）从地面升起
+    const riseP = this._v15EaseOutBack((t - 0.2) / 0.9);
+    if (riseP > 0) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.scale(riseP, riseP);
+      ctx.shadowColor = '#FFD700'; ctx.shadowBlur = 14;
+      // 基座
+      ctx.fillStyle = '#8a6a3a';
+      ctx.fillRect(-12, 2, 24, 4);
+      // 飞檐屋顶
+      ctx.fillStyle = '#B83A2A';
+      ctx.beginPath();
+      ctx.moveTo(-14, 2); ctx.lineTo(0, -8); ctx.lineTo(14, 2);
+      ctx.closePath(); ctx.fill();
+      // 屋脊
+      ctx.strokeStyle = '#FFD700'; ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.moveTo(-4, -6); ctx.lineTo(4, -6); ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // ---- 文化值提升：文化粒子（书卷/毛笔/香炉）上升 ----
+  playCultureRise(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._cultureRiseFX = { x, y, t: 0, dur: 2.0 };
+    // 书卷/毛笔/香炉 三色粒子上升
+    this._burstFXParticles(x, y, 18, {
+      colors: ['#c9a86a', '#8a6a3a', '#d4b87a', '#6a8a6a'],
+      minSpeed: 15, spread: 50, upBias: 80, gravity: -8,
+      lifeMin: 1.0, lifeMax: 1.8, sizeMin: 2, sizeMax: 4
+    });
+    if (ctx) this.drawCultureRiseFX(ctx);
+  }
+
+  // 绘制文化值提升覆盖层（每帧调用）
+  drawCultureRiseFX(ctx) {
+    const fx = this._cultureRiseFX;
+    if (!fx || !ctx) return;
+    const { x, y, t } = fx;
+    ctx.save();
+    // 阶段1：上升的文化小图标（书卷/毛笔/香炉 三选一轮换）
+    const iconTypes = ['scroll', 'brush', 'censer'];
+    const fade = 1 - Math.max(0, (t - 1.2) / 0.8); // 1.2s 后渐隐
+    if (fade > 0) {
+      ctx.globalAlpha = fade;
+      for (let i = 0; i < 6; i++) {
+        const phase = (t * 0.6 + i * 0.17) % 1;   // 0→1 上升循环
+        const ix = x + Math.sin(i * 1.7 + t * 1.2) * 14;
+        const iy = y - phase * 50;
+        const s = (0.7 + 0.3 * Math.sin(i));
+        const type = iconTypes[i % 3];
+        ctx.save();
+        ctx.translate(ix, iy);
+        ctx.scale(s, s);
+        if (type === 'scroll') {
+          // 书卷（卷轴）
+          ctx.fillStyle = '#f0e0b0';
+          ctx.fillRect(-4, -2, 8, 4);
+          ctx.fillStyle = '#8a6a3a';
+          ctx.fillRect(-5, -2.5, 1.5, 5);
+          ctx.fillRect(3.5, -2.5, 1.5, 5);
+        } else if (type === 'brush') {
+          // 毛笔
+          ctx.strokeStyle = '#6a4a2a'; ctx.lineWidth = 1.2;
+          ctx.beginPath(); ctx.moveTo(0, -3); ctx.lineTo(0, 2); ctx.stroke();
+          ctx.fillStyle = '#3a2a1a';
+          ctx.beginPath(); ctx.moveTo(-1.5, 2); ctx.lineTo(1.5, 2); ctx.lineTo(0, 4.5);
+          ctx.closePath(); ctx.fill();
+        } else {
+          // 香炉（小鼎）
+          ctx.fillStyle = '#7a5a3a';
+          ctx.fillRect(-3, -1, 6, 3);
+          ctx.fillStyle = '#9a7a4a';
+          ctx.beginPath(); ctx.arc(0, -1.5, 2, 0, Math.PI * 2); ctx.fill();
+          // 香烟
+          ctx.strokeStyle = `rgba(220,210,190,${0.6 * fade})`;
+          ctx.lineWidth = 0.8;
+          ctx.beginPath();
+          ctx.moveTo(0, -3);
+          ctx.quadraticCurveTo(1.5, -5, 0, -7);
+          ctx.quadraticCurveTo(-1.5, -9, 0, -11);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    }
+    // 阶段2：底部文化值光晕（暖金）
+    const glowP = this._v15EaseOutCubic(Math.min(1, t / 0.5));
+    if (glowP > 0) {
+      const g = ctx.createRadialGradient(x, y, 0, x, y, 26);
+      g.addColorStop(0, `rgba(255,220,140,${0.4 * glowP * fade})`);
+      g.addColorStop(1, 'rgba(255,220,140,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(x, y, 26, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
   // 便捷：绘制所有激活中的覆盖层（每帧一次调用）
   drawOverlayFX(ctx, w, h) {
     this.drawAchievementFX(ctx);
@@ -3961,13 +4233,18 @@ export class CharacterAnimator {
     this.drawCampaignIntro(ctx);
     this.drawCampaignObjective(ctx);
     this.drawCampaignVictory(ctx);
+    // V19.0：科技/文化覆盖层
+    this.drawTechResearchFX(ctx);
+    this.drawCultureBuildFX(ctx);
+    this.drawCultureRiseFX(ctx);
   }
 
   // 查询当前是否有覆盖层动画在播放
   hasOverlayFX() {
     return !!(this._achFX || this._tierFX || this._endingFX
       || this._prologueFX || this._timelineFX
-      || this._campaignIntroFX || this._campaignObjFX || this._campaignVicFX);
+      || this._campaignIntroFX || this._campaignObjFX || this._campaignVicFX
+      || this._techFX || this._cultureBuildFX || this._cultureRiseFX);
   }
 
   // ============================================================

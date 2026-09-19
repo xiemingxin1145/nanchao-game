@@ -73,8 +73,21 @@ export class AIPlayer {
     //   game.getFactionCities(f).length，72城/多势力下每回合重复全表扫描十几次。
     //   优化后：本回合 takeTurn 入口一次性统计全势力城市数，存入 this._turnCityCounts，
     //   后续 helper 方法直接查表 O(1)。预期减少 50~70% 重复遍历。
+    // 性能优化（ai.js #2 189将/96城后 AI 决策）：
+    //   基准：上式对「每个势力」各调用一次 getFactionCities(fid)，而该方法内部是
+    //     `[...this.cities.values()].filter(c => c.owner===fid)`——每势力一次全表扫描。
+    //     设 C=96 城、F≈10 势力，单次 takeTurn 即 O(F×C)≈960 次比较；runAITurns 对
+    //     每支 AI 都跑一遍 → 整轮 AI 决策约 F×C×F ≈ 9600 次无意义重复遍历。
+    //   优化：改为单次遍历 game.cities.values()，按 c.owner 分桶计数，O(C) 一次成型，
+    //     再补全未出现势力为 0。整轮 AI 决策的城市数统计从 O(F²×C) 降为 O(F×C)。
     const _cc = {};
-    for (const fid of Object.keys(FACTIONS)) _cc[fid] = game.getFactionCities(fid).length;
+    for (const c of game.cities.values()) {
+      if (c.owner) _cc[c.owner] = (_cc[c.owner] || 0) + 1;
+    }
+    // 未据有城池的势力补 0，保证 allyAgainstDominant 的「存活过滤」正确
+    for (const fid of Object.keys(FACTIONS)) {
+      if (_cc[fid] === undefined) _cc[fid] = 0;
+    }
     this._turnCityCounts = _cc;
 
     // ---- V18.0：本回合战略规划（入口计算一次，供各决策复用） ----
@@ -475,8 +488,11 @@ export class AIPlayer {
     for (let i = inv.length - 1; i >= 0; i--) {
       const item = getItem(inv[i]);
       if (!item) continue;
-      // 找该槽位为空、且当前无更好装备的武将
-      const target = generals.find(g => !g.equipment[item.slot]);
+      // BUG修复（ai.js equipment 空指针）：旧存档/模组新武将可能尚未补全 equipment 字段
+      //   （game.deserialize 虽有兜底，但 AI 在模组热加载/中途加入的武将不一定经过该路径）。
+      //   原 `g.equipment[item.slot]` 遇 undefined.equipment 直接抛 TypeError，中断本势力整轮
+      //   AI 结算。修复：把「找空槽位」改为同时要求 g.equipment 存在。
+      const target = generals.find(g => g.equipment && !g.equipment[item.slot]);
       if (!target) continue;
       target.equipment[item.slot] = inv[i];
       inv.splice(i, 1);
