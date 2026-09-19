@@ -65,6 +65,9 @@ import { checkCorveeEvent, aiStartCorvee, canStartCorvee } from './corvee.js';
 // ---- V8.5 新系统：历法节气 / 后宫皇室 ----
 import { CalendarSystem } from './calendar.js';
 import { HaremSystem } from './harem.js';
+// ---- V20.0 新系统：灾害 / 人口动态 ----
+import { DisasterSystem } from './disaster.js';
+import { PopulationSystem } from './population.js';
 
 let armyIdCounter = 100;
 
@@ -169,6 +172,10 @@ export class Game {
     this.stats.navyWins = 0;                      // 水战胜利次数
     this.stats.cultureTotal = 0;                  // 文化值累计
     this.stats.examTopScholars = 0;               // 科举状元数
+
+    // ---- V20.0 新系统状态 ----
+    this.disasterSystem = new DisasterSystem();    // 灾害系统（地震/洪水/干旱/瘟疫/蝗灾/暴风雪）
+    this.populationSystem = new PopulationSystem(); // 人口动态系统（增长/迁移/征兵比例）
   }
 
   _defaultStats() {
@@ -1116,7 +1123,16 @@ export class Game {
   // 解除官职
   dismissOffice(officeId) {
     for (const g of this.getFactionGenerals(this.playerFaction)) {
-      if (g.office === officeId) { g.office = null; this.pushLog(`${g.name} 已解去 ${getOffice(officeId).name}。`); return { ok: true, msg: '已解任' }; }
+      if (g.office === officeId) {
+        g.office = null;
+        // BUG修复（game.js V20.0 dismissOffice 空指针）：原实现直接取
+        //   `getOffice(officeId).name` 拼日志。模组移除官职/旧存档残留无效 officeId 时，
+        //   getOffice 返回 undefined → `.name` 抛 TypeError，导致解官流程中断、武将官职
+        //   已清空却未返回成功。修复：先取静态官职对象，缺失时降级为 officeId 文案。
+        const off = getOffice(officeId);
+        this.pushLog(`${g.name} 已解去 ${(off && off.name) || officeId} 之职。`);
+        return { ok: true, msg: '已解任' };
+      }
     }
     return { ok: false, msg: '该职无人担任' };
   }
@@ -2085,6 +2101,11 @@ export class Game {
   }
 
   runAITurns() {
+    // 性能优化（game.js V20.0·204将后 AI 决策）：回合开始时一次性快照在野武将列表，
+    //   供本回合所有 AI 势力复用，避免每个 AI 的 takeTurn 都 `getIdleGenerals()` 对全部
+    //   武将做一次全表 filter。204 将 × F 个 AI 势力 → 原 O(F×204) 次比较降为 O(204) 一次。
+    //   AI 招募到在野武将时会从该快照中移除（见 ai.js takeTurn 招募分支），保持列表新鲜。
+    this._roundIdleGens = this.getIdleGenerals();
     for (const [fid, ai] of this.aiPlayers) {
       if (this.gameOver) break;
       ai.takeTurn(this);
@@ -2124,13 +2145,27 @@ export class Game {
     //   F 势力 × R 商路 → O(F*R) 次 get + 2*O(F*R) 次 buildingBag()。
     //   优化后：方法入口一次性扫描全部城市，建立 cityId → {owner, comm, tradeMult}
     //   轻量缓存，贸易收入计算改为 O(R) 查表。settleTurn 期间不改建筑，安全。
+    // 性能优化（game.js V20.0·108城后回合结算）：贸易端点白名单——
+    //   基准：原实现对「全部 108 城」每回合都调用一次 c.buildingBag()（内部遍历该城
+    //   建筑数组求和），只为取 tradeMult。但 tradeMult 只在贸易结算时被用到，而贸易结算
+    //   只遍历 tradeRoutes 的两端城。绝大多数城（非商路端点）的 buildingBag() 纯属浪费。
+    //   优化：先从 tradeRoutes 收集端点 cityId 集合，_cityTradeInfo 只对端点城调用
+    //   buildingBag()；其余城 tradeMult 记 0（结算时本就不读它们）。
+    //   预期：108 城/数十商路下，每回合 buildingBag() 调用从 108 次降到 ~2×商路数（<40），
+    //   回合尾 CPU 明显下降。settleTurn 期间不改建筑，安全。
+    const _tradeEndpoints = new Set();
+    for (const r of this.tradeRoutes) {
+      _tradeEndpoints.add(r.city1);
+      _tradeEndpoints.add(r.city2);
+    }
     const _cityTradeInfo = new Map();
     for (const c of this.cities.values()) {
       // BUG修复（game.js #1 冗余调用）：原写法
       //   `(c.buildingBag() && c.buildingBag().tradeMult)` 对同一城调用了两次
       //   buildingBag()（内部遍历建筑数组）。96 城规模下每回合白白多跑 96 次建筑遍历。
       //   修复：先取一次 buildingBag() 引用再读 tradeMult。
-      const _bb = c.buildingBag();
+      const isEndpoint = _tradeEndpoints.has(c.id);
+      const _bb = isEndpoint ? c.buildingBag() : null;
       _cityTradeInfo.set(c.id, {
         owner: c.owner,
         comm: c.comm || 0,
@@ -2311,6 +2346,23 @@ export class Game {
           this.pushLog(`天文异象：${an.name}`);
         }
       }
+    }
+
+    // ---- V20.0：灾害系统结算（所有势力城市）----
+    if (this.disasterSystem) {
+      try {
+        this.disasterSystem.rollDisaster(this);
+      } catch (e) { /* 安全降级：灾害系统异常不影响主流程 */ }
+    }
+    // ---- V20.0：人口动态结算（所有势力城市）----
+    if (this.populationSystem) {
+      try {
+        for (const c of this.cities.values()) {
+          if (c.owner && c.population > 0) {
+            this.populationSystem.updatePopulation(c, this);
+          }
+        }
+      } catch (e) { /* 安全降级：人口系统异常不影响主流程 */ }
     }
   }
 
@@ -2529,7 +2581,10 @@ export class Game {
       //   阵型经验每次读档全部归零。此处补齐序列化字段。
       formationExp: this.formationExp,
       // V9.5: 音乐系统状态
-      musicState: this.musicState
+      musicState: this.musicState,
+      // V20.0: 灾害 / 人口动态系统
+      disasterSystem: this.disasterSystem ? this.disasterSystem.serialize() : null,
+      populationSystem: this.populationSystem ? this.populationSystem.serialize() : null
     };
   }
 
@@ -2702,6 +2757,9 @@ export class Game {
     g.stats.navyWins = g.stats.navyWins || 0;
     g.stats.cultureTotal = g.stats.cultureTotal || 0;
     g.stats.examTopScholars = g.stats.examTopScholars || 0;
+    // V20.0：灾害 / 人口系统反序列化（旧档缺省时用默认空状态）
+    try { g.disasterSystem.deserialize(data.disasterSystem || {}); } catch (e) {}
+    try { g.populationSystem.deserialize(data.populationSystem || {}); } catch (e) {}
     // 还原禅让后势力名/旗色（FACTIONS 为模块级对象，需按存档王朝记录重放）
     for (const [fid, rec] of Object.entries(g.dynastySystem.factions || {})) {
       const dyn = (typeof DYNASTIES !== 'undefined') ? DYNASTIES[rec.dynastyId] : null;

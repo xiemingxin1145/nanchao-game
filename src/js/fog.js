@@ -94,7 +94,19 @@ export function computeVisibleCities(game, factionId) {
 export function isExplored(game, cityId, factionId) {
   if (factionId === game.playerFaction) {
     const fog = game.fogOfWar || {};
-    return Array.isArray(fog.explored) && fog.explored.includes(cityId);
+    const explored = fog.explored;
+    if (!Array.isArray(explored)) return false;
+    // BUG修复（fog.js V20.0 isExplored O(n) 线性判重）：
+    //   基准：原实现 `explored.includes(cityId)` 每调用一次都对已探索城市数组做 O(n) 线性扫描。
+    //   108 城/长局后 explored 常达上百，而本函数在地图渲染时对「每座可见城」各调一次，
+    //   单帧即 O(n²)，拖动地图时明显卡顿。
+    //   优化：settleFog 每回合已把 explored 重建为数组，并顺手缓存一份 Set 到
+    //   fog._exploredSet；此处 O(1) 命中。缓存缺失（旧档/热重载）时兜底现建 Set。
+    if (!fog._exploredSet || fog._exploredSet._src !== explored) {
+      fog._exploredSet = new Set(explored);
+      fog._exploredSet._src = explored;
+    }
+    return fog._exploredSet.has(cityId);
   }
   // AI 不做迷雾限制
   return true;

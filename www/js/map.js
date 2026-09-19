@@ -171,6 +171,20 @@ export class IsometricMap {
     this._RIVER_SHIP_CAP = 8;       // 同时存在河船上限
     this._riverShipTimer = 0;       // 船只生成节流计时
 
+    // ============================================================
+    // V20.0 — 动画与地图增强：灾害可视化
+    // 设计：读取 city.disasterState = { type, severity, turnsLeft, warning }
+    //   - type: 'earthquake'|'flood'|'drought'|'plague'|'locust'|'snowstorm'
+    //   - severity: 0~1（损坏/污染程度，半毁~全毁）
+    //   - warning: true 表示即将发生（闪烁警告标记）
+    // 新灾害出现时调用 Animator.play* 触发一次性动画；
+    // 持续灾害在 _drawCityDisaster 中按类型绘制静态/半静态标记。
+    // 性能：_disasterTriggered Map 记录已触发签名，避免重复播放；
+    //       远离屏幕中心的灾害降低绘制复杂度（LOD）。
+    // ============================================================
+    this._disasterTriggered = new Map();  // cityId -> signature 字符串
+    this._DISASTER_VISIBLE_CAP = 24;      // 同屏最多绘制灾害标记数量保护
+
     this._bindEvents();
     this._initView();
   }
@@ -1595,6 +1609,15 @@ export class IsometricMap {
 
     // V17.0：战斗动画深化 FX（阵型环/旗帜倒下/齐射命中/盾墙闪光/水战环）
     Animator.drawBattleFX(ctx);
+
+    // V20.0：自然灾害动画 FX（地震裂缝/洪水波纹/干旱干裂/瘟疫绿雾/蝗群遮天/暴风雪冰雾）
+    // 距离衰减中心设为屏幕中心，远离者透明度衰减
+    if (typeof Animator.setDisasterFocus === 'function') {
+      Animator.setDisasterFocus(W / 2, H / 2, Math.max(W, H) * 0.75);
+    }
+    if (typeof Animator.drawDisasterFX === 'function') {
+      Animator.drawDisasterFX(ctx);
+    }
   }
 
   // 构建离屏静态层
@@ -1849,6 +1872,7 @@ export class IsometricMap {
     const ctx = this.ctx;
     const t = this._animTime;
     const playerFid = this.game.playerFaction;
+    this._disasterVisibleCount = 0;   // V20.0：每帧重置灾害标记计数
     for (const city of this.game.cities.values()) {
       const pos = this.isoToScreen(city.isoX, city.isoY);
       // V5.0：视口裁剪
@@ -1994,6 +2018,9 @@ export class IsometricMap {
       // V18.0：城市规模可视化——大城市多几栋建筑，小城市精简
       this._drawCityBuildings(ctx, r, this.getCitySizeLevel(city));
 
+      // V20.0：自然灾害可视化（损坏标记/水痕/干旱/雾气/蝗群/预警闪烁）
+      this._drawCityDisaster(ctx, city, r, t, visible, pos);
+
       // V19.0：文化建筑标记 / 科技完成金星 / 高文化装饰（彩旗·灯笼·书卷）
       this._drawV19CultureTechMarkers(ctx, city, r, t);
 
@@ -2019,6 +2046,243 @@ export class IsometricMap {
       }
 
       ctx.restore();
+    }
+  }
+
+  // ============================================================
+  // V20.0 — 灾害可视化：按 city.disasterState 绘制静态/半静态标记
+  // 约定数据契约：
+  //   city.disasterState = {
+  //     type: 'earthquake'|'flood'|'drought'|'plague'|'locust'|'snowstorm',
+  //     severity: 0~1,          // 损坏/污染程度
+  //     turnsLeft: number,     // 剩余持续回合（>0 表示正在持续）
+  //     warning: bool           // true = 即将发生（闪烁预警）
+  //   }
+  // 性能：同屏灾害标记数量上限 _DISASTER_VISIBLE_CAP；
+  //      远离屏幕中心的灾害降低绘制复杂度（LOD）；
+  //      新灾害出现时调用 Animator.play* 触发一次性动画（去重）。
+  // ============================================================
+  _drawCityDisaster(ctx, city, r, t, visible, pos) {
+    const ds = city && city.disasterState;
+    if (!ds) {
+      // 灾害结束：清理触发记录，避免下次同类型重播时漏触发
+      if (this._disasterTriggered.has(city.id)) this._disasterTriggered.delete(city.id);
+      return;
+    }
+    // 同屏灾害标记数量保护（超出则跳过最远离屏幕中心的）
+    if (this._disasterVisibleCount >= this._DISASTER_VISIBLE_CAP) return;
+    this._disasterVisibleCount = (this._disasterVisibleCount || 0) + 1;
+
+    const type = ds.type;
+    const sev = typeof ds.severity === 'number' ? Math.max(0, Math.min(1, ds.severity)) : 1;
+
+    // ---- 1) 新灾害出现 → 触发一次性动画（去重：按 cityId+type+turnsLeft 签名）----
+    const sig = `${type}|${ds.turnsLeft != null ? Math.floor(ds.turnsLeft) : 0}`;
+    if (this._disasterTriggered.get(city.id) !== sig) {
+      this._disasterTriggered.set(city.id, sig);
+      this._triggerDisasterFX(type, pos.x, pos.y, r);
+    }
+
+    // ---- 2) 灾害预警（warning=true）：闪烁警告标记（三角感叹号，2Hz 闪烁）----
+    if (ds.warning) {
+      const blink = (Math.sin(t * Math.PI * 4) > 0) ? 1 : 0.35;
+      ctx.save();
+      ctx.globalAlpha = blink;
+      // 警告三角（位于城市上方）
+      ctx.fillStyle = '#ff5030';
+      ctx.strokeStyle = '#ffd0a0';
+      ctx.lineWidth = 1.5;
+      const wy = -r - 22 * this.scale;
+      const wsize = 6 * this.scale;
+      ctx.beginPath();
+      ctx.moveTo(0, wy - wsize);
+      ctx.lineTo(wsize, wy + wsize * 0.6);
+      ctx.lineTo(-wsize, wy + wsize * 0.6);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+      // 感叹号
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(-0.8 * this.scale, wy - wsize * 0.3, 1.6 * this.scale, wsize * 0.9);
+      ctx.beginPath(); ctx.arc(0, wy + wsize * 0.35, 1.1 * this.scale, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      return; // 预警状态只画警告标记，不画灾害本体
+    }
+
+    // ---- 3) 正在持续：按类型绘制灾害标记 ----
+    switch (type) {
+      case 'earthquake': {
+        // 地震后城市：建筑损坏标记（半毁/全毁）
+        // severity<0.5 半毁（裂缝+倾斜）；>=0.5 全毁（废墟剪影）
+        ctx.save();
+        // 地面裂缝（2~3 条短裂纹穿过底座）
+        ctx.strokeStyle = 'rgba(30,20,10,0.85)';
+        ctx.lineWidth = 1.2 * this.scale;
+        const crackN = sev >= 0.5 ? 3 : 2;
+        for (let i = 0; i < crackN; i++) {
+          const ang = (i / crackN) * Math.PI + sev * 0.7;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang) * -r * 0.6, Math.sin(ang) * r * 0.3);
+          ctx.lineTo(Math.cos(ang + 0.3) * r * 0.7, Math.sin(ang + 0.3) * r * 0.3);
+          ctx.lineTo(Math.cos(ang + 0.5) * r * 0.9, Math.sin(ang + 0.5) * r * 0.3);
+          ctx.stroke();
+        }
+        // 全毁：绘制倒塌建筑剪影（灰色三角废墟）
+        if (sev >= 0.5) {
+          ctx.fillStyle = 'rgba(60,50,40,0.85)';
+          ctx.beginPath();
+          ctx.moveTo(-r * 0.5, -r * 0.2);
+          ctx.lineTo(-r * 0.2, -r * 0.7);
+          ctx.lineTo(0, -r * 0.3);
+          ctx.lineTo(r * 0.3, -r * 0.8);
+          ctx.lineTo(r * 0.5, -r * 0.2);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'flood': {
+        // 洪水后城市：蓝色水痕 + 漂浮物
+        ctx.save();
+        // 蓝色水痕（半透明椭圆覆盖底座下半部）
+        ctx.fillStyle = 'rgba(70,140,210,0.45)';
+        ctx.beginPath();
+        ctx.ellipse(0, r * 0.1, r * 0.95, r * 0.45, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 水纹边线
+        ctx.strokeStyle = 'rgba(160,210,245,0.8)';
+        ctx.lineWidth = 1 * this.scale;
+        ctx.beginPath();
+        ctx.ellipse(0, r * 0.1, r * 0.95, r * 0.45, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        // 漂浮物（2~3 块棕色小木板，随波起伏）
+        const floatN = sev >= 0.5 ? 3 : 2;
+        ctx.fillStyle = '#7a5a3a';
+        for (let i = 0; i < floatN; i++) {
+          const fx = Math.sin(t * 1.5 + i * 1.7 + city.isoX) * r * 0.5;
+          const fy = r * 0.1 + Math.cos(t * 2 + i) * 1.5 * this.scale;
+          ctx.save();
+          ctx.translate(fx, fy);
+          ctx.rotate(Math.sin(t * 2 + i * 0.9) * 0.2);
+          ctx.fillRect(-3 * this.scale, -1 * this.scale, 6 * this.scale, 2 * this.scale);
+          ctx.restore();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'drought': {
+        // 干旱地区：棕色土地 + 枯黄
+        ctx.save();
+        // 棕色干旱底色
+        ctx.fillStyle = 'rgba(170,120,50,0.4)';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, r * 1.05, r * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // 干裂细纹
+        ctx.strokeStyle = 'rgba(90,60,20,0.6)';
+        ctx.lineWidth = 0.8 * this.scale;
+        for (let i = 0; i < 4; i++) {
+          const ang = (i / 4) * Math.PI + sev * 0.4;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(ang) * -r * 0.5, Math.sin(ang) * r * 0.25);
+          ctx.lineTo(Math.cos(ang + 0.2) * r * 0.3, Math.sin(ang + 0.2) * r * 0.15);
+          ctx.lineTo(Math.cos(ang + 0.4) * r * 0.6, Math.sin(ang + 0.4) * r * 0.3);
+          ctx.stroke();
+        }
+        // 枯黄植物（2 株黄色小草）
+        ctx.strokeStyle = '#b89a3a';
+        ctx.lineWidth = 1 * this.scale;
+        for (let i = -1; i <= 1; i += 2) {
+          const gx = i * r * 0.6;
+          ctx.beginPath();
+          ctx.moveTo(gx, r * 0.2);
+          ctx.lineTo(gx + i * 1.5 * this.scale, r * 0.2 - 4 * this.scale);
+          ctx.stroke();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'plague': {
+        // 瘟疫城市：绿色雾气笼罩（半透明绿团脉动）
+        ctx.save();
+        const pulse = 0.35 + 0.15 * Math.sin(t * 2 + city.isoX);
+        ctx.globalAlpha = pulse * (0.6 + sev * 0.4);
+        for (let i = 0; i < 3; i++) {
+          const rR = (10 + i * 6) * this.scale * (0.8 + sev * 0.4);
+          const ox = Math.sin(t * 1.2 + i * 1.3 + city.isoX) * 4 * this.scale;
+          const g = ctx.createRadialGradient(ox, -i * 3 * this.scale, 2, ox, -i * 3 * this.scale, rR);
+          g.addColorStop(0, 'rgba(90,200,90,0.6)');
+          g.addColorStop(1, 'rgba(60,160,60,0)');
+          ctx.fillStyle = g;
+          ctx.beginPath(); ctx.arc(ox, -i * 3 * this.scale, rR, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'locust': {
+        // 蝗灾地区：蝗虫群飞过（几个深色小影掠过城市上方）
+        ctx.save();
+        ctx.fillStyle = '#4a3a1a';
+        const n = sev >= 0.5 ? 4 : 3;
+        for (let i = 0; i < n; i++) {
+          const speed = 60 + i * 15;
+          const lx = ((t * speed + i * 40 + city.isoX * 10) % (r * 2.4)) - r * 1.2;
+          const ly = -r * 0.5 - i * 3 * this.scale + Math.sin(t * 8 + i) * 2 * this.scale;
+          ctx.beginPath();
+          ctx.ellipse(lx, ly, 2.2 * this.scale, 1 * this.scale, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+        break;
+      }
+      case 'snowstorm': {
+        // 暴风雪：白色冰雾薄纱 + 加大雪花
+        ctx.save();
+        ctx.globalAlpha = 0.35 * (0.7 + sev * 0.3);
+        const g = ctx.createRadialGradient(0, 0, 4, 0, 0, r * 1.3);
+        g.addColorStop(0, 'rgba(235,248,255,0.8)');
+        g.addColorStop(1, 'rgba(235,248,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(0, 0, r * 1.3, 0, Math.PI * 2); ctx.fill();
+        // 几片加大雪花
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        for (let i = 0; i < 4; i++) {
+          const fx = Math.sin(t * 1.5 + i * 1.7 + city.isoX) * r * 0.7;
+          const fy = ((t * 20 + i * 15 + city.isoY * 5) % (r * 2)) - r;
+          ctx.beginPath(); ctx.arc(fx, fy, 1.6 * this.scale, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.restore();
+        break;
+      }
+    }
+  }
+
+  // V20.0：按灾害类型触发对应的一次性 Animator 动画
+  _triggerDisasterFX(type, x, y, r) {
+    if (typeof Animator.playEarthquake !== 'function') return;
+    const scale = this.scale || 1;
+    switch (type) {
+      case 'earthquake':
+        // 全屏地震（w/h 取视口尺寸，震中落在城市附近）
+        Animator.playEarthquake(this.ctx, this.canvas.width, this.canvas.height);
+        break;
+      case 'flood':
+        Animator.playFlood(this.ctx, x, y);
+        break;
+      case 'drought':
+        Animator.playDrought(this.ctx, x, y);
+        break;
+      case 'plague':
+        Animator.playPlague(this.ctx, x, y);
+        break;
+      case 'locust':
+        Animator.playLocust(this.ctx, this.canvas.width, this.canvas.height);
+        break;
+      case 'snowstorm':
+        if (typeof Animator.playSnowstorm === 'function') {
+          Animator.playSnowstorm(this.ctx, this.canvas.width, this.canvas.height);
+        }
+        break;
     }
   }
 

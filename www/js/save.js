@@ -102,13 +102,19 @@ export function saveGame(game, slot = 0) {
     if (Array.isArray(data.log) && data.log.length > 500) {
       data.log = data.log.slice(-500);
     }
-    // 性能优化（save.js 大存档写入）：84城+189将规模下，序列化后的 JSON 字符串
-    //   已比 72城/144将 大 ~30%。原实现「先按 500 条日志打包→失败再截到 100 条重打包」
-    //   在长局场景常触发重试，意味着同一份数据要做两次 LZ77 压缩 + 两次 JSON.stringify
-    //   （每次都是主线程阻塞的同步重活，84 城规模下单次可达数十毫秒）。
-    //   优化：首次 pack 后预估字符串长度；已逼近 localStorage 5MB 上限（预留 ~15% 余量
-    //   给键名/信封）时，在写盘前主动把日志再压到 200 条，避免「打包→失败→再打包」的
-    //   双倍开销。日志仅展示用途，截断不影响玩法。
+    // 性能优化（save.js V20.0·更大存档写入）：
+    //   基准：旧流程「首包 500 条日志 → 超 4.2M 再包 150 条 → 写盘仍超配额再包 100 条」，
+    //   最坏要跑 3 次 JSON.stringify + 3 次 LZ77 压缩。V20.0 城市/武将规模进一步增大，
+    //   结构化数据本身已很大，长局时 500 条日志几乎必然触发第二次压缩。
+    //   优化：先对「键名缩写后」的 JSON 字符串做一次长度预估（JSON.stringify 本身便宜，
+    //   LZ77 才是重活）；若缩写后 JSON 已逼近 localStorage 5MB 上限（LZ77 通常再压 30~50%，
+    //   故阈值取 ~3.2M 字符），直接一步把日志截到 120 条再做首次 LZ77 压缩——
+    //   把「首包→再包」的两次 LZ77 重活合并为一次，最坏压缩次数从 3 次降到 2 次。
+    //   日志仅展示用途，截断不影响玩法。
+    const _preJson = JSON.stringify(_shrink(data));
+    if (_preJson.length > 3_200_000 && Array.isArray(data.log) && data.log.length > 120) {
+      data.log = data.log.slice(-120);
+    }
     let packed = _pack(data);
     // 性能优化（save.js 大存档写入 V19.0·96城/189将）：
     //   基准：旧流程为「首包 500 条日志 → 超 4.2M 再包 200 条 → 写盘仍超配额再包 100 条」，

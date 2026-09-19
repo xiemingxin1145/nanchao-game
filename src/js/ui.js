@@ -134,6 +134,8 @@ export class UI {
       <div class="main-menu v13-main-menu">
         <div class="title-screen v13-title-screen">
           <img src="${IMG.titleBg}" class="title-bg kenburns" onerror="this.style.display='none'">
+          <!-- V20.0：盛世华章主菜单氛围光晕（呼吸渐变，纯 CSS 动画，无 JS 粒子负担） -->
+          <div class="v20-menu-haze"></div>
           <!-- V13.0：Canvas 古风粒子背景（花瓣/墨点/星光），全屏层 -->
           <canvas class="v13-menu-canvas"></canvas>
           <div class="menu-particles">${particles}</div>
@@ -156,7 +158,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge">V19.0 · 文治武功版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge">V20.0 · 盛世华章版</div>
         </div>
       </div>
     `;
@@ -1039,6 +1041,7 @@ export class UI {
             <button class="btn-small v18-intel-btn" id="btn-intel" title="V18.0 战略情报：实力对比 / 威胁热力 / 敌行动预测">情报</button>
             <button class="btn-small" id="btn-religion">宗教</button>
             <button class="btn-small" id="btn-recruit">招募</button>
+            <button class="btn-small v20-pop-btn" id="btn-v20-pop" title="V20.0 户口总览：各城人口 / 增长 / 迁移 / 征兵比例">户口</button>
             <button class="btn-small" id="btn-menu">菜单</button>
           </div>
         </div>
@@ -1090,6 +1093,9 @@ export class UI {
     const v15RelBtn = document.getElementById('btn-religion');
     if (v15RelBtn) v15RelBtn.onclick = () => this.showReligionPanel();
     document.getElementById('btn-recruit').onclick = () => this.showRecruitPanel();
+    // V20.0：户口总览入口
+    const v20PopBtn = document.getElementById('btn-v20-pop');
+    if (v20PopBtn) v20PopBtn.onclick = () => this.showPopulationPanelV20();
     document.getElementById('btn-menu').onclick = () => this.showSettings();
     document.getElementById('btn-tech').onclick = () => this.showTechTree();
     // V19.0：文化面板入口
@@ -1209,6 +1215,7 @@ export class UI {
         <div class="stat-row"><span>驻军</span><b>${city.garrison}</b></div>
         <div class="stat-row"><span>太守</span><b class="general-name-link" onclick="__ui_.showGeneralDetail('${city.mayor || ''}')">${mayor ? mayor.name : '空缺'}</b></div>
       </div>
+      ${this._v20CityDeepBlock(city, isMine)}
       <div id="general-detail-slot"></div>
       ${isMine ? `
         <div class="action-buttons">
@@ -1225,6 +1232,7 @@ export class UI {
           <!-- V14.0：内政总览 / 兵种进阶 入口 -->
           <button class="btn-small" onclick="__ui_.showInternalAffairs('${city.id}')">🏛 内政</button>
           <button class="btn-small" onclick="__ui_.showUnitAdvance('${city.id}')">🎖 进阶</button>
+          <button class="btn-small v20-pop-btn" onclick="__ui_.showPopulationPanelV20()">📊 户口</button>
           ${availableGenerals.length > 0 ? `
             <select id="mayor-select" class="select-small">
               ${availableGenerals.map(g => `<option value="${g.id}">${g.name}</option>`).join('')}
@@ -1304,6 +1312,243 @@ export class UI {
       this.showArmyPanel(result.army);
     }
     this.refreshUI();
+  }
+
+  // ============================================================
+  // V20.0「盛世华章」：灾害 / 人口 / 城市深化
+  // 说明：本块为纯前端派生 UI，只读既有 game/city 数据，所有外部 API 均带 typeof 守卫，
+  //       不改动 game.js / city.js / 存档结构。
+  // ============================================================
+  _v20Num(v, d = 0) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+  _v20Clamp(v, lo = 0, hi = 100) { return Math.max(lo, Math.min(hi, v)); }
+  _v20Esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+  _v20Season() {
+    try {
+      if (this.game && typeof this.game.getSeason === 'function') return this.game.getSeason();
+    } catch (e) { /* ignore */ }
+    return '春';
+  }
+
+  // 计算城市 V20 深化指标（纯前端派生，稳定不抖动）
+  _v20AssessCity(city) {
+    const pop = Math.round(this._v20Num(city.pop, 0));
+    const morale = this._v20Num(city.morale, 50);
+    const agri = this._v20Num(city.agri, 0);
+    const comm = this._v20Num(city.comm, 0);
+    const water = this._v20Num(city.waterConservancy, 0);
+    const training = this._v20Num(city.training, 0);
+    const prosper = this._v20Num(city.prosperity, 0);
+    const garrison = Math.round(this._v20Num(city.garrison, 0));
+    const size = Math.round(this._v20Num(city.size, 2));
+    const season = this._v20Season();
+
+    // 青壮年比例：由规模 / 民心派生（无真实年龄数据，给稳定估计）
+    const youngRatio = this._v20Clamp(0.38 + (morale - 50) / 250 + (size - 2) * 0.03, 0.22, 0.62);
+    // 人口自然增长估计（对齐 city.js endTurn：(morale-50)/5000 * pop）
+    let growthPct = (morale - 50) / 50; // 折算为百分比
+    try {
+      if (this.game && typeof this.game.getTechBonus === 'function' && city.owner) {
+        growthPct += (this.game.getTechBonus(city.owner, 'popMult') || 0) * 100;
+      }
+    } catch (e) { /* ignore */ }
+    const growthDelta = Math.round(pop * growthPct / 100);
+    // 征兵比例 = 驻军 / 总人口
+    const conscriptRatio = pop > 0 ? this._v20Clamp(garrison / pop * 100, 0, 100) : 0;
+    // 人口迁移：高繁荣高民心流入，反之流出
+    const migScore = prosper + morale - 90;
+    const migration = migScore > 15 ? '流入' : (migScore < -15 ? '流出' : '平稳');
+
+    // 灾害预警条目
+    const warnings = [];
+    if (water < 25) warnings.push({ level: 'high', icon: '🌊', title: '旱涝无备', desc: `水利仅 ${Math.round(water)}，灾年损失惨重，宜速修水利。` });
+    else if (water < 50) warnings.push({ level: 'mid', icon: '💧', title: '水利不足', desc: `水利 ${Math.round(water)}，尚可加固堤防。` });
+    if (agri < 30) warnings.push({ level: 'high', icon: '🌾', title: '歉收之虞', desc: `农业 ${Math.round(agri)}，粮储不丰，遇灾易饥馑。` });
+    if (morale < 35) warnings.push({ level: 'high', icon: '🔥', title: '民心离散', desc: `民心仅 ${Math.round(morale)}，饥荒易激民变。` });
+    else if (morale < 50) warnings.push({ level: 'low', icon: '☁️', title: '民心待抚', desc: `民心 ${Math.round(morale)}，轻徭薄赋可渐复。` });
+
+    // 综合灾害风险分
+    const seasonRisk = (season === '夏' || season === '秋') ? 8 : 0;
+    let riskScore = (100 - water) * 0.35 + (100 - agri) * 0.25 + (100 - morale) * 0.25 + seasonRisk;
+    riskScore = this._v20Clamp(Math.round(riskScore));
+    const riskLevel = riskScore >= 60 ? { t: '高危', c: '#e05555' }
+      : riskScore >= 35 ? { t: '中危', c: '#e0a555' } : { t: '安定', c: '#55cc55' };
+
+    // 发展建议
+    const suggestions = [];
+    if (water < 40) suggestions.push('兴修水利，防灾减损并增产粮食。');
+    if (morale < 45) suggestions.push('轻徭薄赋、开仓赈灾以收拢民心。');
+    if (agri < comm) suggestions.push('农业落后于商业，宜劝课农桑。');
+    if (conscriptRatio > 12) suggestions.push('征兵比例偏高，恐耗民力、阻滞户口增长。');
+    if (prosper < 40) suggestions.push('繁荣偏低，发展商业、营建坊市可提振。');
+    if (suggestions.length === 0) suggestions.push('城邑井井有条，可顺势扩张、缮甲练兵。');
+
+    // 营建进度（四维 0~100）
+    const progress = [
+      { label: '农业', val: agri, color: '#7fb069' },
+      { label: '商业', val: comm, color: '#d4af37' },
+      { label: '水利', val: water, color: '#5aa9d6' },
+      { label: '训练', val: training, color: '#c97b6b' },
+    ];
+
+    return {
+      pop, morale, youngRatio, growthPct, growthDelta, conscriptRatio, migration,
+      warnings, riskScore, riskLevel, suggestions, progress, season, garrison
+    };
+  }
+
+  // 灾害历史：从游戏日志中提取最近 N 条灾异记录
+  _v20DisasterHistory(n = 5) {
+    const kw = ['灾', '旱', '涝', '洪', '蝗', '霜', '疫', '荒', '地震', '溃', '饥', '歉收', '饥馑', '水患'];
+    let rows = [];
+    try {
+      if (this.game && Array.isArray(this.game.log)) {
+        rows = this.game.log.filter(line => typeof line === 'string' && kw.some(k => line.includes(k)));
+      }
+    } catch (e) { rows = []; }
+    const last = rows.slice(-n).reverse();
+    if (!last.length) return `<p class="v20-hist-empty">暂无灾异记录，政通人和。</p>`;
+    return `<ul class="v20-hist-list">${last.map(r => `<li>${this._v20Esc(r)}</li>`).join('')}</ul>`;
+  }
+
+  // 渲染城市面板 V20 深化区块
+  _v20CityDeepBlock(city, isMine) {
+    const a = this._v20AssessCity(city);
+    const warnHtml = a.warnings.length
+      ? a.warnings.map(w => `<div class="v20-warn v20-warn-${w.level}"><span class="v20-warn-ic">${w.icon}</span><div class="v20-warn-txt"><b>${w.title}</b><span>${w.desc}</span></div></div>`).join('')
+      : `<div class="v20-warn v20-warn-ok"><span class="v20-warn-ic">🛡️</span><div class="v20-warn-txt"><b>风调雨顺</b><span>暂无灾害预警，城邑安稳。</span></div></div>`;
+    const youngPct = Math.round(a.youngRatio * 100);
+    const growthColor = a.growthDelta >= 0 ? '#55cc55' : '#e05555';
+    const bars = a.progress.map(p =>
+      `<div class="v20-prog-row"><span class="v20-prog-label">${p.label}</span>` +
+      `<span class="v20-prog-track"><span class="v20-prog-fill" style="width:${this._v20Clamp(Math.round(p.val))}%;background:${p.color}"></span></span>` +
+      `<span class="v20-prog-val">${Math.round(p.val)}</span></div>`).join('');
+    const sug = a.suggestions.map(s => `<li>${this._v20Esc(s)}</li>`).join('');
+
+    return `
+      <div class="v20-deep v20-enter">
+        <div class="v20-deep-head">
+          <span class="v20-deep-title">🌐 城邑经略</span>
+          <span class="v20-risk-chip" style="color:${a.riskLevel.c};border-color:${a.riskLevel.c}">灾害风险 ${a.riskScore} · ${a.riskLevel.t}</span>
+        </div>
+        <div class="v20-section">
+          <div class="v20-sec-title">⚠️ 灾害预警</div>
+          ${warnHtml}
+          ${isMine ? `<div class="v20-resp-btns">
+            <button class="btn-small v20-resp-btn" onclick="__ui_._v20Relief('${city.id}')">🍚 开仓赈灾</button>
+            <button class="btn-small v20-resp-btn" onclick="__ui_._v20BuildWater('${city.id}')">💧 修建水利</button>
+          </div>` : ''}
+        </div>
+        <div class="v20-section">
+          <div class="v20-sec-title">👥 户口人丁</div>
+          <div class="v20-pop-grid">
+            <div class="v20-pop-cell"><span>总人口</span><b>${a.pop.toLocaleString()}</b></div>
+            <div class="v20-pop-cell"><span>青壮年</span><b>${youngPct}%</b></div>
+            <div class="v20-pop-cell"><span>增长/回合</span><b style="color:${growthColor}">${a.growthDelta >= 0 ? '+' : ''}${a.growthDelta}</b></div>
+            <div class="v20-pop-cell"><span>迁移</span><b>${a.migration}</b></div>
+            <div class="v20-pop-cell"><span>征兵比例</span><b>${a.conscriptRatio.toFixed(1)}%</b></div>
+            <div class="v20-pop-cell"><span>驻军</span><b>${a.garrison.toLocaleString()}</b></div>
+          </div>
+          <div class="v20-young-bar"><span class="v20-young-fill" style="width:${youngPct}%"></span></div>
+        </div>
+        <div class="v20-section">
+          <div class="v20-sec-title">🏗️ 营建进度</div>
+          ${bars}
+        </div>
+        <div class="v20-section">
+          <div class="v20-sec-title">📜 发展建议</div>
+          <ul class="v20-sug-list">${sug}</ul>
+        </div>
+        <div class="v20-section">
+          <div class="v20-sec-title">🜂 灾异录</div>
+          ${this._v20DisasterHistory(5)}
+        </div>
+      </div>`;
+  }
+
+  // 灾害应对：开仓赈灾（耗金/粮，涨民心、复流民）
+  _v20Relief(cityId) {
+    const city = (this.game && this.game.cities) ? this.game.cities.get(cityId) : null;
+    if (!city) return;
+    if (city.owner !== this.game.playerFaction) { this.toast('非我方城邑，无法赈灾'); return; }
+    const res = (this.game && typeof this.game.getPlayerRes === 'function') ? this.game.getPlayerRes() : null;
+    const costM = 300, costF = 2000;
+    if (!res) { this.toast('无法读取府库'); return; }
+    if (this._v20Num(res.money) < costM || this._v20Num(res.food) < costF) {
+      this.toast(`赈灾需 ${costM} 金 / ${costF} 粮，府库不足`); return;
+    }
+    res.money -= costM; res.food -= costF;
+    city.morale = this._v20Clamp(city.morale + 8);
+    city.pop = Math.max(500, Math.round(this._v20Num(city.pop) * 1.005));
+    try { if (this.game.pushLog) this.game.pushLog(`【${city.name}】开仓赈灾，民心 +8，流民稍复。`); } catch (e) { /* ignore */ }
+    if (this.audio && typeof this.audio.playCoin === 'function') this.audio.playCoin();
+    this.toast(`已在 ${city.name} 开仓赈灾`);
+    this.showCityPanel(city); this.refreshUI();
+  }
+
+  // 灾害应对：修建水利（耗金，提升 waterConservancy，防灾增产）
+  _v20BuildWater(cityId) {
+    const city = (this.game && this.game.cities) ? this.game.cities.get(cityId) : null;
+    if (!city) return;
+    if (city.owner !== this.game.playerFaction) { this.toast('非我方城邑，无法营建'); return; }
+    const res = (this.game && typeof this.game.getPlayerRes === 'function') ? this.game.getPlayerRes() : null;
+    const cost = 250;
+    if (!res) { this.toast('无法读取府库'); return; }
+    if (this._v20Num(res.money) < cost) { this.toast(`修水利需 ${cost} 金，府库不足`); return; }
+    res.money -= cost;
+    let msg;
+    if (typeof city.developCity === 'function') {
+      const r = city.developCity('waterConservancy', 8);
+      msg = (r && r.msg) ? r.msg : '水利已加固';
+    } else {
+      city.waterConservancy = this._v20Clamp(this._v20Num(city.waterConservancy) + 8);
+      msg = `水利提升至 ${Math.round(city.waterConservancy)}`;
+    }
+    try { if (this.game.pushLog) this.game.pushLog(`【${city.name}】${msg}，防灾能力增强。`); } catch (e) { /* ignore */ }
+    if (this.audio && typeof this.audio.playCoin === 'function') this.audio.playCoin();
+    this.toast(msg);
+    this.showCityPanel(city); this.refreshUI();
+  }
+
+  // 户口总览面板：各城人口 / 增长 / 迁移 / 征兵比例
+  showPopulationPanelV20() {
+    if (!this.game) { this.toast('开始游戏后可见户口'); return; }
+    const cities = (typeof this.game.getFactionCities === 'function')
+      ? this.game.getFactionCities(this.game.playerFaction) : [];
+    const rows = cities.map(c => {
+      const a = this._v20AssessCity(c);
+      const migColor = a.migration === '流入' ? '#55cc55' : a.migration === '流出' ? '#e05555' : '#c8b890';
+      return `
+        <div class="v20-pop-row">
+          <div class="v20-pop-city"><b>${this._v20Esc(c.name)}</b><span style="color:${a.riskLevel.c}">${a.riskLevel.t}</span></div>
+          <div class="v20-pop-metric"><label>人口</label><b>${a.pop.toLocaleString()}</b></div>
+          <div class="v20-pop-metric"><label>增长</label><b style="color:${a.growthDelta >= 0 ? '#55cc55' : '#e05555'}">${a.growthDelta >= 0 ? '+' : ''}${a.growthDelta}</b></div>
+          <div class="v20-pop-metric"><label>迁移</label><b style="color:${migColor}">${a.migration}</b></div>
+          <div class="v20-pop-metric"><label>征兵</label><b>${a.conscriptRatio.toFixed(1)}%</b></div>
+          <div class="v20-pop-bar"><span class="v20-pop-bar-fill" style="width:${a.conscriptRatio}%"></span></div>
+        </div>`;
+    }).join('');
+    const totalPop = cities.reduce((s, c) => s + this._v20Num(c.pop), 0);
+    const totalGarrison = cities.reduce((s, c) => s + this._v20Num(c.garrison), 0);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v20-pop-overlay';
+    modal.innerHTML = `
+      <div class="modal v20-pop-modal">
+        <h2 class="modal-title v20-title">📜 户口总览 · 盛世华章</h2>
+        <div class="v20-pop-summary">
+          <span>治下城邑 <b>${cities.length}</b></span>
+          <span>总人口 <b>${totalPop.toLocaleString()}</b></span>
+          <span>总驻军 <b>${totalGarrison.toLocaleString()}</b></span>
+        </div>
+        <div class="v20-pop-head">
+          <span>城邑</span><span>人口</span><span>增长</span><span>迁移</span><span>征兵比例</span>
+        </div>
+        <div class="v20-pop-list">${rows || '<p class="v20-hist-empty">暂无城邑。</p>'}</div>
+        <button class="btn-ancient" onclick="this.closest('.v20-pop-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
   }
 
   // ---------- 武将详情（雷达图 + 经验 + 技能） ----------

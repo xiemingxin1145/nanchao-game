@@ -210,6 +210,24 @@ const BGM_TRACKS = {
     //   density 0.55，模拟伏案推演、豁然开朗的探索节奏）
     bpm: 80, scale: ['A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5'],
     wave: 'triangle', bassWave: 'sine', stepMs: 750, hasDrum: false, density: 0.55
+  },
+
+  // ============================================================
+  // V20.0「音效扩充」新增 2 首 BGM
+  // ============================================================
+  turbulent: {  // 灾害/乱世：B小调，90BPM，紧张不安——锯齿主奏+方波低音+缓鼓
+    // B 自然小调五声化：B C# D E F# G A B C# D E（小三度暗调 + 小二度
+    //   不协和张力，锯齿波主奏制造压迫感，方波低音持续轰鸣，缓鼓点缀不安节奏；
+    //   stepMs=667(=90BPM四分音符)，density 0.8，模拟灾荒连年、风雨飘摇的乱世氛围）。
+    bpm: 90, scale: ['B2', 'D3', 'E3', 'F3s', 'G3', 'A3', 'B3', 'C4s', 'D4', 'E4', 'F4s', 'G4', 'A4', 'B4'],
+    wave: 'sawtooth', bassWave: 'square', stepMs: 667, hasDrum: true, density: 0.8
+  },
+  goldenAge: {  // 盛世太平：F大调，75BPM，和平繁荣——三角主奏+正弦低音+轻磬
+    // F 大调五声化：F G A C D F G A C D（明亮宫调 + 舒缓旋律，
+    //   三角主奏温润舒展、正弦低音铺底，轻鼓点缀升平，stepMs=800(=75BPM四分音符)，
+    //   density 0.5，density 压低营造五谷丰登、四海升平的治世氛围）。
+    bpm: 75, scale: ['F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5', 'D5', 'F5'],
+    wave: 'triangle', bassWave: 'sine', stepMs: 800, hasDrum: true, density: 0.5
   }
 };
 
@@ -249,7 +267,10 @@ export const BGM_INFO = {
   siege:          { name: '云梯蚁附', desc: '攻城战·C小调120BPM' },
   // V19.0 新增
   cultureHall:    { name: '文渊翰墨', desc: '文化界面·D宫调60BPM雅致宁静' },
-  techLab:        { name: '格物致知', desc: '科技研究·A小调80BPM探索氛围' }
+  techLab:        { name: '格物致知', desc: '科技研究·A小调80BPM探索氛围' },
+  // V20.0 新增
+  turbulent:      { name: '风雨如晦', desc: '灾害乱世·B小调90BPM紧张不安' },
+  goldenAge:      { name: '河清海晏', desc: '盛世太平·F大调75BPM和平繁荣' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -262,7 +283,9 @@ const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'end
   // V18.0：战略界面/攻城战两首新 BGM 默认解锁
   'strategy', 'siege',
   // V19.0：文化界面/科技研究两首新 BGM 默认解锁（随新系统开放即可用）
-  'cultureHall', 'techLab'];
+  'cultureHall', 'techLab',
+  // V20.0：灾害乱世/盛世太平两首新 BGM 默认解锁（灾害与治世场景随版本开放即可用）
+  'turbulent', 'goldenAge'];
 
 export class AudioManager {
   constructor() {
@@ -2712,6 +2735,162 @@ export class AudioManager {
   playWeatherSandstorm(){ this.startWeatherAmbient('sandstorm'); }
 
   // ============================================================
+  // V20.0「音效扩充」新增灾害/救灾音效（全部 Web Audio 程序化合成）
+  //   地震/洪水/干旱/瘟疫/蝗灾/暴风雪六种灾害事件触发音 + 救灾成功庆典音。
+  //   技术参考：低频轰鸣=次正弦波长音+指数下滑；建筑倒塌/碎石=低/高通噪声串；
+  //   水流/浪涛=低通噪声扫频；人呻吟/咳嗽=失谐锯齿波短音；乌鸦=方波下滑短促；
+  //   翅膀/蚕食=高频噪声脉冲串；狂风呼啸=带通噪声+LFO 扫频；冰粒=高通短点击。
+  //   灾害音效走 sfx 总线（与战斗音效同级，可独立 ducking BGM），统一带冷却闸门。
+  // ============================================================
+
+  // 1) 地震：低频轰鸣 + 建筑倒塌 + 碎石飞溅
+  playEarthquake() {
+    this.resume(); if (!this.ctx || !this._sfxGate('disaster_earthquake', 2500)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'sfx';
+    // 低频地鸣：35Hz 正弦长音缓慢下沉，持续 2.5s
+    this.tone(38, 2.5, 'sine', 0.30, 0, 20, BUS);
+    this.tone(55, 2.0, 'sawtooth', 0.10, 0.05, 30, BUS);
+    // 主震鼓点：两声渐强低频鼓
+    this.drum(0.7, 0, 55, BUS);
+    this.drum(0.8, 0.35, 50, BUS);
+    // 建筑倒塌：低通厚噪声随震波起伏（两段）
+    this._noiseBurst({ dur: 1.0, freq: 500, q: 1, type: 'lowpass', vol: 0.22,
+      offset: 0.1, bus: BUS, sweepTo: 150 });
+    this._noiseBurst({ dur: 1.2, freq: 400, q: 1, type: 'lowpass', vol: 0.20,
+      offset: 0.5, bus: BUS, sweepTo: 120 });
+    // 碎石滚落：一串高通短噪声（砖石飞溅，左右声像散开）
+    for (let i = 0; i < 8; i++) {
+      this._noiseBurst({ dur: 0.05, freq: 2600 + i * 150, q: 2, type: 'highpass',
+        vol: 0.10, offset: 0.25 + i * 0.09, bus: BUS,
+        sweepTo: 1100, pan: (i % 2 ? 0.4 : -0.4) });
+    }
+  }
+
+  // 2) 洪水：水流涌动 + 浪涛拍岸 + 呼救声
+  playFlood() {
+    this.resume(); if (!this.ctx || !this._sfxGate('disaster_flood', 2500)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'sfx';
+    // 水流涌动：低通噪声渐起（洪峰逼近），3s 起伏
+    this._noiseBurst({ dur: 1.8, freq: 800, q: 0.6, type: 'lowpass', vol: 0.18,
+      offset: 0, bus: BUS, sweepTo: 300 });
+    // 浪涛拍岸：三段低通噪声涌退
+    for (let i = 0; i < 3; i++) {
+      this._noiseBurst({ dur: 0.7, freq: 1000, q: 0.7, type: 'lowpass', vol: 0.16,
+        offset: 0.4 + i * 0.6, bus: BUS, sweepTo: 250, pan: (i - 1) * 0.3 });
+    }
+    // 呼救：失谐下滑锯齿波短呼（左右声像，模拟水中挣扎）
+    [220, 180, 260].forEach((f, i) =>
+      this.tone(f, 0.4, 'sawtooth', 0.10, 0.6 + i * 0.5, f * 0.6, BUS, (i - 1) * 0.3));
+    // 水面漩涡低频嗡
+    this.tone(48, 1.6, 'sine', 0.18, 0.2, 30, BUS);
+  }
+
+  // 3) 干旱：干燥风声 + 枯叶碎裂
+  playDrought() {
+    this.resume(); if (!this.ctx || !this._sfxGate('disaster_drought', 2500)) return;
+    this._duckBGM();
+    const BUS = 'sfx';
+    // 干燥热风：带通中高频噪声（干涩、少低频），缓慢起伏
+    this._noiseBurst({ dur: 2.0, freq: 1800, q: 1.5, type: 'bandpass', vol: 0.14,
+      offset: 0, bus: BUS, sweepTo: 900 });
+    // 极低频干燥喘息嗡鸣（土地龟裂的压抑感）
+    this.tone(70, 2.0, 'sawtooth', 0.06, 0, null, BUS);
+    // 枯叶碎裂：一串高通短促咔啦声（脆、干、散）
+    for (let i = 0; i < 6; i++) {
+      this._noiseBurst({ dur: 0.04, freq: 3800, q: 2.5, type: 'highpass',
+        vol: 0.10, offset: 0.2 + i * 0.28, bus: BUS,
+        sweepTo: 2200, pan: (i % 2 ? 0.3 : -0.3) });
+    }
+  }
+
+  // 4) 瘟疫：低沉呻吟 + 咳嗽 + 乌鸦啼
+  playPlague() {
+    this.resume(); if (!this.ctx || !this._sfxGate('disaster_plague', 2500)) return;
+    this._duckBGM();
+    const BUS = 'sfx';
+    // 低沉呻吟：两个失谐低频长音（病患喘息）
+    this.tone(90, 1.6, 'sawtooth', 0.10, 0, null, BUS, -0.2);
+    this.tone(85, 1.6, 'sine', 0.12, 0.2, null, BUS, 0.2);
+    // 咳嗽：带通短促三连（喉间痰咳）
+    for (let i = 0; i < 3; i++) {
+      this._noiseBurst({ dur: 0.12, freq: 600, q: 2, type: 'bandpass', vol: 0.12,
+        offset: 0.4 + i * 0.45, bus: BUS, sweepTo: 350 });
+    }
+    // 乌鸦啼：方波短促下滑（两声，由远及近）
+    this.tone(620, 0.18, 'square', 0.12, 0.5, 380, BUS, -0.3);
+    this.tone(580, 0.20, 'square', 0.12, 1.1, 350, BUS, 0.3);
+    this.tone(600, 0.16, 'square', 0.10, 1.6, 400, BUS, 0);
+  }
+
+  // 5) 蝗灾：密集翅膀声 + 蚕食禾苗
+  playLocust() {
+    this.resume(); if (!this.ctx || !this._sfxGate('disaster_locust', 2500)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'sfx';
+    // 密集翅膀声：高频噪声脉冲串（蝗群振翅，短促密集如雨）
+    for (let i = 0; i < 10; i++) {
+      this._noiseBurst({ dur: 0.03, freq: 4200, q: 3, type: 'highpass',
+        vol: 0.08, offset: i * 0.12, bus: BUS, pan: (i % 2 ? 0.3 : -0.3) });
+    }
+    // 蚕食禾苗：带通沙沙声（叶片被啃噬），两段
+    this._noiseBurst({ dur: 1.0, freq: 2400, q: 2, type: 'bandpass', vol: 0.12,
+      offset: 0.2, bus: BUS, sweepTo: 1400 });
+    this._noiseBurst({ dur: 0.9, freq: 2600, q: 2, type: 'bandpass', vol: 0.10,
+      offset: 0.8, bus: BUS, sweepTo: 1500 });
+  }
+
+  // 6) 暴风雪：狂风呼啸 + 冰粒击打
+  playBlizzard() {
+    this.resume(); if (!this.ctx || !this._sfxGate('disaster_blizzard', 2500)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'sfx';
+    // 狂风呼啸：带通噪声 + LFO 扫频（风声由低到高卷过）
+    this._noiseBurst({ dur: 2.2, freq: 600, q: 1.2, type: 'bandpass', vol: 0.20,
+      offset: 0, bus: BUS, sweepTo: 2200 });
+    this._noiseBurst({ dur: 1.8, freq: 1500, q: 1.0, type: 'bandpass', vol: 0.14,
+      offset: 0.3, bus: BUS, sweepTo: 400, pan: -0.3 });
+    // 冰粒击打：高通短促噼啪（冰粒抽打车窗/盔甲）
+    for (let i = 0; i < 8; i++) {
+      this._noiseBurst({ dur: 0.03, freq: 5000, q: 2, type: 'highpass',
+        vol: 0.07, offset: 0.2 + i * 0.18, bus: BUS, pan: (i % 2 ? 0.4 : -0.4) });
+    }
+    // 严寒低频
+    this.tone(50, 2.0, 'sine', 0.12, 0, 35, BUS);
+  }
+
+  // 7) 救灾成功：欢快民乐上行 + 编钟庆祝
+  playReliefSuccess() {
+    this.resume(); if (!this.ctx || !this._sfxGate('relief_success', 1500)) return;
+    this._duckBGM(); this._sfxDuck();
+    const BUS = 'achievement';
+    // 欢快民乐上行琶音（C5 E5 G5 C6，三角波）
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) =>
+      this.tone(f, 0.32, 'triangle', 0.26, i * 0.12, null, BUS));
+    // 编钟两声（C4 + G4，庄严喜庆）
+    this.bell(523.25, 1.6, 0.20, 0.5, 0);
+    this.bell(783.99, 1.4, 0.14, 0.75, 0);
+    // 欢庆鼓点
+    this.drum(0.4, 0.5, 80, BUS);
+    this.drum(0.35, 0.75, 75, BUS);
+  }
+
+  // 便捷：按灾害类型名一键播放对应音效
+  // type: 'earthquake'|'flood'|'drought'|'plague'|'locust'|'blizzard'
+  playDisaster(type) {
+    switch (type) {
+      case 'earthquake': this.playEarthquake(); break;
+      case 'flood':     this.playFlood(); break;
+      case 'drought':    this.playDrought(); break;
+      case 'plague':    this.playPlague(); break;
+      case 'locust':     this.playLocust(); break;
+      case 'blizzard':   this.playBlizzard(); break;
+      default: break;
+    }
+  }
+
+  // ============================================================
   // V15.0 结局 BGM：宏大交响（finale 曲目按评级变奏）。
   //   S：高密庆典（density 0.9 / 明亮 G 音阶 / 定音鼓）；
   //   B：温润和平（density 0.6 / C 宫 / 无鼓）；
@@ -3008,6 +3187,13 @@ export class AudioManager {
     if (!track) return;
     this.resume();
     if (!this.ctx) return;
+    // BUG修复（audio.js V20.0 startBGM 定时器泄漏/叠音）：
+    //   优化前：startBGM 末尾直接 `this._bgmTimer = setInterval(...)`，未先清理可能已存在的
+    //   旧定时器。当前唯一入口 switchBGM 虽先 stopBGM()，但若外部直接调用 startBGM 重放/恢复
+    //   （如菜单重入、页面 resume、未来新调用点），旧 _bgmTick 仍在跑 → 两套旋律叠加、
+    //   节奏加倍，且旧定时器永不被 clearInterval 持有引用而泄漏。
+    //   修复：建 interval 前先 clear 旧定时器，保证同一时刻只有一个 BGM 调度循环。
+    if (this._bgmTimer) { clearInterval(this._bgmTimer); this._bgmTimer = null; }
     this._bgmOn = true;
     this._bgmStep = 0;
     // 性能优化（audio.js #2 多BGM切换资源管理）：
@@ -3072,6 +3258,19 @@ export class AudioManager {
     //   每拍开头按 stopAt 时间戳丢弃已结束项，保证数组规模有界（≤ 最近 2 拍）。
     if (this._bgmLiveNodes.length) {
       this._bgmLiveNodes = this._bgmLiveNodes.filter(n => n.stopAt > t0);
+      // V20.0 加强：硬上限兜底——极端 Rapid 切歌/调度时钟漂移场景下，按 stopAt 裁剪
+      //   可能仍残留少量活节点（如 osc 被外部 stop 但 stopAt 未到 t0）。此处加一道
+      //   MAX_LIVE=32 硬帽：超过即丢弃最旧的一半引用并强制断连，防止 _bgmLiveNodes
+      //   在长时间运行后无限膨胀（每拍 push 2~3 个，数月长局累积上千条引用驻留内存）。
+      const MAX_LIVE = 32;
+      if (this._bgmLiveNodes.length > MAX_LIVE) {
+        const stale = this._bgmLiveNodes.splice(0, this._bgmLiveNodes.length - MAX_LIVE);
+        for (const n of stale) {
+          try { n.osc && n.osc.stop(); } catch (e) {}
+          try { n.osc && n.osc.disconnect(); } catch (e) {}
+          try { n.gain && n.gain.disconnect(); } catch (e) {}
+        }
+      }
     }
     // 性能优化（audio.js #2）：直接用 startBGM 预建的频率数组，避免每拍
     //   PENTATONIC 属性链查找。_freqScale 缺省时（理论上不会）兜底现算。

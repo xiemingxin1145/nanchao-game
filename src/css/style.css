@@ -5158,3 +5158,182 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
   .v19-cc-build { gap: 4px; }
   .v19-mini-btn { padding: 3px 8px; font-size: 11px; }
 }
+
+/* ============================================================
+   V20.0「盛世华章」UI 精修 — 灾害 / 人口 / 城市深化
+   全部使用 v20- 前缀，独立 CSS 变量与 keyframes
+   ============================================================ */
+:root {
+  --v20-gold: #e6c25a;
+  --v20-jade: #3f7a66;
+  --v20-ink: #14110a;
+  --v20-paper: #e8d5a3;
+  --v20-line: rgba(230,194,90,0.32);
+  --v20-panel: rgba(20,17,11,0.96);
+  --v20-danger: #e05555;
+  --v20-warn: #e0a555;
+  --v20-safe: #55cc55;
+  --v20-water: #5aa9d6;
+  --v20-radius: 10px;
+}
+
+@keyframes v20Enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes v20WarnPulse { 0%,100% { border-left-color: var(--v20-danger); } 50% { border-left-color: rgba(224,85,85,0.35); } }
+@keyframes v20RiskGlow { 0%,100% { box-shadow: 0 0 0 0 rgba(230,194,90,0.35); } 50% { box-shadow: 0 0 12px 2px rgba(230,194,90,0.28); } }
+@keyframes v20BadgeGlow { 0%,100% { text-shadow: 0 0 6px rgba(230,194,90,0.3); } 50% { text-shadow: 0 0 16px rgba(230,194,90,0.7); } }
+@keyframes v20MenuBreath { 0%,100% { opacity: 0.5; } 50% { opacity: 0.85; } }
+@keyframes v20BarGrow { from { width: 0; } }
+
+/* ---------- 版本徽章 ---------- */
+.v20-version-badge {
+  border-color: var(--v20-gold) !important;
+  color: var(--v20-gold) !important;
+  animation: v20BadgeGlow 3.2s ease-in-out infinite;
+}
+
+/* ---------- 主菜单背景打磨 ---------- */
+.v20-menu-haze {
+  position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(circle at 20% 18%, rgba(230,194,90,0.10), transparent 42%),
+    radial-gradient(circle at 82% 78%, rgba(63,122,102,0.18), transparent 55%);
+  mix-blend-mode: screen;
+  animation: v20MenuBreath 7s ease-in-out infinite;
+}
+
+/* ---------- 城市深化区块 ---------- */
+.v20-deep {
+  margin-top: 10px; padding: 10px 10px 8px;
+  background: linear-gradient(180deg, rgba(30,26,16,0.92), rgba(18,15,9,0.92));
+  border: 1px solid var(--v20-line);
+  border-radius: var(--v20-radius);
+  animation: v20Enter 0.45s ease both;
+}
+.v20-enter { animation: v20Enter 0.45s ease both; }
+.v20-deep-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px dashed var(--v20-line);
+}
+.v20-deep-title { font-size: 14px; color: var(--v20-gold); letter-spacing: 2px; }
+.v20-risk-chip {
+  font-size: 11px; padding: 2px 8px; border: 1px solid;
+  border-radius: 10px; background: rgba(0,0,0,0.3); white-space: nowrap;
+}
+.v20-section { margin: 8px 0; }
+.v20-sec-title {
+  font-size: 12px; color: #c8b890; letter-spacing: 2px;
+  margin-bottom: 5px; padding-left: 8px;
+  border-left: 3px solid var(--v20-gold);
+}
+
+/* 灾害预警 */
+.v20-warn {
+  display: flex; gap: 8px; align-items: flex-start;
+  padding: 6px 8px; margin-bottom: 5px;
+  border-radius: 6px; background: rgba(0,0,0,0.3);
+  border-left: 3px solid #555;
+}
+.v20-warn-ic { font-size: 16px; line-height: 1.2; }
+.v20-warn-txt { display: flex; flex-direction: column; }
+.v20-warn-txt b { font-size: 12.5px; color: var(--v20-paper); }
+.v20-warn-txt span { font-size: 11.5px; color: #b8a888; line-height: 1.4; }
+.v20-warn-high { border-left-color: var(--v20-danger); animation: v20WarnPulse 2.2s ease-in-out infinite; }
+.v20-warn-high .v20-warn-txt b { color: #ff8a8a; }
+.v20-warn-mid { border-left-color: var(--v20-warn); }
+.v20-warn-mid .v20-warn-txt b { color: #ffcf8a; }
+.v20-warn-low { border-left-color: #d4c060; }
+.v20-warn-ok { border-left-color: var(--v20-safe); }
+.v20-warn-ok .v20-warn-txt b { color: #8fe08f; }
+.v20-resp-btns { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.v20-resp-btn { border-color: var(--v20-gold) !important; }
+
+/* 户口人丁 */
+.v20-pop-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+}
+.v20-pop-cell {
+  background: rgba(0,0,0,0.32); border-radius: 6px;
+  padding: 5px 6px; display: flex; flex-direction: column;
+}
+.v20-pop-cell span { font-size: 10.5px; color: #9a8b6a; }
+.v20-pop-cell b { font-size: 14px; color: var(--v20-paper); }
+.v20-young-bar {
+  margin-top: 6px; height: 6px; border-radius: 3px;
+  background: rgba(0,0,0,0.45); overflow: hidden;
+}
+.v20-young-fill {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, #c9a24a, var(--v20-gold));
+  animation: v20BarGrow 0.7s ease both;
+}
+
+/* 营建进度 */
+.v20-prog-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.v20-prog-label { font-size: 11.5px; color: #c8b890; width: 32px; }
+.v20-prog-track {
+  flex: 1; height: 8px; border-radius: 4px;
+  background: rgba(0,0,0,0.45); overflow: hidden;
+}
+.v20-prog-fill { display: block; height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+.v20-prog-val { font-size: 11px; color: #b8a888; width: 24px; text-align: right; }
+
+/* 发展建议 */
+.v20-sug-list { margin: 0; padding-left: 18px; }
+.v20-sug-list li { font-size: 12px; color: #d8cba0; line-height: 1.6; }
+
+/* 灾异录 */
+.v20-hist-list { margin: 0; padding-left: 16px; }
+.v20-hist-list li { font-size: 11.5px; color: #c98b7b; line-height: 1.6; }
+.v20-hist-empty { font-size: 11.5px; color: #8f8265; font-style: italic; }
+
+/* ---------- 户口总览弹窗 ---------- */
+.v20-pop-overlay { z-index: 9200; }
+.v20-pop-modal {
+  width: min(720px, 94vw);
+  background: var(--v20-panel);
+  border: 1px solid var(--v20-line);
+  border-radius: 12px; padding: 18px;
+  color: var(--v20-paper);
+  animation: v20Enter 0.4s ease both;
+}
+.v20-pop-summary {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  margin: 8px 0 12px; font-size: 13px; color: #c8b890;
+}
+.v20-pop-summary b { color: var(--v20-gold); font-size: 15px; }
+.v20-pop-head, .v20-pop-row {
+  display: grid; grid-template-columns: 1.4fr 1fr 0.9fr 0.8fr 1.6fr;
+  align-items: center; gap: 8px; padding: 6px 8px;
+}
+.v20-pop-head {
+  font-size: 11.5px; color: #9a8b6a; border-bottom: 1px solid var(--v20-line);
+}
+.v20-pop-row { border-bottom: 1px dashed rgba(230,194,90,0.14); font-size: 12.5px; }
+.v20-pop-row:nth-child(even) { background: rgba(255,255,255,0.02); }
+.v20-pop-city { display: flex; flex-direction: column; }
+.v20-pop-city b { color: var(--v20-paper); }
+.v20-pop-city span { font-size: 10.5px; }
+.v20-pop-metric label { display: block; font-size: 10px; color: #8f8265; }
+.v20-pop-metric b { font-size: 13px; }
+.v20-pop-bar { height: 6px; background: rgba(0,0,0,0.45); border-radius: 3px; overflow: hidden; }
+.v20-pop-bar-fill { display: block; height: 100%; background: linear-gradient(90deg, #8B6B2A, var(--v20-gold)); }
+.v20-pop-list { max-height: 56vh; overflow-y: auto; margin-bottom: 12px; }
+.v20-pop-list::-webkit-scrollbar { width: 8px; }
+.v20-pop-list::-webkit-scrollbar-thumb { background: rgba(230,194,90,0.35); border-radius: 4px; }
+.v20-title { text-align: center; color: #f0d98a; letter-spacing: 3px; margin-bottom: 14px; font-size: 20px; text-shadow: 0 0 12px rgba(230,194,90,0.3); }
+.v20-pop-btn { border-color: rgba(230,194,90,0.5); }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .v20-pop-grid { grid-template-columns: repeat(2, 1fr); }
+  .v20-pop-modal { padding: 14px; }
+  .v20-pop-head { display: none; }
+  .v20-pop-row { grid-template-columns: 1fr 1fr; row-gap: 4px; }
+  .v20-pop-bar { grid-column: 1 / -1; }
+}
+@media (max-width: 480px) {
+  .v20-deep { padding: 8px; }
+  .v20-pop-cell b { font-size: 13px; }
+  .v20-resp-btn { flex: 1; }
+}

@@ -211,7 +211,9 @@ export class AIPlayer {
     this.seekPeaceIfWeary(game);            // 消耗过大时主动求和
 
     // 6) 招募在野武将
-    const idleGens = game.getIdleGenerals();
+    // 性能优化（ai.js V20.0·204将后 AI 决策）：复用 runAITurns 入口一次性快照的在野武将表，
+    //   替代每个 AI 都 `game.getIdleGenerals()` 全表扫描 204 将。
+    const idleGens = game._roundIdleGens || game.getIdleGenerals();
     const recruitBonus = (this.techBag().recruitBonus || 0) + 0.2;
     // 性能优化（ai.js #2 170+将后 AI 决策）：
     //   基准：原版对全势力在野武将逐个掷招募概率，170+ 将时 idleGens 可能上百，
@@ -219,8 +221,8 @@ export class AIPlayer {
     //   优化：每回合最多扫描前 10 个候选，命中招募即停；其余下回合再扫，不影响策略。
     const RECRUIT_SCAN_LIMIT = 10;
     let recruitScanned = 0;
-    for (const gen of idleGens) {
-      if (recruitScanned >= RECRUIT_SCAN_LIMIT) break;
+    for (let ii = 0; ii < idleGens.length && recruitScanned < RECRUIT_SCAN_LIMIT; ii++) {
+      const gen = idleGens[ii];
       recruitScanned++;
       if (res.money > 800 && Math.random() < recruitBonus) {
         gen.faction = this.factionId;
@@ -230,6 +232,9 @@ export class AIPlayer {
         const capital = game.cities.get(FACTIONS[this.factionId].capital);
         gen.location = capital ? capital.id : null;
         game.pushLog(`【${this.name}】贤士 ${gen.name} 来投！`);
+        // 性能优化（ai.js V20.0）：招募成功后从回合快照中移除该武将，
+        //   避免后续 AI 势力重复扫描/重复招募同一在野将。
+        idleGens.splice(ii, 1);
         break;
       }
     }
@@ -238,7 +243,10 @@ export class AIPlayer {
   // V9.0：AI 自动编成军团——把同城的多支独立军队合编为军团
   aiFormLegions(game) {
     if (!game.legions) game.legions = new Map();
-    const myArmies = game.getFactionArmies(this.factionId).filter(a => !a.legionId && a.troops >= 1500);
+    // 性能优化（ai.js V20.0·204将后 AI 决策）：复用本回合缓存的军队表 _turnArmies，
+    //   替代每次 getFactionArmies 全表 filter（204将/多军队规模下每回合省下一次全表扫描）。
+    const myArmies = (this._turnArmies || game.getFactionArmies(this.factionId))
+      .filter(a => !a.legionId && a.troops >= 1500);
     // 按所在城市分组
     const byCity = {};
     for (const a of myArmies) {
@@ -680,8 +688,14 @@ export class AIPlayer {
   }
 
   _pickIdleGeneral(game) {
-    return game.getFactionGenerals(this.factionId)
-      .find(g => !g.inArmy && !g.onHostage && g.role !== '君主') || null;
+    // BUG修复（ai.js V20.0 _pickIdleGeneral 全表扫描）：
+    //   优化前：每次调用都 `game.getFactionGenerals(this.factionId)` 对全部武将做一次全表 filter。
+    //   weakDiplomacy 单次回合内最多调用本方法两次（智能提案分支 + 兜底分支），
+    //   204 将规模下每个弱势 AI 每回合就多 2 次全表扫描，F 个 AI 累计显著。
+    //   修复：优先复用 takeTurn 入口缓存的 _turnGenerals（同一势力、同一回合快照），
+    //   仅在缓存缺失（异常路径）时回退原全表扫描。
+    const gens = this._turnGenerals || game.getFactionGenerals(this.factionId);
+    return gens.find(g => !g.inArmy && !g.onHostage && g.role !== '君主') || null;
   }
 
   // AI 派遣密探刺探玩家情报
@@ -699,15 +713,18 @@ export class AIPlayer {
   // AI 建造关键关隘：本势力城市是关隘 locationCity 时建之
   aiBuildPass(game, res) {
     if (res.money < 1200) return;
-    for (const city of game.getFactionCities(this.factionId)) {
-      // 未建成且 locationCity 属我
-      // BUG修复（ai.js #5）：原实现 `Object.values(game.passes).some(p => p.pending > 0)`
-      //   检查的是「任意势力」是否有关隘在修，导致一个 AI 修建关隘时其它所有 AI 都被
-      //   连带禁止建关隘。运行时 pass 对象也没有 locationCity 字段（在静态表）。
-      //   修复：只判断「本势力」是否有在修的关隘（按 pending 计数），并改用静态表取 locationCity。
-      const myPending = Object.values(game.passes)
-        .some(p => p.pending > 0 && p.owner === this.factionId);
-      if (myPending) return;
+    // BUG修复（ai.js V20.0 aiBuildPass 重复全表扫描）：
+    //   优化前：① 用 game.getFactionCities(this.factionId) 对全部城市做一次全表 filter；
+    //   ② 循环体内对「每一座城」都重算一次
+    //      `Object.values(game.passes).some(p => p.pending>0 && p.owner===this.factionId)`
+    //      ——这是 O(关隘数) 的扫描，却在每座城上重复一次，O(城市数×关隘数)。
+    //   且原写法一旦本势力已有在修关隘，理应直接 return，但它仍在每座城上重判。
+    //   修复：a) 用本回合缓存的 _turnCities 替代全表 filter；
+    //         b) 本势力是否已有在修关隘只在循环外算一次，命中即 return，不再重复扫描。
+    const myPending = Object.values(game.passes)
+      .some(p => p.pending > 0 && p.owner === this.factionId);
+    if (myPending) return;
+    for (const city of (this._turnCities || game.getFactionCities(this.factionId))) {
       // 找到该城可建的关隘（用静态表 locationCity 匹配）
       const target = Object.keys(game.passes).find(pid => {
         const rt = game.passes[pid];

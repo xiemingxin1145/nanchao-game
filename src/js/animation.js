@@ -130,6 +130,23 @@ export class CharacterAnimator {
     this._cultureBuildFX = null; // 文化建筑建成 {x,y,t,dur}
     this._cultureRiseFX = null;  // 文化值提升 {x,y,t,dur}
     this._v19FXCap = 3;        // 同时存活的 V19 覆盖层上限（同类型后到替换前到）
+
+    // ============================================================
+    // V20.0 — 动画与地图增强：自然灾害动画系统
+    // 设计：与 V15~V19 一致——play* 只写入 _disasterFXs 状态机 + 触发一次性粒子；
+    //      update(dt) 用真实时间推进 t；drawDisasterFX(ctx) 按 t/dur 渲染。
+    //      粒子仍走 _getParticle/_pushParticle 对象池，受 _maxParticles 上限保护；
+    //      灾害专属粒子另设 _disasterParticleBudget 预算，避免与战斗粒子争抢。
+    //      距离衰减：_disasterFocus={x,y} 为当前镜头/关注点，远离者透明度衰减。
+    // ============================================================
+    this._disasterFXs = [];        // 灾害FX列表 [{type,x,y,w,h,t,dur,seed,intensity}]
+    this._disasterFXCap = 8;       // 同时存活的灾害FX上限（超出淘汰最老）
+    this._disasterParticleBudget = 120; // 灾害专属粒子预算（独立于战斗粒子池统计）
+    this._disasterFocus = { x: 0, y: 0 };   // 距离衰减中心（map.js 每帧更新）
+    this._disasterFocusRadius = 600;       // 距离衰减半径（像素）
+    this._disasterShakeMag = 0;     // 地震期间持续震屏强度（draw 时由 map.js 读取）
+    this._disasterShakeDur = 0;     // 剩余震屏时间（真实秒）
+    this._disasterEmitAcc = 0;     // 灾害持续粒子生成累计器（按 dt 节流）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -524,6 +541,10 @@ export class CharacterAnimator {
       this._cultureRiseFX.t += deltaTime;
       if (this._cultureRiseFX.t >= this._cultureRiseFX.dur) this._cultureRiseFX = null;
     }
+    // ---- V20.0：灾害 FX 时间线推进（真实时间，不受慢动作影响）----
+    this._updateDisasterFXs(deltaTime);
+    // 地震持续震屏衰减
+    if (this._disasterShakeDur > 0) this._disasterShakeDur -= deltaTime;
     // 士气条淡入淡出推进
     for (const [k, m] of this._moraleBars) {
       m.t += deltaTime;
@@ -1578,6 +1599,111 @@ export class CharacterAnimator {
         ctx.fillStyle = extra.color || '#ffffff';
         ctx.beginPath();
         ctx.ellipse(x, y, extra.size, extra.size * 0.6, (extra.seed || 0) * 0.1, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      // ---- V20.0 灾害粒子绘制 ----
+      case 'quake_debris': {
+        // 地震碎石：旋转小方块
+        ctx.globalAlpha = t;
+        ctx.fillStyle = extra.color || '#6a5a48';
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate((extra.seed || 0) + this.time * 8);
+        ctx.fillRect(-extra.size / 2, -extra.size / 2, extra.size, extra.size);
+        ctx.restore();
+        break;
+      }
+      case 'flood_float': {
+        // 洪水漂浮物：小木板（棕色椭圆，随波起伏）
+        ctx.globalAlpha = t * 0.9;
+        ctx.fillStyle = extra.color || '#7a5a3a';
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.sin(this.time * 2 + (extra.seed || 0)) * 0.3);
+        ctx.beginPath();
+        ctx.ellipse(0, 0, extra.size * 1.4, extra.size * 0.5, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'drought_wither': {
+        // 干旱枯黄：小枯草叶（黄褐色，旋转下落）
+        ctx.globalAlpha = t * 0.85;
+        ctx.fillStyle = extra.color || '#b89a4a';
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate((extra.seed || 0) + this.time * 3);
+        ctx.beginPath();
+        ctx.moveTo(0, -extra.size);
+        ctx.quadraticCurveTo(extra.size * 0.5, 0, 0, extra.size);
+        ctx.quadraticCurveTo(-extra.size * 0.5, 0, 0, -extra.size);
+        ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'plague_mist': {
+        // 瘟疫毒雾：绿色半透明团
+        ctx.globalAlpha = t * 0.7;
+        ctx.fillStyle = extra.color || 'rgba(90,200,90,0.5)';
+        ctx.beginPath();
+        ctx.arc(x, y, extra.size * (1.2 - t * 0.4), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'plague_sick': {
+        // 病弱士兵：绿色踉跄小人
+        ctx.globalAlpha = t * 0.85;
+        ctx.fillStyle = extra.color || '#6aaa5a';
+        ctx.save();
+        ctx.translate(x, y);
+        // 踉跄左右摇晃
+        ctx.rotate(Math.sin(this.time * 3 + (extra.seed || 0)) * 0.25);
+        // 头
+        ctx.beginPath(); ctx.arc(0, -extra.size * 1.6, extra.size * 0.5, 0, Math.PI * 2); ctx.fill();
+        // 身体（佝偻）
+        ctx.beginPath();
+        ctx.moveTo(-extra.size * 0.6, -extra.size);
+        ctx.quadraticCurveTo(0, extra.size * 0.2, extra.size * 0.6, -extra.size * 0.6);
+        ctx.lineTo(extra.size * 0.6, extra.size);
+        ctx.lineTo(-extra.size * 0.6, extra.size);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'locust_bug': {
+        // 蝗虫：深色小飞虫（双翅震动）
+        ctx.globalAlpha = t;
+        ctx.fillStyle = extra.color || '#5a4a2a';
+        const wing = Math.sin(this.time * 40 + (extra.seed || 0)) * 0.6 + 0.6;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(extra.vx > 0 ? 0 : Math.PI);
+        // 身体
+        ctx.beginPath(); ctx.ellipse(0, 0, extra.size, extra.size * 0.4, 0, 0, Math.PI * 2); ctx.fill();
+        // 翅膀（震动）
+        ctx.fillStyle = 'rgba(180,160,100,0.7)';
+        ctx.beginPath();
+        ctx.ellipse(-extra.size * 0.2, -extra.size * 0.4 * wing, extra.size * 0.7, extra.size * 0.5 * wing, -0.4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        break;
+      }
+      case 'snowstorm_fog': {
+        // 暴风雪冰雾：淡青白弥漫
+        ctx.globalAlpha = t * 0.6;
+        ctx.fillStyle = extra.color || 'rgba(220,240,255,0.35)';
+        ctx.beginPath();
+        ctx.arc(x, y, extra.size * (1.3 - t * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+      case 'snowstorm_flake': {
+        // 暴风雪大雪花：白色六角/圆点，摇摆下落
+        ctx.globalAlpha = t * 0.95;
+        ctx.fillStyle = extra.color || '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x + Math.sin(this.time * 2 + (extra.seed || 0)) * 3, y, extra.size, 0, Math.PI * 2);
         ctx.fill();
         break;
       }
@@ -5317,6 +5443,483 @@ export class CharacterAnimator {
           break;
       }
     }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V20.0 — 动画与地图增强：自然灾害动画系统
+  // ------------------------------------------------------------
+  // 公共 API（5 个必备 + 1 个暴雪辅助）：
+  //   playEarthquake(ctx, w, h)  地震：全屏地面震动+裂缝+建筑摇晃+碎石
+  //   playFlood(ctx, x, y)       洪水：水流涌入+波纹+漂浮物
+  //   playDrought(ctx, x, y)     干旱：土地干裂+枯黄植物
+  //   playPlague(ctx, x, y)      瘟疫：绿色雾气+病弱士兵
+  //   playLocust(ctx, w, h)      蝗灾：蝗虫群遮天蔽日
+  //   playSnowstorm(ctx, w, h)   暴风雪：雪花加大+冰雾
+  // 性能：粒子走对象池 _getParticle/_pushParticle；灾害 FX 列表上限 8；
+  //       灾害专属粒子预算 120；距离衰减按 _disasterFocus 计算；
+  //       持续粒子生成按 dt 节流，避免每帧瞬时爆发。
+  // ============================================================
+
+  // 由 map.js 每帧调用：设置灾害效果距离衰减中心与半径
+  setDisasterFocus(x, y, radius) {
+    this._disasterFocus.x = x || 0;
+    this._disasterFocus.y = y || 0;
+    if (radius && radius > 0) this._disasterFocusRadius = radius;
+  }
+
+  // 距离衰减系数：0（远）~1（近焦点）。无焦点信息时恒为 1。
+  _disasterIntensityAt(x, y) {
+    const dx = x - this._disasterFocus.x;
+    const dy = y - this._disasterFocus.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const r = this._disasterFocusRadius || 600;
+    const f = 1 - d / r;
+    return f < 0 ? 0 : (f > 1 ? 1 : f);
+  }
+
+  // 推入灾害 FX（带上限保护，超出淘汰最老）
+  _pushDisasterFX(fx) {
+    if (this._disasterFXs.length >= this._disasterFXCap) this._disasterFXs.shift();
+    fx.t = 0;
+    if (fx.seed == null) fx.seed = Math.random() * 1000;
+    if (fx.intensity == null) fx.intensity = 1;
+    this._disasterFXs.push(fx);
+  }
+
+  // 剩余震屏偏移（地震期间）。无震屏返回 0。
+  getDisasterShakeOffset() {
+    if (this._disasterShakeDur <= 0) return { dx: 0, dy: 0 };
+    const decay = Math.max(0, this._disasterShakeDur);
+    const m = this._disasterShakeMag * decay;
+    return { dx: (Math.random() * 2 - 1) * m, dy: (Math.random() * 2 - 1) * m };
+  }
+
+  // ---- 地震：全屏震动 + 地面裂缝 + 建筑摇晃 + 碎石飞溅 ----
+  // w/h：画布尺寸。震屏 1.2s，裂缝 FX 持续 2.5s，碎石一次性爆发。
+  playEarthquake(ctx, w, h) {
+    w = w || 900; h = h || 600;
+    this._pushDisasterFX({ type: 'earthquake', x: w / 2, y: h / 2, w, h, dur: 2.5 });
+    // 震屏
+    this._disasterShakeMag = 4;
+    this._disasterShakeDur = 1.2;
+    // 碎石飞溅（地面烟尘 + 土块）
+    const cx = w / 2, cy = h / 2;
+    for (let i = 0; i < 18; i++) {
+      const s = this._getParticle();
+      const a = Math.random() * Math.PI * 2;
+      const sp = 40 + Math.random() * 90;
+      Object.assign(s, { type: 'quake_debris',
+        x: cx + (Math.random() - 0.5) * w * 0.6,
+        y: cy + (Math.random() - 0.5) * h * 0.4,
+        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 80,
+        gravity: 220, drag: 0.5,
+        life: 0.8 + Math.random() * 0.6, maxLife: 1.4,
+        size: 2 + Math.random() * 3.5,
+        color: Math.random() < 0.5 ? '#6a5a48' : '#8a7a66',
+        seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+    // 地面烟尘
+    for (let i = 0; i < 10; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'dust',
+        x: Math.random() * w, y: h * 0.6 + Math.random() * h * 0.3,
+        vx: (Math.random() - 0.5) * 30, vy: -20 - Math.random() * 25,
+        gravity: -5, drag: 0.3,
+        life: 0.9 + Math.random() * 0.6, maxLife: 1.5,
+        size: 6 + Math.random() * 8, color: '#7a6a55' });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 洪水：水流涌入 + 波纹扩散 + 漂浮物 ----
+  // x,y：洪水中心（通常是被淹城市屏幕坐标）。
+  playFlood(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushDisasterFX({ type: 'flood', x, y, dur: 3.5 });
+    // 初始水涌：一圈扩散波纹 + 水花
+    for (let i = 0; i < 4; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'ripple',
+        x, y: y + i * 2, vx: 0, vy: 0,
+        gravity: 0, drag: 0,
+        life: 1.4 + i * 0.3, maxLife: 1.4 + i * 0.3,
+        size: 8 + i * 6, color: '#4a9ad8' });
+      this._pushParticle(s);
+    }
+    // 漂浮木/物
+    for (let i = 0; i < 6; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'flood_float',
+        x: x + (Math.random() - 0.5) * 60,
+        y: y + (Math.random() - 0.5) * 20,
+        vx: (Math.random() - 0.5) * 24, vy: -4 - Math.random() * 6,
+        gravity: 0, drag: 0.1,
+        life: 2.5 + Math.random(), maxLife: 3.5,
+        size: 3 + Math.random() * 4, color: '#7a5a3a',
+        seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 干旱：土地干裂 + 枯黄植物 ----
+  // x,y：干旱中心。
+  playDrought(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushDisasterFX({ type: 'drought', x, y, dur: 4.0 });
+    // 干裂扬尘（暖黄色，缓慢上升）
+    for (let i = 0; i < 8; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'drought_wither',
+        x: x + (Math.random() - 0.5) * 50,
+        y: y + (Math.random() - 0.5) * 30,
+        vx: (Math.random() - 0.5) * 12, vy: -6 - Math.random() * 8,
+        gravity: -2, drag: 0.2,
+        life: 2.0 + Math.random() * 1.2, maxLife: 3.2,
+        size: 2 + Math.random() * 3,
+        color: Math.random() < 0.5 ? '#b89a4a' : '#8a6a2a',
+        seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 瘟疫：绿色雾气 + 病弱士兵 ----
+  // x,y：瘟疫中心（城市坐标）。
+  playPlague(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushDisasterFX({ type: 'plague', x, y, dur: 4.5 });
+    // 绿色毒雾（半透明，上升飘散）
+    for (let i = 0; i < 10; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'plague_mist',
+        x: x + (Math.random() - 0.5) * 40,
+        y: y + (Math.random() - 0.5) * 10,
+        vx: (Math.random() - 0.5) * 14, vy: -14 - Math.random() * 10,
+        gravity: -4, drag: 0.15,
+        life: 2.2 + Math.random() * 1.5, maxLife: 3.7,
+        size: 10 + Math.random() * 12,
+        color: Math.random() < 0.5 ? 'rgba(90,200,90,0.55)' : 'rgba(120,220,120,0.45)' });
+      this._pushParticle(s);
+    }
+    // 病弱士兵（绿色半透明小人，踉跄）
+    for (let i = 0; i < 5; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'plague_sick',
+        x: x + (Math.random() - 0.5) * 30,
+        y: y + (Math.random() - 0.5) * 12,
+        vx: (Math.random() - 0.5) * 16, vy: -2 - Math.random() * 4,
+        gravity: 0, drag: 0.2,
+        life: 2.5 + Math.random(), maxLife: 3.5,
+        size: 2.4, color: '#6aaa5a', seed: Math.random() * 100 });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 蝗灾：蝗虫群遮天蔽日 ----
+  // w/h：画布尺寸。蝗虫从一侧横扫，遮顶。
+  playLocust(ctx, w, h) {
+    w = w || 900; h = h || 600;
+    this._pushDisasterFX({ type: 'locust', x: w / 2, y: h / 3, w, h, dur: 5.0 });
+    // 初始虫群一次性铺满屏幕上半部
+    this._spawnLocustBurst(w, h, 24);
+  }
+
+  // ---- 暴风雪：雪花加大 + 冰雾 ----
+  // w/h：画布尺寸。
+  playSnowstorm(ctx, w, h) {
+    w = w || 900; h = h || 600;
+    this._pushDisasterFX({ type: 'snowstorm', x: w / 2, y: h / 2, w, h, dur: 4.5 });
+    // 冰雾（淡青白色，弥漫）
+    for (let i = 0; i < 10; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'snowstorm_fog',
+        x: Math.random() * w, y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 20, vy: (Math.random() - 0.5) * 8,
+        gravity: 0, drag: 0.05,
+        life: 2.5 + Math.random() * 1.5, maxLife: 4.0,
+        size: 14 + Math.random() * 16, color: 'rgba(220,240,255,0.35)' });
+      this._pushParticle(s);
+    }
+  }
+
+  // 蝗虫爆发一波（从左向右飞入，遮顶）
+  _spawnLocustBurst(w, h, count) {
+    count = Math.min(count, 30); // 单次硬上限
+    for (let i = 0; i < count; i++) {
+      const s = this._getParticle();
+      Object.assign(s, { type: 'locust_bug',
+        x: -10 - Math.random() * 60,
+        y: Math.random() * h * 0.55,
+        vx: 180 + Math.random() * 140,
+        vy: (Math.random() - 0.5) * 40,
+        gravity: 0, drag: 0,
+        life: 3.5 + Math.random() * 1.5, maxLife: 5.0,
+        size: 1.8 + Math.random() * 2.2,
+        color: Math.random() < 0.5 ? '#5a4a2a' : '#7a6a3a',
+        seed: Math.random() * 100 });
+      this._pushParticle(s);
+    }
+  }
+
+  // 灾害 FX 时间线推进 + 持续粒子生成（按 dt 节流）
+  _updateDisasterFXs(dt) {
+    if (!dt || dt <= 0) return;
+    for (let i = this._disasterFXs.length - 1; i >= 0; i--) {
+      const fx = this._disasterFXs[i];
+      fx.t += dt;
+      if (fx.t >= fx.dur) { this._disasterFXs.splice(i, 1); continue; }
+      // 距离衰减：远离焦点则降低生成速率与强度
+      const inten = fx.intensity * this._disasterIntensityAt(fx.x, fx.y);
+      if (inten <= 0.05) continue;
+      // 持续粒子生成（按 dt 节流，每 ~0.12s 生成一批）
+      this._disasterEmitAcc += dt * inten;
+      const step = 0.12;
+      if (this._disasterEmitAcc >= step) {
+        this._disasterEmitAcc = 0;
+        this._spawnDisasterAmbient(fx, inten);
+      }
+    }
+  }
+
+  // 按 FX 类型生成持续灾害氛围粒子
+  _spawnDisasterAmbient(fx, inten) {
+    const cap = this._disasterParticleBudget;
+    // 估算灾害粒子数量（粗略）：只统计 _disaster 标记粒子
+    let counted = 0;
+    for (const p of this.particles) {
+      if (p._disaster) counted++;
+    }
+    if (counted >= cap) return;
+    const n = Math.max(1, Math.round(2 * inten));
+    switch (fx.type) {
+      case 'earthquake': {
+        // 余震碎石
+        for (let k = 0; k < n; k++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'quake_debris', _disaster: true,
+            x: fx.x + (Math.random() - 0.5) * fx.w * 0.7,
+            y: fx.y + (Math.random() - 0.5) * fx.h * 0.3,
+            vx: (Math.random() - 0.5) * 80, vy: -60 - Math.random() * 60,
+            gravity: 200, drag: 0.4,
+            life: 0.6 + Math.random() * 0.5, maxLife: 1.1,
+            size: 1.5 + Math.random() * 2.5, color: '#6a5a48', seed: Math.random() * 10 });
+          this._pushParticle(s);
+        }
+        break;
+      }
+      case 'flood': {
+        // 持续波纹
+        for (let k = 0; k < n; k++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'ripple', _disaster: true,
+            x: fx.x + (Math.random() - 0.5) * 30,
+            y: fx.y + (Math.random() - 0.5) * 10,
+            vx: 0, vy: 0, gravity: 0, drag: 0,
+            life: 1.2 + Math.random() * 0.6, maxLife: 1.8,
+            size: 6 + Math.random() * 8, color: '#4a9ad8' });
+          this._pushParticle(s);
+        }
+        break;
+      }
+      case 'drought': {
+        // 干裂扬尘
+        for (let k = 0; k < n; k++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'drought_wither', _disaster: true,
+            x: fx.x + (Math.random() - 0.5) * 40,
+            y: fx.y + (Math.random() - 0.5) * 20,
+            vx: (Math.random() - 0.5) * 10, vy: -4 - Math.random() * 6,
+            gravity: -1, drag: 0.2,
+            life: 1.6 + Math.random() * 1.0, maxLife: 2.6,
+            size: 1.5 + Math.random() * 2.5,
+            color: Math.random() < 0.5 ? '#b89a4a' : '#8a6a2a',
+            seed: Math.random() * 10 });
+          this._pushParticle(s);
+        }
+        break;
+      }
+      case 'plague': {
+        // 毒雾
+        for (let k = 0; k < n; k++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'plague_mist', _disaster: true,
+            x: fx.x + (Math.random() - 0.5) * 36,
+            y: fx.y + (Math.random() - 0.5) * 8,
+            vx: (Math.random() - 0.5) * 10, vy: -10 - Math.random() * 8,
+            gravity: -3, drag: 0.15,
+            life: 1.8 + Math.random() * 1.2, maxLife: 3.0,
+            size: 8 + Math.random() * 10,
+            color: Math.random() < 0.5 ? 'rgba(90,200,90,0.5)' : 'rgba(120,220,120,0.4)' });
+          this._pushParticle(s);
+        }
+        break;
+      }
+      case 'locust': {
+        // 持续补虫（从左入）
+        this._spawnLocustBurst(fx.w, fx.h, Math.max(1, Math.round(3 * inten)));
+        break;
+      }
+      case 'snowstorm': {
+        // 加大雪花 + 冰雾
+        for (let k = 0; k < n; k++) {
+          const s = this._getParticle();
+          Object.assign(s, { type: 'snowstorm_flake', _disaster: true,
+            x: Math.random() * fx.w, y: -8,
+            vx: -30 - Math.random() * 30, vy: 120 + Math.random() * 80,
+            gravity: 0, drag: 0,
+            life: 3 + Math.random() * 2, maxLife: 5,
+            size: 2.5 + Math.random() * 3.5, color: '#ffffff',
+            seed: Math.random() * 100 });
+          this._pushParticle(s);
+        }
+        break;
+      }
+    }
+  }
+
+  // ---- 绘制所有激活的灾害 FX（外部 render 循环调用）----
+  drawDisasterFX(ctx) {
+    if (!ctx || this._disasterFXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._disasterFXs) {
+      const p = fx.t / fx.dur;
+      if (p < 0 || p > 1) continue;
+      const inten = fx.intensity * this._disasterIntensityAt(fx.x, fx.y);
+      if (inten <= 0.03) continue;
+      switch (fx.type) {
+        case 'earthquake': this._drawQuakeGround(ctx, fx, p, inten); break;
+        case 'flood': this._drawFloodWater(ctx, fx, p, inten); break;
+        case 'drought': this._drawDroughtCrack(ctx, fx, p, inten); break;
+        case 'plague': this._drawPlagueMist(ctx, fx, p, inten); break;
+        case 'locust': this._drawLocustSky(ctx, fx, p, inten); break;
+        case 'snowstorm': this._drawSnowstormFog(ctx, fx, p, inten); break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 地震：地面裂缝（锯齿折线从中心蔓延）+ 红色警示尘幕
+  _drawQuakeGround(ctx, fx, p, inten) {
+    const alpha = (p < 0.7 ? 1 : 1 - (p - 0.7) / 0.3) * 0.8 * inten;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.strokeStyle = 'rgba(30,20,10,0.9)';
+    ctx.lineWidth = 2.5;
+    const cx = fx.x, cy = fx.y;
+    const maxR = Math.min(fx.w, fx.h) * 0.35 * p;
+    for (let b = 0; b < 4; b++) {
+      const ang = (b / 4) * Math.PI * 2 + fx.seed;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      let lx = cx, ly = cy;
+      for (let i = 1; i <= 5; i++) {
+        const f = i / 5;
+        lx = cx + Math.cos(ang) * maxR * f + Math.sin(fx.seed + b * 3 + i * 1.7) * 6;
+        ly = cy + Math.sin(ang) * maxR * f + Math.cos(fx.seed + b * 2 + i) * 6;
+        ctx.lineTo(lx, ly);
+      }
+      ctx.stroke();
+    }
+    // 建筑摇晃提示：中心区域轻微抖动矩形
+    ctx.strokeStyle = 'rgba(80,50,30,0.6)';
+    ctx.lineWidth = 1.5;
+    const jx = (Math.random() - 0.5) * 3 * inten;
+    const jy = (Math.random() - 0.5) * 2 * inten;
+    ctx.strokeRect(cx - 14 + jx, cy - 18 + jy, 28, 22);
+    ctx.restore();
+  }
+
+  // 洪水：蓝色半透明水幕覆盖 + 边缘波纹
+  _drawFloodWater(ctx, fx, p, inten) {
+    const alpha = Math.min(0.55, p * 0.8) * inten;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const g = ctx.createRadialGradient(fx.x, fx.y, 4, fx.x, fx.y, 70);
+    g.addColorStop(0, 'rgba(80,160,220,0.85)');
+    g.addColorStop(1, 'rgba(60,130,200,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, 70, 0, Math.PI * 2); ctx.fill();
+    // 边缘流动波纹
+    ctx.globalAlpha = alpha * 0.9;
+    ctx.strokeStyle = '#a8d8f0';
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 2; i++) {
+      const rr = 24 + i * 18 + Math.sin(this.time * 4 + i) * 3;
+      ctx.beginPath();
+      ctx.ellipse(fx.x, fx.y, rr, rr * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 干旱：棕色龟裂地面（网状裂纹）+ 枯黄光斑
+  _drawDroughtCrack(ctx, fx, p, inten) {
+    const alpha = (0.4 + p * 0.4) * inten;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    // 地面枯黄底色
+    ctx.fillStyle = 'rgba(180,140,70,0.35)';
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y, 46, 18, 0, 0, Math.PI * 2); ctx.fill();
+    // 网状干裂
+    ctx.strokeStyle = 'rgba(80,50,20,0.8)';
+    ctx.lineWidth = 1.2;
+    for (let b = 0; b < 5; b++) {
+      const ang = (b / 5) * Math.PI * 2 + fx.seed;
+      ctx.beginPath();
+      ctx.moveTo(fx.x, fx.y);
+      let lx = fx.x, ly = fx.y;
+      for (let i = 1; i <= 3; i++) {
+        lx = fx.x + Math.cos(ang) * (10 + i * 8) + Math.sin(fx.seed + b * 2 + i) * 3;
+        ly = fx.y + Math.sin(ang) * (4 + i * 4) + Math.cos(fx.seed + b + i) * 2;
+        ctx.lineTo(lx, ly);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 瘟疫：绿色雾气笼罩（多层半透明绿团）
+  _drawPlagueMist(ctx, fx, p, inten) {
+    const alpha = (0.35 + 0.3 * Math.sin(this.time * 2 + fx.seed)) * inten;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0.15, alpha);
+    for (let i = 0; i < 4; i++) {
+      const r = 14 + i * 8;
+      const ox = Math.sin(this.time * 1.2 + i * 1.3 + fx.seed) * 6;
+      const oy = -i * 4;
+      const g = ctx.createRadialGradient(fx.x + ox, fx.y + oy, 2, fx.x + ox, fx.y + oy, r);
+      g.addColorStop(0, 'rgba(90,200,90,0.5)');
+      g.addColorStop(1, 'rgba(60,160,60,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(fx.x + ox, fx.y + oy, r, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // 蝗灾：顶部深色遮幕 + 飞掠阴影
+  _drawLocustSky(ctx, fx, p, inten) {
+    // 遮顶暗幕（从顶部向下渐隐）
+    const alpha = Math.sin(p * Math.PI) * 0.35 * inten;
+    ctx.save();
+    const g = ctx.createLinearGradient(0, 0, 0, fx.h * 0.6);
+    g.addColorStop(0, `rgba(40,30,10,${alpha})`);
+    g.addColorStop(1, 'rgba(40,30,10,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, fx.w, fx.h * 0.6);
+    ctx.restore();
+  }
+
+  // 暴风雪：淡青白弥漫雾层
+  _drawSnowstormFog(ctx, fx, p, inten) {
+    const alpha = 0.18 * inten;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    const g = ctx.createRadialGradient(fx.x, fx.y, 10, fx.x, fx.y, Math.min(fx.w, fx.h) * 0.6);
+    g.addColorStop(0, 'rgba(230,245,255,0.6)');
+    g.addColorStop(1, 'rgba(230,245,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, Math.min(fx.w, fx.h) * 0.6, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
   }
 }

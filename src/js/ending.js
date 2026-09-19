@@ -293,6 +293,57 @@ export const ENDINGS = [
       } catch (e) { return false; }
     },
     achievement: 'v19_tech_all'
+  },
+
+  // V20.0 新增：盛世太平（S）— 民生安定、户口殷盛、无灾无害
+  {
+    id: 'v20_peace_and_prosperity', name: '盛世太平', rank: 'S',
+    text: '临御数十年，轻徭薄赋，兴水利、设义仓、置医药，民蕃息而蓄积饶。' +
+          '虽水旱蝗疫间作，皆先发仓廪以赈之，民无菜色，道不拾遗。' +
+          '州郡上计，户口岁增，囹圄屡空。耆老扶杖而言曰：' +
+          "『不图今日复见汉武、文景之盛。』史臣曰：" +
+          '三代而下，治日常少，乱日常多。若乃四海晏然、家给人足者，其惟『盛世太平』乎。',
+    condition: (game) => {
+      try {
+        if (game.turn < 80) return false;
+        const cities = game.getFactionCities(game.playerFaction) || [];
+        if (cities.length < 8) return false;
+        // 所有城池民心平均 ≥75
+        const avgMorale = cities.reduce((s, c) => s + (c.morale || 0), 0) / cities.length;
+        if (avgMorale < 75) return false;
+        // 无活跃重大灾害
+        const active = game.disasterSystem ? (game.disasterSystem.activeDisasters || []) : [];
+        if (active.length > 0) return false;
+        // 人口保持正增长（累计自然增长为正）
+        const growth = game.populationSystem?.stats?.naturalGrowth || 0;
+        if (growth < 10000) return false;
+        // 粮食储备充足
+        const res = game.getPlayerRes ? game.getPlayerRes() : null;
+        return res && res.food >= 30000;
+      } catch (e) { return false; }
+    },
+    achievement: 'v20_pop_conservation'
+  },
+
+  // V20.0 新增：灾害克星（A）— 遍历六灾而赈灾有方
+  {
+    id: 'v20_disaster_nemesis', name: '灾害克星', rank: 'A',
+    text: '自践祚以来，地震山崩、江河横溢、赤地千里、疫疠流行、飞蝗蔽野、风雪断道，' +
+          '六灾叠至，而皆有以御之：缮堤防以捍水，平斛仓以济荒，建医药以已疫，' +
+          '固城堑以止震。朝廷每闻灾，辄遣使持节发廪，吏民不知有凶岁。' +
+          '史臣曰：『天灾流行，何代无之。所贵乎人君者，备之豫而救之速耳。』' +
+          '若是者，其可以言『灾害克星』矣。',
+    condition: (game) => {
+      try {
+        if (!game.disasterSystem) return false;
+        const by = game.disasterSystem.stats?.byType || {};
+        const allSix = ['earthquake', 'flood', 'drought', 'plague', 'locust', 'blizzard']
+          .every(t => (by[t] || 0) >= 1);
+        const mitigated = game.disasterSystem.stats?.mitigated || 0;
+        return allSix && mitigated >= 20;
+      } catch (e) { return false; }
+    },
+    achievement: 'v20_disaster_types_all'
   }
 ];
 

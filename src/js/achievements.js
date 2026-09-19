@@ -741,6 +741,159 @@ export const ACHIEVEMENTS = [
         return { current: Math.min(5, n), total: 5 };
       } catch (e) { return { current: 0, total: 5 }; }
     }
+  },
+
+  // ==================== V20.0 新增（10 个 v20_ 前缀：灾害应对 + 人口管理） ====================
+  // ---- 灾害应对（5） ----
+  {
+    id: 'v20_disaster_first', name: "灾厄初临", icon: '⚠️', category: 'special', points: 20,
+    description: '境内首次遭遇任意一场自然灾害。', reward: { money: 1500 },
+    condition: (g) => {
+      try { return (g.disasterSystem?.stats?.triggered || 0) >= 1; } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(1, g.disasterSystem?.stats?.triggered || 0), total: 1 }; }
+      catch (e) { return { current: 0, total: 1 }; }
+    }
+  },
+  {
+    id: 'v20_disaster_mitigate_5', name: "开仓赈灾", icon: '🤝', category: 'economy', points: 30,
+    description: '累计成功救灾 5 次。', reward: { food: 2000 },
+    condition: (g) => {
+      try { return (g.disasterSystem?.stats?.mitigated || 0) >= 5; } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(5, g.disasterSystem?.stats?.mitigated || 0), total: 5 }; }
+      catch (e) { return { current: 0, total: 5 }; }
+    }
+  },
+  {
+    id: 'v20_disaster_mitigate_20', name: "济世良牧", icon: '⛑️', category: 'economy', points: 40,
+    description: '累计成功救灾 20 次。', reward: { money: 4000, title: '济世良牧' },
+    condition: (g) => {
+      try { return (g.disasterSystem?.stats?.mitigated || 0) >= 20; } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(20, g.disasterSystem?.stats?.mitigated || 0), total: 20 }; }
+      catch (e) { return { current: 0, total: 20 }; }
+    }
+  },
+  {
+    id: 'v20_disaster_infra', name: "防灾完备", icon: '🛡️', category: 'economy', points: 40,
+    description: '一座城同时具备水利、粮仓、医药与城墙（灾害减免体系齐备）。', reward: { money: 3000 },
+    condition: (g) => {
+      try {
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        return cities.some(c => {
+          const bs = c.buildings || {};
+          const hasGranary = Object.keys(bs).some(b => /granary|gran|warehouse|store/i.test(b));
+          const hasMed = Object.keys(bs).some(b => /medical|medic|pharm|clinic|hospital/i.test(b));
+          return (c.waterConservancy || 0) >= 40 && hasGranary && hasMed &&
+            (c.getEffectiveDefense ? c.getEffectiveDefense() : (c.defense || 0)) >= 50;
+        });
+      } catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v20_disaster_types_all', name: "尝尽百灾", icon: '🌪️', category: 'special', points: 50,
+    description: '经历地震、洪水、干旱、瘟疫、蝗灾、暴风雪全部六种灾害。', reward: { bgm: 'dynasty', title: '历劫之主' },
+    condition: (g) => {
+      try {
+        const by = g.disasterSystem?.stats?.byType || {};
+        return ['earthquake', 'flood', 'drought', 'plague', 'locust', 'blizzard']
+          .every(t => (by[t] || 0) >= 1);
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const by = g.disasterSystem?.stats?.byType || {};
+        const hit = ['earthquake', 'flood', 'drought', 'plague', 'locust', 'blizzard']
+          .filter(t => (by[t] || 0) >= 1).length;
+        return { current: hit, total: 6 };
+      } catch (e) { return { current: 0, total: 6 }; }
+    }
+  },
+
+  // ---- 人口管理（5） ----
+  {
+    id: 'v20_pop_peak_50w', name: "户口殷盛", icon: '👨‍👩‍👧‍👦', category: 'economy', points: 30,
+    description: '势力总人口峰值达到 50 万。', reward: { food: 3000 },
+    condition: (g) => {
+      try { return (g.populationSystem?.stats?.totalPopPeak || 0) >= 500000; } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(500000, g.populationSystem?.stats?.totalPopPeak || 0), total: 500000 }; }
+      catch (e) { return { current: 0, total: 500000 }; }
+    }
+  },
+  {
+    id: 'v20_pop_peak_100w', name: "百万户口", icon: '🏙️', category: 'economy', points: 50,
+    description: '势力总人口峰值达到 100 万。', reward: { bgm: 'culture', title: '富庶之主' },
+    condition: (g) => {
+      try { return (g.populationSystem?.stats?.totalPopPeak || 0) >= 1000000; } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try { return { current: Math.min(1000000, g.populationSystem?.stats?.totalPopPeak || 0), total: 1000000 }; }
+      catch (e) { return { current: 0, total: 1000000 }; }
+    }
+  },
+  {
+    id: 'v20_pop_conservation', name: "爱民如子", icon: '🕊️', category: 'politics', points: 40,
+    description: '征兵比例全程克制（无一次过度征兵叛乱），且人口保持正增长。', reward: { money: 3000, title: '仁君' },
+    condition: (g) => {
+      try {
+        if (!g.populationSystem) return false;
+        if ((g.populationSystem.stats?.conscriptionRiots || 0) > 0) return false;
+        return (g.populationSystem.stats?.naturalGrowth || 0) >= 50000;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        return { current: Math.min(50000, g.populationSystem?.stats?.naturalGrowth || 0), total: 50000 };
+      } catch (e) { return { current: 0, total: 50000 }; }
+    }
+  },
+  {
+    id: 'v20_pop_migration', name: "招抚流亡", icon: '🚶', category: 'politics', points: 30,
+    description: '累计迁移人口过万（安置流民、充实内郡）。', reward: { food: 2500 },
+    condition: (g) => {
+      try { return (g.populationSystem?.stats?.migrationIn || 0) + (g.populationSystem?.stats?.migrationOut || 0) >= 10000; }
+      catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const n = (g.populationSystem?.stats?.migrationIn || 0) + (g.populationSystem?.stats?.migrationOut || 0);
+        return { current: Math.min(10000, n), total: 10000 };
+      } catch (e) { return { current: 0, total: 10000 }; }
+    }
+  },
+  {
+    id: 'v20_pop_plague_tamer', name: "疫病克星", icon: '⚕️', category: 'special', points: 40,
+    description: '医药体系完备（境内 3 座以上医药建筑）并成功救灾 10 次。', reward: { bgm: 'culture', title: '仁医名臣' },
+    condition: (g) => {
+      try {
+        if ((g.disasterSystem?.stats?.mitigated || 0) < 10) return false;
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        let med = 0;
+        for (const c of cities) {
+          const bs = c.buildings || {};
+          if (Object.keys(bs).some(b => /medical|medic|pharm|clinic|hospital/i.test(b))) med++;
+        }
+        return med >= 3;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const mit = Math.min(10, g.disasterSystem?.stats?.mitigated || 0);
+        const cities = g.getFactionCities(g.playerFaction) || [];
+        let med = 0;
+        for (const c of cities) {
+          const bs = c.buildings || {};
+          if (Object.keys(bs).some(b => /medical|medic|pharm|clinic|hospital/i.test(b))) med++;
+        }
+        return { current: mit + Math.min(3, med), total: 13 };
+      } catch (e) { return { current: 0, total: 13 }; }
+    }
   }
 ];
 

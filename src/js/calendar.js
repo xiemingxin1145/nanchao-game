@@ -139,7 +139,17 @@ export class CalendarSystem {
     const clamp = (v) => Math.max(0, Math.min(100, v));
 
     if (eff.moraleFlat) for (const c of cities) c.morale = clamp(c.morale + eff.moraleFlat);
-    if (eff.legitFlat && game.dynastySystem) game.dynastySystem.calcLegitimacy(game, game.playerFaction);
+    // BUG修复（calendar.js V20.0 异象正统加成失效）：原实现仅调用
+    //   game.dynastySystem.calcLegitimacy(...)——而该方法每回合按古都数/君主政治从头
+    //   重算正统（完全不读 eff.legitFlat），返回值又被丢弃，导致天象（如荧惑守心）
+    //   的正统减益/增益从未真正生效。与 applyTermEffects 中已修的同源 bug 一致。
+    //   修复：先按现状重算，再把本异象的 flat 加成叠加上去并钳制到 [0,100]；
+    //   该加成是当回合临时增益（下一回合 settleTurn 会再按现状重算，符合「天象示警」语义）。
+    if (eff.legitFlat && game.dynastySystem) {
+      const rec = game.dynastySystem.get(game.playerFaction);
+      const baseLegit = game.dynastySystem.calcLegitimacy(game, game.playerFaction);
+      if (rec) rec.legitimacy = clamp(baseLegit + eff.legitFlat);
+    }
     if (eff.milFlat) {
       const res = game.factionRes.get(game.playerFaction);
       res.totalMorale = clamp((res.totalMorale || 60) + eff.milFlat);
