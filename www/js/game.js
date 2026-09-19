@@ -681,7 +681,15 @@ export class Game {
 
   pushLog(text) {
     this.log.push(`[${this.turn}.${this.getSeason()}] ${text}`);
-    if (this.log.length > 200) this.log.shift();
+    // BUG修复（game.js V22.0 pushLog 运行时上限与存档截断阈值不一致）：
+    //   基准：原写法运行时 log 只保留最近 200 条；而 save.js 落盘时按条数截断用的是
+    //     「500/150/120/100」多级阈值——由于运行时 log 最多 200 条，save.js 中
+    //     `log.length > 500` 与 `> 150` 两个分支永远不成立，长局存档的「按条数瘦身」
+    //     逻辑沦为死代码（实际只有 catch 里的 100 条兜底会触发）。
+    //   修复：把运行时上限提高到 500 条，与 save.js 存档截断阈值对齐——
+    //     长局存档可保留更多历史日志，save.js 的多级截断分支真正生效。
+    //   内存：每条日志约 50~80 字符，500 条约 25~40KB，可忽略。
+    if (this.log.length > 500) this.log.shift();
   }
 
   // ---------- 科技加成汇总（供 city / army 查询） ----------
@@ -2242,7 +2250,14 @@ export class Game {
     if (this.garrisonBuffTurns > 0) this.garrisonBuffTurns--;
 
     // V2.0：每城建筑工令重置（新回合可继续建造/升级）
-    for (const city of this.cities.values()) city.buildingThisTurn = false;
+    // 性能优化（game.js V22.0·132城后回合结算）：
+    //   基准：原写法 `for (const city of this.cities.values())` 遍历全部 132 城
+    //   （含无主空城）重置 buildingThisTurn。无主空城 buildingThisTurn 恒为 false，
+    //   纯属浪费。settleTurn 入口已建好 fidCities（只含有主城市），此处复用。
+    //   预期：132 城规模下，无主空城（开局/灭国遗留常占 10~30 座）不再每回合空转。
+    for (const cities of fidCities.values()) {
+      for (const city of cities) city.buildingThisTurn = false;
+    }
     // V2.0：军队待进阶整训推进
     for (const army of this.armies) {
       const done = army.endTurn();
@@ -2313,9 +2328,34 @@ export class Game {
           //   原写法只置 faction=null，未清理 inArmy/office。下野武将仍挂在某支
           //   军队的 generalId 上、仍领某官职——下回合该军队继续由一个已无归属的
           //   「在野武将」统率，势力归属错乱；官职也不卸任。修复：下野时一并卸下。
-          gen.inArmy = null;
+          // BUG修复（game.js V22.0 下野武将悬空军队/市长/外交状态）：
+          //   基准：原写法只清 inArmy/office/location，但下野武将可能：
+          //   (a) 正统率一支军队（gen.inArmy=armyId）——只清 gen.inArmy 字段，
+          //       该 army 仍留在 game.armies 且 army.generalId 仍指向已下野武将，
+          //       下回合结算/战斗 findDefenderGeneral 会拿到一个 faction=null 的「无将之师」；
+          //   (b) 曾任某城市市长（city.mayor=gen.id）——下野后该城守将悬空；
+          //   (c) 仍挂 onHostage/onMission（为质/出使中）——外交层继续把他当人质。
+          //   修复：下野时一并 (a) 把其统率军队的兵力并入所在城市城防并从军队列表移除；
+          //   (b) 清理所有以他为 mayor 的城市；(c) 清掉外交在途标记。
+          // (a) 回收其统率的军队（兵力并入所在城市城防，避免无将军队悬空）
+          if (gen.inArmy) {
+            const orphan = this.armies.find(a => a.id === gen.inArmy);
+            if (orphan) {
+              const oc = this.cities.get(orphan.cityId);
+              if (oc) oc.garrison += orphan.troops;
+              orphan.destroyed = true;
+            }
+            gen.inArmy = null;
+          }
           gen.office = null;
           gen.location = null;
+          // (b) 清理以该武将为市长的城市（避免守将悬空指向无主武将）
+          for (const c of this.cities.values()) {
+            if (c.mayor === gen.id) c.mayor = null;
+          }
+          // (c) 清理外交在途状态（为质/出使中武将下野，不再算本势力人质/使臣）
+          gen.onHostage = false;
+          gen.onMission = false;
           this.pushLog(`${gen.name} 因忠诚过低下野而去！`);
         }
       }

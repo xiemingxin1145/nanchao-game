@@ -389,6 +389,54 @@ export const ENDINGS = [
       } catch (e) { return false; }
     },
     achievement: 'v21_marriage_3'
+  },
+
+  // V22.0.0 新增：科举盛世（S）— 开科取士、翰林得人、文章雍容
+  {
+    id: 'v22_exam_heyday', name: '科举盛世', rank: 'S',
+    text: '自晋氏渡江，官以阀阅取人，士无乡举里选之实。陛下慨然复古，' +
+          '建进士之科，策问于廷。三岁一开，州郡荐士云集，礼部较其甲乙，' +
+          '天子亲策于前。于是状元修书翰苑，榜眼探花分隶馆阁，同年之谊，' +
+          '骈列于朝。寒素之门，白衣而至公卿；膏粱之胄，不得复以世及自高。' +
+          '太学弦歌，京邑揖让，天下之士，括囊以须，曰「天子待我以不次」。' +
+          '史臣曰：西汉公卿多出吏，东京名士举于里。至于隋唐，进士为将相者' +
+          '接踵。陛下肇开其端，治具毕张，文治之盛，不其韪欤。',
+    condition: (game) => {
+      try {
+        const sys = game.imperialExam;
+        if (!sys) return false;
+        const st = sys.v22_stats || {};
+        const hanlin = (sys.v22_hanlin || []).length;
+        return (sys.examCount || 0) >= 6 && (st.zhuangyuan || 0) >= 4 && hanlin >= 3;
+      } catch (e) { return false; }
+    },
+    achievement: 'v22_zhuangyuan_5'
+  },
+
+  // V22.0.0 新增：选官清明（A）— 考课黜陟、举无偏党、吏治澄清
+  {
+    id: 'v22_clean_officialdom', name: '选官清明', rank: 'A',
+    text: '陛下临御，患铨曹之不平、阀阅之专私也，乃立考课之令：' +
+          '三岁一考，考其殿最，上等则进秩，下等则左降。又严科场之禁，' +
+          '关节不行，怀挟有禁。州郡察举，必核行能；中正品人，不专门第。' +
+          '于是士之修于家者，不患不知；吏之黩于官者，无所容。' +
+          '朝无幸位，野无遗贤，贤能者汇升，贪懦者叠贬。' +
+          '史臣曰：「为政在人，取人以身。」官得其任，事无不治。' +
+          '若乃考课克举、铨综平允，虽汉之京兆（司直），何以加焉。',
+    condition: (game) => {
+      try {
+        const sys = game.imperialExam;
+        if (!sys) return false;
+        const st = sys.v22_stats || {};
+        // 晋升≥5、贬官≤2、从未破获舞弊（即风纪整肃）、以科举取士
+        const promoted = st.promoted || 0;
+        const demoted = st.demoted || 0;
+        const fraud = st.fraudCaught || 0;
+        const mode = sys.v22_recruitMode || 'keju';
+        return promoted >= 5 && demoted <= 2 && fraud === 0 && mode === 'keju';
+      } catch (e) { return false; }
+    },
+    achievement: 'v22_official_evaluate'
   }
 ];
 

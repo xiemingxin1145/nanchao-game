@@ -130,7 +130,17 @@ export class HaremSystem {
       }
     }
     // 子嗣年长
-    for (const ch of rec.children) ch.age++;
+    // BUG修复（harem.js V22.0 成熟子嗣年龄无限膨胀）：
+    //   基准：原写法 `for (const ch of rec.children) ch.age++` 对所有子嗣每回合涨一岁，
+    //   包括已 mature=true（已由 matureChildToGeneral 转为武将加入 generals）的皇子。
+    //   长局后这些皇子在 children 里年龄无限增长（如皇子已 50 岁仍每年 +1），
+    //   顶栏/剧情里显示怪异，且 children 数组随生育只增不减、内存缓慢膨胀。
+    //   修复：已 mature（已出阁为武将）的子嗣跳过年龄增长；未出阁的皇女/皇
+    //   子仍正常长大（marriagablePrincesses 按 age>=MIN_AGE 过滤不受影响）。
+    for (const ch of rec.children) {
+      if (ch.mature) continue;
+      ch.age++;
+    }
   }
 
   _makeChild(gender, mother, father, fid) {

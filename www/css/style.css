@@ -5571,3 +5571,237 @@ html, body, button, .btn-ancient, .btn-small, .btn-icon, select, input, textarea
 .v21-cav-goods { white-space: nowrap; }
 .v21-cav-path { color: #c8b488; }
 .v21-cav-eta { color: #9a8b6a; text-align: center; }
+
+/* ============================================================
+   V22.0「金榜题名版」UI 精修
+   约定：所有新类名 v22- 前缀；纯 CSS/SVG 动画，无 Canvas 粒子循环。
+   ============================================================ */
+:root {
+  --v22-gold: #f0c060;
+  --v22-ink: #140e08;
+  --v22-paper: #f0d8a8;
+  --v22-line: rgba(240,192,96,0.34);
+  --v22-panel: rgba(20,14,8,0.96);
+  --v22-cinnabar: #c84a3a;
+  --v22-jade: #4f8a6a;
+  --v22-bronze: #b8733a;
+  --v22-danger: #e05555;
+  --v22-warn: #e0a555;
+  --v22-safe: #6fcf6f;
+  --v22-radius: 10px;
+}
+
+@keyframes v22Enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes v22Pulse { 0%,100% { opacity: 0.35; transform: scale(0.8); } 50% { opacity: 0.9; transform: scale(1.25); } }
+@keyframes v22BadgeGlow { 0%,100% { text-shadow: 0 0 6px rgba(240,192,96,0.35); } 50% { text-shadow: 0 0 18px rgba(240,192,96,0.85); } }
+@keyframes v22MenuBreath { 0%,100% { opacity: 0.4; transform: scale(1); } 50% { opacity: 0.75; transform: scale(1.06); } }
+@keyframes v22Huangbang { 0% { opacity: 0; transform: scaleY(0.6); } 60% { opacity: 1; transform: scaleY(1.04); } 100% { transform: scaleY(1); } }
+@keyframes v22BarGrow { from { width: 0; } }
+@keyframes v22MarkFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+
+/* ---------- 版本徽章 ---------- */
+.v22-version-badge {
+  border-color: var(--v22-gold) !important;
+  color: var(--v22-gold) !important;
+  animation: v22BadgeGlow 3.0s ease-in-out infinite;
+}
+
+/* ---------- 主菜单氛围光晕（金榜朱印暖光，纯 CSS） ---------- */
+.v22-menu-haze {
+  position: absolute; inset: 0; pointer-events: none; z-index: 1;
+  background:
+    radial-gradient(55% 45% at 50% 30%, rgba(200,74,58,0.16), transparent 70%),
+    radial-gradient(45% 40% at 30% 80%, rgba(240,192,96,0.18), transparent 70%);
+  mix-blend-mode: screen;
+  animation: v22MenuBreath 10s ease-in-out infinite;
+}
+
+/* ---------- 通用弹窗骨架 ---------- */
+.v22-overlay {
+  position: fixed; inset: 0; z-index: 9100;
+  background: rgba(8,5,3,0.74); display: flex; align-items: center; justify-content: center;
+  padding: 16px;
+}
+.v22-modal {
+  position: relative; width: 92%; max-width: 660px; max-height: 86vh;
+  background: var(--v22-panel); color: var(--v22-paper);
+  border: 1px solid var(--v22-line); border-radius: var(--v22-radius);
+  padding: 18px 18px 16px; box-shadow: 0 10px 44px rgba(0,0,0,0.65);
+  animation: v22Enter 0.28s ease-out;
+}
+.v22-modal.v22-wide { max-width: 780px; }
+.v22-scroll { overflow-y: auto; }
+.v22-scroll::-webkit-scrollbar { width: 8px; }
+.v22-scroll::-webkit-scrollbar-thumb { background: rgba(240,192,96,0.35); border-radius: 4px; }
+.v22-corner { position: absolute; width: 14px; height: 14px; border-color: var(--v22-gold); border-style: solid; }
+.v22-corner.tl { top: 6px; left: 6px; border-width: 2px 0 0 2px; }
+.v22-corner.tr { top: 6px; right: 6px; border-width: 2px 2px 0 0; }
+.v22-corner.bl { bottom: 6px; left: 6px; border-width: 0 0 2px 2px; }
+.v22-corner.br { bottom: 6px; right: 6px; border-width: 0 2px 2px 0; }
+.v22-title { text-align: center; color: #f4d888; letter-spacing: 3px; margin-bottom: 14px; font-size: 20px; text-shadow: 0 0 12px rgba(240,192,96,0.32); }
+.v22-body { font-size: 13px; line-height: 1.6; }
+.v22-close { display: block; margin: 14px auto 0; }
+
+/* ---------- 顶栏入口按钮 ---------- */
+.v22-select-btn { border-color: rgba(240,192,96,0.5); color: var(--v22-gold); }
+
+/* ---------- 汇总统计格 ---------- */
+.v22-exam-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 10px; }
+.v22-stat {
+  background: rgba(0,0,0,0.35); border: 1px solid var(--v22-line); border-radius: 8px;
+  padding: 8px 6px; text-align: center;
+}
+.v22-stat span { display: block; font-size: 10.5px; color: #b09a70; }
+.v22-stat b { font-size: 14px; color: var(--v22-paper); }
+
+.v22-status-line { text-align: center; font-size: 13px; margin: 6px 0 10px; padding: 6px; border-radius: 8px; }
+.v22-status-line.v22-ok { color: var(--v22-safe); background: rgba(111,207,111,0.10); }
+.v22-status-line.v22-wait { color: #b09a70; background: rgba(0,0,0,0.25); }
+
+/* ---------- 区块 ---------- */
+.v22-section { margin-bottom: 14px; }
+.v22-sec-title {
+  font-size: 13.5px; color: var(--v22-gold); letter-spacing: 2px;
+  border-left: 3px solid var(--v22-gold); padding-left: 8px; margin: 10px 0 8px;
+}
+.v22-sub2 { margin-top: 12px; }
+.v22-hint { font-size: 11px; color: #a89270; margin: 6px 0; }
+.v22-empty { font-size: 12px; color: #9a8a68; padding: 8px 4px; }
+
+/* ---------- 开科科目 ---------- */
+.v22-subj-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.v22-subj-btn { flex: 1; min-width: 120px; }
+
+/* ---------- 殿试金榜 ---------- */
+.v22-bang-top3 { display: flex; justify-content: center; align-items: flex-end; gap: 10px; margin: 10px 0; }
+.v22-bang {
+  border: 1px solid var(--v22-line); border-radius: 10px; padding: 10px 8px; text-align: center;
+  background: rgba(0,0,0,0.32); min-width: 86px; animation: v22Huangbang 0.5s ease-out;
+}
+.v22-bang-1 { border-color: var(--v22-gold); background: rgba(240,192,96,0.12); transform: scale(1.08); }
+.v22-bang-2 { border-color: rgba(200,200,210,0.5); }
+.v22-bang-3 { border-color: rgba(200,140,90,0.5); }
+.v22-bang-medal { font-size: 22px; }
+.v22-bang-name { font-size: 14px; font-weight: bold; color: var(--v22-paper); margin: 2px 0; }
+.v22-bang-1 .v22-bang-name { color: var(--v22-gold); }
+.v22-bang-rank { font-size: 11px; color: #b09a70; }
+.v22-bang-score { font-size: 11px; color: #9a8a68; }
+
+.v22-js-list { max-height: 26vh; overflow-y: auto; }
+.v22-js-title { font-size: 12px; color: var(--v22-gold); margin: 6px 0; }
+.v22-js-row {
+  display: grid; grid-template-columns: 24px 1fr 30px 80px; gap: 6px; align-items: center;
+  font-size: 12.5px; padding: 4px 2px; border-bottom: 1px dashed rgba(240,192,96,0.16);
+}
+.v22-qual { font-size: 10px; text-align: center; border-radius: 3px; padding: 1px 4px; }
+.v22-qual.s { background: rgba(240,192,96,0.25); color: var(--v22-gold); }
+.v22-qual.a { background: rgba(111,207,111,0.18); color: var(--v22-safe); }
+.v22-qual.b { background: rgba(160,160,160,0.15); color: #aaa; }
+
+/* ---------- 同年关系图 ---------- */
+.v22-tn-wrap { margin: 6px 0 8px; }
+.v22-tn-svg { width: 100%; max-width: 320px; display: block; margin: 0 auto; }
+.v22-tn-line { stroke: rgba(240,192,96,0.35); stroke-width: 0.5; }
+.v22-tn-node { stroke: #1a1408; stroke-width: 0.4; }
+.v22-tn-node.zy { fill: var(--v22-gold); }
+.v22-tn-node.bh { fill: #c8c8d0; }
+.v22-tn-node.js { fill: #5a8ad0; }
+.v22-tn-label { font-size: 3px; fill: #c8b488; text-anchor: middle; }
+.v22-tn-label.on { fill: var(--v22-gold); font-weight: bold; }
+.v22-tn-role { font-size: 2.4px; fill: #9a8a68; text-anchor: middle; }
+
+/* ---------- 翰林院 ---------- */
+.v22-hl-summary { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 8px; }
+.v22-hl-list { display: flex; flex-direction: column; gap: 6px; max-height: 24vh; overflow-y: auto; }
+.v22-hl-row {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
+  border-bottom: 1px dashed rgba(240,192,96,0.14); padding: 4px 2px;
+}
+.v22-hl-tag { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; }
+.v22-hl-zy { background: rgba(240,192,96,0.22); color: var(--v22-gold); }
+.v22-hl-bh { background: rgba(200,200,210,0.16); color: #c8c8d0; }
+.v22-hl-js { background: rgba(90,138,208,0.18); color: #8ab0e0; }
+.v22-hl-attr { margin-left: auto; font-size: 11px; color: #a89270; }
+
+/* ---------- 武举 ---------- */
+.v22-wj-flow { display: flex; flex-direction: column; gap: 6px; }
+.v22-wj-step { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--v22-line); border-radius: 8px; padding: 6px 8px; background: rgba(0,0,0,0.28); }
+.v22-wj-no { width: 22px; height: 22px; border-radius: 50%; background: var(--v22-cinnabar); color: #fff; text-align: center; line-height: 22px; font-size: 12px; flex-shrink: 0; }
+.v22-wj-desc { font-size: 11.5px; color: #c8b488; }
+.v22-wj-result { display: flex; flex-direction: column; gap: 4px; }
+.v22-wj-line { font-size: 13px; }
+
+/* ---------- 选官模式切换 ---------- */
+.v22-mode-row { display: flex; gap: 8px; margin-bottom: 6px; }
+.v22-mode-btn {
+  flex: 1; padding: 8px; border: 1px solid var(--v22-line); border-radius: 8px;
+  background: rgba(0,0,0,0.3); color: var(--v22-paper); cursor: pointer; font-size: 13px;
+}
+.v22-mode-btn.on { border-color: var(--v22-gold); background: rgba(240,192,96,0.14); color: var(--v22-gold); }
+
+/* ---------- 察举 ---------- */
+.v22-cj-list { display: flex; flex-direction: column; gap: 6px; max-height: 30vh; overflow-y: auto; }
+.v22-cj-row {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
+  border: 1px solid rgba(240,192,96,0.18); border-radius: 8px; padding: 6px 8px; background: rgba(0,0,0,0.28);
+}
+.v22-cj-info { flex: 1; display: flex; flex-direction: column; }
+.v22-cj-attr { font-size: 11px; color: #a89270; }
+.v22-cj-low { color: #8a7c5e; font-size: 11.5px; }
+
+/* ---------- 九品中正品级条 ---------- */
+.v22-rkbar { margin: 6px 0; }
+.v22-rkbar-track { display: flex; gap: 3px; }
+.v22-rkcell {
+  flex: 1; text-align: center; font-size: 10px; padding: 6px 2px; border-radius: 4px;
+  background: rgba(0,0,0,0.4); border: 1px solid var(--v22-line); color: #c8b488;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+}
+.v22-rkcell i { font-style: normal; font-size: 9px; color: var(--v22-gold); }
+.v22-rk-1, .v22-rk-2 { background: rgba(200,74,58,0.22); color: #f0c060; }
+.v22-rk-3, .v22-rk-4 { background: rgba(184,115,58,0.20); color: #e0b070; }
+.v22-rk-5, .v22-rk-6 { background: rgba(79,138,106,0.18); color: #8ac8a8; }
+.v22-rk-7, .v22-rk-8 { background: rgba(90,138,208,0.16); color: #8ab0e0; }
+
+/* ---------- 官员考核 ---------- */
+.v22-kh-list { display: flex; flex-direction: column; gap: 6px; max-height: 32vh; overflow-y: auto; }
+.v22-kh-row {
+  display: grid; grid-template-columns: 1fr 44px 90px 96px; gap: 8px; align-items: center;
+  border: 1px solid rgba(240,192,96,0.18); border-radius: 8px; padding: 6px 8px; background: rgba(0,0,0,0.28);
+  font-size: 12.5px;
+}
+.v22-kh-info { display: flex; flex-direction: column; }
+.v22-kh-attr { font-size: 10.5px; color: #a89270; }
+.v22-kh-grade { text-align: center; font-weight: bold; padding: 2px 0; border-radius: 4px; }
+.v22-kh-s { background: rgba(240,192,96,0.25); color: var(--v22-gold); }
+.v22-kh-a { background: rgba(111,207,111,0.18); color: var(--v22-safe); }
+.v22-kh-b { background: rgba(90,138,208,0.16); color: #8ab0e0; }
+.v22-kh-c { background: rgba(180,180,180,0.14); color: #bbb; }
+.v22-kh-d { background: rgba(224,165,85,0.16); color: var(--v22-warn); }
+.v22-kh-e { background: rgba(224,85,85,0.18); color: var(--v22-danger); }
+.v22-kh-note { font-size: 11px; color: #a89270; }
+.v22-kh-act { display: flex; gap: 4px; justify-content: flex-end; }
+.v22-demote { border-color: rgba(224,85,85,0.5); color: #e08888; }
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 768px) {
+  .v22-modal { width: 96%; padding: 14px; }
+  .v22-exam-summary { grid-template-columns: repeat(2, 1fr); }
+  .v22-bang-top3 { gap: 6px; }
+  .v22-bang { min-width: 72px; }
+  .v22-js-row { grid-template-columns: 20px 1fr 26px 72px; font-size: 12px; }
+  .v22-kh-row { grid-template-columns: 1fr 40px 80px; }
+  .v22-kh-note { display: none; }
+}
+@media (max-width: 480px) {
+  .v22-title { font-size: 17px; }
+  .v22-stat b { font-size: 13px; }
+  .v22-subj-row { flex-direction: column; }
+  .v22-rkcell { font-size: 9px; padding: 4px 1px; }
+  .v22-mode-row { flex-direction: column; }
+}
+
+/* ---------- V22 补漏：察举按钮 / 低品级色阶 ---------- */
+.v22-cj-btn { border-color: rgba(240,192,96,0.5); color: var(--v22-gold); }
+.v22-rk-9, .v22-rk-10 { background: rgba(120,120,120,0.16); color: #a8a8a8; }
+.v22-rk-11, .v22-rk-12 { background: rgba(120,90,60,0.18); color: #b89878; }

@@ -23,6 +23,14 @@ import { aiStartCorvee } from './corvee.js';
 // V18.0：AI 战略规划系统
 import { strategyPlanner } from './ai_strategy.js';
 
+// 性能优化（ai.js V22.0·234将后 AI 决策）：TECHS 按 id 建索引——
+//   基准：researchTech 每回合对「研究完成日志」做一次 `TECHS.find(t=>t.id===...)`，
+//   且候选循环里对每条科技都 `t.line===line` 过滤。234 将 × F 势力下，
+//   每回合每个 AI 都对 TECHS 全表扫描一遍找日志名。
+//   优化：模块加载时一次性建 techId→tech 的 Map，O(1) 命中科技名。
+const TECH_BY_ID = new Map();
+for (const _t of TECHS) TECH_BY_ID.set(_t.id, _t);
+
 export class AIPlayer {
   constructor(factionId) {
     this.factionId = factionId;
@@ -277,7 +285,9 @@ export class AIPlayer {
       this.researching.turnsLeft--;
       if (this.researching.turnsLeft <= 0) {
         this.techs.push(this.researching.techId);
-        game.pushLog(`【${this.name}】研习新制：${(TECHS.find(t=>t.id===this.researching.techId)||{}).name || this.researching.techId}`);
+        // 性能优化（ai.js V22.0）：用模块级 TECH_BY_ID 索引 O(1) 命中科技名，替代每回合 TECHS.find 全表扫描
+        const _doneTech = TECH_BY_ID.get(this.researching.techId);
+        game.pushLog(`【${this.name}】研习新制：${(_doneTech && _doneTech.name) || this.researching.techId}`);
         this.researching = null;
       }
       return;
@@ -542,14 +552,23 @@ export class AIPlayer {
     // 性能优化（ai.js #2）：复用本回合缓存城市表
     const cities = (this._turnCities || game.getFactionCities(this.factionId))
       .filter(c => (c.buildings['market'] || 0) >= 1);
+    // 性能优化（ai.js V22.0·234将后 AI 决策）：商路去重 O(1) 化——
+    //   基准：原写法内层 O(N²) 双循环里，每对城都 `game.tradeRoutes.some(...)`
+    //   对全部商路做一次 O(R) 线性扫描，总 O(N²×R)。
+    //   优化：入口一次性把已有商路段规范化（小 id 在前）建 Set，内层 O(1) 命中。
+    const _routeSet = new Set();
+    for (const r of game.tradeRoutes) {
+      const a = r.city1 < r.city2 ? r.city1 : r.city2;
+      const b = r.city1 < r.city2 ? r.city2 : r.city1;
+      _routeSet.add(a + '|' + b);
+    }
     for (let i = 0; i < cities.length; i++) {
       for (let j = i + 1; j < cities.length; j++) {
         if (game.tradeRoutes.length >= 5) return;
         const c1 = cities[i], c2 = cities[j];
-        const dup = game.tradeRoutes.some(r =>
-          (r.city1 === c1.id && r.city2 === c2.id) ||
-          (r.city1 === c2.id && r.city2 === c1.id));
-        if (dup) continue;
+        const ka = c1.id < c2.id ? c1.id : c2.id;
+        const kb = c1.id < c2.id ? c2.id : c1.id;
+        if (_routeSet.has(ka + '|' + kb)) continue;
         res.money -= 500;
         game.tradeRoutes.push({ id: 'trade_' + Date.now() + '_' + i + '_' + j, city1: c1.id, city2: c2.id });
         game.pushLog(`【${this.name}】开通商路：${c1.name} ↔ ${c2.name}`);

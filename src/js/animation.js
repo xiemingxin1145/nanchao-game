@@ -165,6 +165,22 @@ export class CharacterAnimator {
     this._familyFXCap = 6;         // 同时存活家族FX上限
     this._familyParticleBudget = 90; // 家族专属粒子预算
     this._familyEmitAcc = 0;        // 家族持续粒子生成累计器
+
+    // ============================================================
+    // V22.0 — 动画与地图增强：科举动画 + 选官动画
+    // 设计：与 V21.0 一致——play* 只写入 _examResultFX（全屏放榜）/
+    //      _examFXs（点FX）状态机 + 触发一次性粒子；
+    //      update(dt) 用真实时间推进 t；drawExamFX / drawExamResultsFX
+    //      按 t/dur 渲染（均由 map.js 每帧调用）。
+    //      粒子走 _getParticle/_pushParticle 对象池 + 专属预算；
+    //      点 FX 列表硬上限（超出淘汰最老）；
+    //      游街/宴饮等持续粒子按 dt 节流生成，受预算保护。
+    // ============================================================
+    this._examResultFX = null;      // 放榜全屏覆盖层 {x,y,w,h,t,dur,seed}
+    this._examFXs = [];             // 点FX [{type,x,y,... ,t,dur,seed}]
+    this._examFXCap = 8;            // 同时存活科举/选观点FX上限
+    this._examParticleBudget = 90;  // 科举/选官专属粒子预算（_exam 标记）
+    this._examEmitAcc = 0;          // 持续粒子生成累计器（游街欢呼/宴饮）
   }
 
   // V5.5：暂停/恢复粒子更新（非战斗场景调用，节省 CPU）
@@ -566,6 +582,12 @@ export class CharacterAnimator {
     // ---- V21.0：丝路 / 家族 FX 时间线推进（真实时间，不受慢动作影响）----
     this._updateSilkFXs(deltaTime);
     this._updateFamilyFXs(deltaTime);
+    // ---- V22.0：科举/选官 FX 时间线推进（真实时间，不受慢动作影响）----
+    this._updateExamFXs(deltaTime);
+    if (this._examResultFX) {
+      this._examResultFX.t += deltaTime;
+      if (this._examResultFX.t >= this._examResultFX.dur) this._examResultFX = null;
+    }
     // 士气条淡入淡出推进
     for (const [k, m] of this._moraleBars) {
       m.t += deltaTime;
@@ -6438,6 +6460,590 @@ export class CharacterAnimator {
       ctx.lineTo(fx.x + sx, fx.y - 4);
       ctx.closePath();
       ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  // ============================================================
+  // V22.0 — 科举动画（放榜 / 状元游街 / 同年宴 / 落第）
+  //        选官动画（授官 / 考核 / 贬官）
+  // 公共 API：
+  //   playExamResults(ctx, w, h)              放榜（金榜展开 + 金光闪耀，全屏）
+  //   playZhuangyuanParade(ctx, x, y)         状元游街（红袍骑马 + 百姓欢呼）
+  //   playTongnianFeast(ctx, x, y)            同年宴（聚餐 + 酒杯碰撞 + 诗词）
+  //   playFailedExam(ctx, x, y)               落第（书生叹息 + 飘落纸张）
+  //   playAppointOffice(ctx, x, y)            授官（官印授予 + 彩带）
+  //   playOfficialReview(ctx, x, y, passed)   考核（考卷 + 印章通过/不通过）
+  //   playDemoteOffice(ctx, x, y)             贬官（官服脱下 + 叹息）
+  // 性能：粒子走 _getParticle/_pushParticle 对象池，统一打 _exam 标记并受
+  //       _examParticleBudget 预算保护；点 FX 列表 _examFXCap 硬上限；
+  //       持续粒子（欢呼/宴饮）按 dt 节流生成；放榜全屏 FX 单例不重复叠加。
+  // ============================================================
+
+  // 推入科举/选观点 FX（带上限保护，超出淘汰最老）
+  _pushExamFX(fx) {
+    if (this._examFXs.length >= this._examFXCap) this._examFXs.shift();
+    fx.t = 0;
+    if (fx.seed == null) fx.seed = Math.random() * 1000;
+    this._examFXs.push(fx);
+  }
+
+  // 科举/选观点状粒子爆发（对象池 + 专属预算保护）
+  _examBurst(x, y, count, opts) {
+    for (let i = 0; i < count; i++) {
+      if (this._countTaggedParticles('_exam') >= this._examParticleBudget) break;
+      const s = this._getParticle();
+      const a = Math.random() * Math.PI * 2;
+      const sp = (opts.minSpeed || 30) + Math.random() * (opts.spread || 120);
+      Object.assign(s, {
+        type: opts.type || 'exam_spark',
+        _exam: true,
+        x: x + (Math.random() - 0.5) * (opts.rangeX || 10),
+        y: y + (Math.random() - 0.5) * (opts.rangeY || 10),
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - (opts.upBias || 0),
+        gravity: opts.gravity != null ? opts.gravity : 60,
+        drag: opts.drag != null ? opts.drag : 0.4,
+        life: (opts.lifeMin || 0.6) + Math.random() * ((opts.lifeMax || 1.3) - (opts.lifeMin || 0.6)),
+        size: (opts.sizeMin || 1.6) + Math.random() * ((opts.sizeMax || 3.2) - (opts.sizeMin || 1.6)),
+        color: Array.isArray(opts.colors)
+          ? opts.colors[Math.floor(Math.random() * opts.colors.length)]
+          : (opts.color || '#FFD700'),
+        angle: Math.random() * Math.PI * 2,
+        seed: Math.random() * 10
+      });
+      this._pushParticle(s);
+    }
+  }
+
+  // ---- 放榜（全屏）：金榜展开 + 金光闪耀 ----
+  // w/h：画布尺寸（缺省按 ctx.canvas 推断）
+  playExamResults(ctx, w, h) {
+    if (!w || w <= 0) w = (ctx && ctx.canvas && ctx.canvas.width) || 800;
+    if (!h || h <= 0) h = (ctx && ctx.canvas && ctx.canvas.height) || 600;
+    // 单例覆盖：新放榜替换旧的，避免多重叠
+    this._examResultFX = {
+      x: w / 2, y: h * 0.36, w, h,
+      t: 0, dur: 3.8,
+      seed: Math.random() * 1000
+    };
+    // 金榜金光：中心金色碎屑向上迸发 + 光柱底尘
+    this._examBurst(w / 2, h * 0.36, 26, {
+      colors: ['#FFD700', '#FFF3B0', '#FFE9A8', '#ffffff'],
+      minSpeed: 30, spread: 150, upBias: 120, gravity: 70,
+      lifeMin: 0.7, lifeMax: 1.6, sizeMin: 1.6, sizeMax: 3.4
+    });
+    this._examBurst(w / 2, h * 0.5, 12, {
+      colors: ['#FFD700', '#FFE9A8'],
+      minSpeed: 8, spread: 30, upBias: 100, gravity: -10,
+      lifeMin: 0.9, lifeMax: 1.8, sizeMin: 1, sizeMax: 2.4
+    });
+  }
+
+  // ---- 状元游街：红袍状元骑马游街 + 百姓欢呼 ----
+  playZhuangyuanParade(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushExamFX({ type: 'parade', x, y, dur: 3.0 });
+    // 红绸彩带 + 欢呼花瓣
+    this._examBurst(x, y - 10, 16, {
+      colors: ['#e03030', '#ff6a5a', '#ffd76a'],
+      minSpeed: 20, spread: 110, upBias: 80, gravity: 50,
+      drag: 0.2, lifeMin: 1.0, lifeMax: 2.0, sizeMin: 2, sizeMax: 3
+    });
+    // 欢呼金纸屑
+    this._examBurst(x, y - 16, 10, {
+      colors: ['#FFD700', '#fff2b0'],
+      minSpeed: 40, spread: 90, upBias: 130, gravity: 120,
+      lifeMin: 0.6, lifeMax: 1.2, sizeMin: 1.4, sizeMax: 2.4
+    });
+  }
+
+  // ---- 同年宴：聚餐 + 酒杯碰撞 + 诗词 ----
+  playTongnianFeast(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushExamFX({ type: 'feast', x, y, dur: 2.8 });
+    // 酒花金珠（杯中溅起）
+    this._examBurst(x, y - 8, 12, {
+      colors: ['#ffcf40', '#fff2b0', '#ffe9a8'],
+      minSpeed: 20, spread: 70, upBias: 110, gravity: 150,
+      lifeMin: 0.5, lifeMax: 1.0, sizeMin: 1.4, sizeMax: 2.4
+    });
+    // 席间落花（粉白缓落）
+    this._examBurst(x, y - 20, 8, {
+      colors: ['#ffd0d8', '#ffe6ec', '#fff0f3'],
+      minSpeed: 8, spread: 24, upBias: 6, gravity: 14,
+      drag: 0.1, lifeMin: 1.6, lifeMax: 2.6, sizeMin: 2, sizeMax: 3
+    });
+  }
+
+  // ---- 落第：书生叹息 + 飘落纸张 ----
+  playFailedExam(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushExamFX({ type: 'failed', x, y, dur: 2.8 });
+    // 飘落试卷（灰白纸片，摇摆下落）
+    for (let i = 0; i < 12; i++) {
+      if (this._countTaggedParticles('_exam') >= this._examParticleBudget) break;
+      const s = this._getParticle();
+      Object.assign(s, { type: 'exam_paper', _exam: true,
+        x: x + (Math.random() - 0.5) * 50, y: y - 30 - Math.random() * 30,
+        vx: (Math.random() - 0.5) * 16, vy: 16 + Math.random() * 18,
+        gravity: 5, drag: 0.12,
+        life: 2.0 + Math.random() * 1.2, maxLife: 3.2,
+        size: 3 + Math.random() * 3,
+        color: Math.random() < 0.5 ? '#e8e4da' : '#cfc9bc',
+        angle: Math.random() * Math.PI * 2, seed: Math.random() * 10 });
+      this._pushParticle(s);
+    }
+    // 叹息灰雾（低沉上升）
+    const sigh = this._getParticle();
+    Object.assign(sigh, { type: 'exam_sigh', _exam: true, x, y: y - 14,
+      vx: 0, vy: -12, gravity: -2, drag: 0.2,
+      life: 1.8, maxLife: 1.8, size: 7, color: 'rgba(150,148,140,0.5)' });
+    this._pushParticle(sigh);
+  }
+
+  // ---- 授官：官印授予 + 彩带 ----
+  playAppointOffice(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushExamFX({ type: 'appoint', x, y, dur: 2.6 });
+    // 朱红彩带飘落
+    this._examBurst(x, y - 16, 14, {
+      colors: ['#d83a3a', '#ff7a6a', '#ffd76a'],
+      minSpeed: 14, spread: 60, upBias: 10, gravity: 30,
+      drag: 0.1, lifeMin: 1.6, lifeMax: 2.6, sizeMin: 2.2, sizeMax: 3.2
+    });
+    // 授印金光
+    this._examBurst(x, y - 8, 10, {
+      colors: ['#FFD700', '#fff2b0'],
+      minSpeed: 30, spread: 90, upBias: 120, gravity: 90,
+      lifeMin: 0.6, lifeMax: 1.2, sizeMin: 1.4, sizeMax: 2.4
+    });
+  }
+
+  // ---- 考核：考卷 + 印章通过/不通过 ----
+  // passed：true 取/通过（朱印），false 落/不通过（灰红印）
+  playOfficialReview(ctx, x, y, passed) {
+    x = x || 0; y = y || 0;
+    this._pushExamFX({ type: 'review', x, y, passed: !!passed, dur: 2.4 });
+    if (passed) {
+      // 通过：金色印泥溅点 + 绿光
+      this._examBurst(x, y, 12, {
+        colors: ['#FFD700', '#8affc0', '#fff2b0'],
+        minSpeed: 24, spread: 80, upBias: 90, gravity: 80,
+        lifeMin: 0.6, lifeMax: 1.2, sizeMin: 1.5, sizeMax: 2.6
+      });
+    } else {
+      // 不通过：灰暗墨点 + 褐红
+      this._examBurst(x, y, 10, {
+        colors: ['#8a8578', '#6a5a4a', '#9a4a3a'],
+        minSpeed: 18, spread: 60, upBias: 50, gravity: 70,
+        lifeMin: 0.7, lifeMax: 1.3, sizeMin: 1.5, sizeMax: 2.4
+      });
+    }
+  }
+
+  // ---- 贬官：官服脱下 + 叹息 ----
+  playDemoteOffice(ctx, x, y) {
+    x = x || 0; y = y || 0;
+    this._pushExamFX({ type: 'demote', x, y, dur: 2.6 });
+    // 卸下的灰褐官服碎片（飘落）
+    this._examBurst(x, y - 12, 10, {
+      colors: ['#9a8f7a', '#7a6f5a', '#b0a898'],
+      minSpeed: 10, spread: 40, upBias: 8, gravity: 26,
+      drag: 0.1, lifeMin: 1.6, lifeMax: 2.6, sizeMin: 2, sizeMax: 3.2
+    });
+    // 一声叹息灰雾
+    const sigh = this._getParticle();
+    Object.assign(sigh, { type: 'exam_demote_sigh', _exam: true, x, y: y - 16,
+      vx: 0, vy: -10, gravity: -2, drag: 0.2,
+      life: 2.0, maxLife: 2.0, size: 8, color: 'rgba(120,118,110,0.5)' });
+    this._pushParticle(sigh);
+  }
+
+  // ---- 科举/选观点 FX 时间线推进 + 持续粒子生成 ----
+  _updateExamFXs(dt) {
+    if (!dt || dt <= 0) return;
+    for (let i = this._examFXs.length - 1; i >= 0; i--) {
+      const fx = this._examFXs[i];
+      fx.t += dt;
+      if (fx.t >= fx.dur) { this._examFXs.splice(i, 1); continue; }
+      // 游街途中百姓持续撒花/欢呼（按 dt 节流，受预算保护）
+      if (fx.type === 'parade') {
+        this._examEmitAcc += dt;
+        const step = 0.22;
+        if (this._examEmitAcc >= step) {
+          this._examEmitAcc = 0;
+          if (this._countTaggedParticles('_exam') < this._examParticleBudget) {
+            this._examBurst(fx.x, fx.y - 6, 2, {
+              colors: ['#ff6a5a', '#ffd76a'],
+              minSpeed: 14, spread: 40, upBias: 70, gravity: 60,
+              lifeMin: 0.6, lifeMax: 1.0, sizeMin: 1.6, sizeMax: 2.4
+            });
+          }
+        }
+      }
+      // 同年宴席间持续飘落花
+      if (fx.type === 'feast') {
+        this._examEmitAcc += dt;
+        const step = 0.3;
+        if (this._examEmitAcc >= step) {
+          this._examEmitAcc = 0;
+          if (this._countTaggedParticles('_exam') < this._examParticleBudget) {
+            this._examBurst(fx.x, fx.y - 22, 1, {
+              colors: ['#ffd0d8', '#fff0f3'],
+              minSpeed: 6, spread: 16, upBias: 4, gravity: 12,
+              drag: 0.1, lifeMin: 1.4, lifeMax: 2.2, sizeMin: 2, sizeMax: 2.8
+            });
+          }
+        }
+      }
+    }
+  }
+
+  // ---- 绘制所有激活的科举/选观点 FX（map.js 每帧调用）----
+  drawExamFX(ctx) {
+    if (!ctx || this._examFXs.length === 0) return;
+    ctx.save();
+    for (const fx of this._examFXs) {
+      const p = fx.t / fx.dur;
+      if (p < 0 || p > 1) continue;
+      switch (fx.type) {
+        case 'parade':  this._drawZhuangyuanParade(ctx, fx, p); break;
+        case 'feast':   this._drawTongnianFeast(ctx, fx, p); break;
+        case 'failed':  this._drawFailedExam(ctx, fx, p); break;
+        case 'appoint': this._drawAppointOffice(ctx, fx, p); break;
+        case 'review':  this._drawOfficialReview(ctx, fx, p); break;
+        case 'demote':  this._drawDemoteOffice(ctx, fx, p); break;
+      }
+    }
+    ctx.restore();
+  }
+
+  // ---- 放榜全屏覆盖层：金榜展开 + 金光闪耀（map.js 每帧调用）----
+  drawExamResultsFX(ctx) {
+    const fx = this._examResultFX;
+    if (!fx || !ctx) return;
+    const { x, y, w, h, t, dur } = fx;
+    const p = t / dur;
+    ctx.save();
+    // 暗色帷幕淡入淡出
+    const veil = p < 0.2 ? (p / 0.2) : (p > 0.8 ? (1 - p) / 0.2 : 1);
+    ctx.fillStyle = `rgba(20,14,6,${0.55 * Math.max(0, Math.min(1, veil))})`;
+    ctx.fillRect(0, 0, w, h);
+
+    // 金榜展开：卷轴高度由 0 拉开（easeOutCubic），左右两轴卷起
+    const openP = this._v15EaseOutCubic((p - 0.15) / 0.55);
+    if (openP > 0) {
+      const scrW = 180, scrH = 220;
+      const drawH = scrH * openP;
+      // 卷轴底（暗红绢布）
+      ctx.fillStyle = '#7a2020';
+      ctx.fillRect(x - scrW / 2, y - drawH / 2, scrW, drawH);
+      // 绢面（金笺）
+      ctx.fillStyle = '#f3e2a8';
+      ctx.fillRect(x - scrW / 2 + 6, y - drawH / 2 + 6, scrW - 12, Math.max(0, drawH - 12));
+      // 上下轴杆
+      ctx.fillStyle = '#8a6a2a';
+      ctx.fillRect(x - scrW / 2 - 6, y - drawH / 2 - 4, scrW + 12, 8);
+      ctx.fillRect(x - scrW / 2 - 6, y + drawH / 2 - 4, scrW + 12, 8);
+
+      // 金光闪耀：随展开扫过的高光 + 边缘光晕
+      if (drawH > 20) {
+        const sweep = ((t * 0.6) % 1.6) / 1.6;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(x - scrW / 2 + 6, y - drawH / 2 + 6, scrW - 12, Math.max(0, drawH - 12));
+        ctx.clip();
+        const grad = ctx.createLinearGradient(x - scrW / 2 + sweep * scrW - 40, 0, x - scrW / 2 + sweep * scrW + 40, 0);
+        grad.addColorStop(0, 'rgba(255,255,255,0)');
+        grad.addColorStop(0.5, 'rgba(255,255,220,0.65)');
+        grad.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(x - scrW / 2, y - drawH / 2, scrW, drawH);
+        ctx.restore();
+      }
+
+      // 金榜题名文字（展开到 60% 后浮现）
+      const textP = this._v15EaseOutCubic((openP - 0.6) / 0.4);
+      if (textP > 0 && drawH > 60) {
+        ctx.globalAlpha = textP;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.shadowColor = 'rgba(120,70,0,0.6)'; ctx.shadowBlur = 6;
+        ctx.fillStyle = '#b82828';
+        ctx.font = 'bold 30px "STSong", serif';
+        ctx.fillText('金榜题名', x, y - drawH * 0.18);
+        ctx.font = '16px "STSong", serif';
+        ctx.fillStyle = '#5a4a2a';
+        ctx.fillText('春风得意马蹄疾', x, y + drawH * 0.08);
+        ctx.fillText('一日看尽长安花', x, y + drawH * 0.08 + 22);
+      }
+    }
+    ctx.restore();
+  }
+
+  // 状元游街：红袍骑马沿小弧线行进，两侧百姓欢呼
+  _drawZhuangyuanParade(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 行进小幅度横向位移 + 上下颠簸
+    const travel = this._v15EaseInOut(p) * 40 - 20;
+    const bob = Math.sin(this.time * 10 + fx.seed) * 1.5;
+    const cx = fx.x + travel, cy = fx.y + bob;
+    // 两侧百姓（三对小人，举手欢呼，随节拍起伏）
+    for (let i = 0; i < 3; i++) {
+      const sideX = (i + 1) * 14;
+      for (const sgn of [-1, 1]) {
+        const cheer = Math.abs(Math.sin(this.time * 6 + fx.seed + i * 1.7)) * 3;
+        const bx = fx.x + sgn * sideX * 1.6;
+        const by = fx.y + 12;
+        ctx.fillStyle = sgn < 0 ? '#4a5a6a' : '#5a4a3a';
+        // 头
+        ctx.beginPath(); ctx.arc(bx, by - 8 - cheer, 2.2, 0, Math.PI * 2); ctx.fill();
+        // 身体
+        ctx.fillRect(bx - 1.5, by - 6 - cheer, 3, 7);
+        // 举起的手
+        ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(bx, by - 5 - cheer);
+        ctx.lineTo(bx + sgn * 3, by - 10 - cheer);
+        ctx.stroke();
+      }
+    }
+    // 马身（棕色剪影，椭圆）
+    ctx.fillStyle = '#5a3a22';
+    ctx.beginPath(); ctx.ellipse(cx, cy, 7, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+    // 马头
+    ctx.beginPath(); ctx.ellipse(cx + 7, cy - 2, 2.6, 1.8, 0.3, 0, Math.PI * 2); ctx.fill();
+    // 红袍状元（红身 + 冠）
+    ctx.fillStyle = '#d82828';
+    ctx.fillRect(cx - 2, cy - 9, 4, 6);
+    ctx.fillStyle = '#f0d090';
+    ctx.beginPath(); ctx.arc(cx, cy - 10.5, 1.8, 0, Math.PI * 2); ctx.fill();
+    // 状元乌纱帽翅
+    ctx.fillStyle = '#2a2a2a';
+    ctx.fillRect(cx - 3, cy - 12.5, 6, 1.4);
+    // 身后小红旗
+    ctx.strokeStyle = '#8a6a2a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx - 6, cy); ctx.lineTo(cx - 6, cy - 8); ctx.stroke();
+    const wave = Math.sin(this.time * 7 + fx.seed) * 1.2;
+    ctx.fillStyle = '#ffcf40';
+    ctx.beginPath();
+    ctx.moveTo(cx - 6, cy - 8); ctx.lineTo(cx - 2, cy - 7 + wave); ctx.lineTo(cx - 6, cy - 6);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  // 同年宴：圆桌聚坐 + 双杯相碰溅酒 + 诗句浮现
+  _drawTongnianFeast(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 圆桌（俯视椭圆）
+    ctx.fillStyle = '#7a4a2a';
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y, 16, 6, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#5a3418'; ctx.lineWidth = 1.5; ctx.stroke();
+    // 四位同年围坐（背影小圆 + 发髻）
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      const px = fx.x + Math.cos(a) * 19;
+      const py = fx.y + Math.sin(a) * 8;
+      ctx.fillStyle = i % 2 ? '#3a5a6a' : '#5a4a3a';
+      ctx.beginPath(); ctx.arc(px, py - 2, 2.6, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#2a2a2a';
+      ctx.beginPath(); ctx.arc(px, py - 4.4, 1.2, 0, Math.PI * 2); ctx.fill();
+    }
+    // 双杯相碰（中央两只酒杯，举到中央相碰，溅酒点）
+    const clink = Math.sin(this.time * 4 + fx.seed);
+    const cupLx = fx.x - 6 + clink * 2, cupRx = fx.x + 6 - clink * 2;
+    const cupY = fx.y - 14;
+    ctx.fillStyle = '#d8b060';
+    ctx.beginPath(); ctx.moveTo(cupLx - 2, cupY); ctx.lineTo(cupLx + 2, cupY); ctx.lineTo(cupLx, cupY + 4); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(cupRx - 2, cupY); ctx.lineTo(cupRx + 2, cupY); ctx.lineTo(cupRx, cupY + 4); ctx.closePath(); ctx.fill();
+    // 碰杯处酒花高光
+    ctx.fillStyle = '#fff2b0';
+    const glint = 0.5 + 0.5 * Math.sin(this.time * 9 + fx.seed);
+    ctx.globalAlpha = fade * glint;
+    ctx.beginPath(); ctx.arc(fx.x, cupY - 1, 2.5, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = fade;
+    // 诗句浮现（举杯属文）
+    const textP = this._v15EaseOutCubic((p - 0.3) / 0.4);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = '13px "STSong", serif';
+      ctx.fillStyle = '#fff0d0';
+      ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 3;
+      ctx.fillText('同榜题名，把酒言欢', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 落第：伏案书生叹息（垂头 + 肩塌）+ 飘落试卷
+  _drawFailedExam(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade * 0.95;
+    // 书生伏案剪影（灰蓝）
+    const droop = this._v15EaseOutCubic(Math.min(1, p * 2)); // 逐渐垂头
+    const headY = fx.y - 14 + droop * 4;
+    ctx.fillStyle = '#4a4f5a';
+    // 躯干（伏案前倾）
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y - 4, 6, 4.5, 0.2, 0, Math.PI * 2); ctx.fill();
+    // 头部（低垂）
+    ctx.beginPath(); ctx.arc(fx.x + 4, headY, 2.6, 0, Math.PI * 2); ctx.fill();
+    // 叹气（两缕浅灰气，随时间上升变淡）
+    const breathe = (this.time * 0.6 + fx.seed) % 1;
+    ctx.strokeStyle = `rgba(200,200,200,${0.5 * (1 - breathe)})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(fx.x + 8, headY - 2 - breathe * 8, 2.5, 0, Math.PI * 2);
+    ctx.stroke();
+    // 「落第」小字（灰暗）
+    const textP = this._v15EaseOutCubic((p - 0.4) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#9a9a92';
+      ctx.fillText('名落孙山…', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 授官：官印（朱红方印）自上落下授予 + 两侧彩带
+  _drawAppointOffice(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 下方官告文书（横笺）
+    ctx.fillStyle = '#f0e2b0';
+    ctx.fillRect(fx.x - 16, fx.y - 2, 32, 12);
+    ctx.strokeStyle = '#b09050'; ctx.lineWidth = 1;
+    ctx.strokeRect(fx.x - 16, fx.y - 2, 32, 12);
+    // 官印自上落下（easeOut 下落，到位后轻弹）
+    const dropP = this._easeOutBack(Math.min(1, p / 0.45));
+    const sealY = this._v15Lerp(fx.y - 30, fx.y - 2, dropP);
+    const sealSize = 9;
+    ctx.save();
+    ctx.translate(fx.x, sealY);
+    ctx.shadowColor = '#d82828';
+    ctx.shadowBlur = p > 0.45 ? 12 : 0;
+    ctx.fillStyle = '#c82828';
+    ctx.fillRect(-sealSize / 2, -sealSize / 2, sealSize, sealSize);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#fff0e0'; ctx.lineWidth = 1.2;
+    ctx.strokeRect(-sealSize / 2 + 1.5, -sealSize / 2 + 1.5, sealSize - 3, sealSize - 3);
+    // 印文（篆意十字）
+    ctx.strokeStyle = '#fff0e0';
+    ctx.beginPath();
+    ctx.moveTo(-2.2, 0); ctx.lineTo(2.2, 0);
+    ctx.moveTo(0, -2.2); ctx.lineTo(0, 2.2);
+    ctx.stroke();
+    ctx.restore();
+    // 到位金光扩散
+    if (p > 0.45 && p < 0.85) {
+      const ringP = (p - 0.45) / 0.4;
+      ctx.strokeStyle = `rgba(255,215,0,${0.7 * (1 - ringP)})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(fx.x, fx.y + 4, 6 + ringP * 22, 0, Math.PI * 2); ctx.stroke();
+    }
+    // 授官文字
+    const textP = this._v15EaseOutCubic((p - 0.5) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = '#7a4a00'; ctx.shadowBlur = 4;
+      ctx.fillText('钦授官职', fx.x, fx.y - 26);
+    }
+    ctx.restore();
+  }
+
+  // 考核：考卷展开 + 印章通过/不通过（passed 决定颜色与印文）
+  _drawOfficialReview(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 考卷（白笺，横线）
+    ctx.fillStyle = '#f5efdd';
+    ctx.fillRect(fx.x - 16, fx.y - 12, 32, 24);
+    ctx.strokeStyle = '#b0a888'; ctx.lineWidth = 1;
+    ctx.strokeRect(fx.x - 16, fx.y - 12, 32, 24);
+    ctx.strokeStyle = '#c8bfa0';
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath(); ctx.moveTo(fx.x - 12, fx.y - 6 + i * 6); ctx.lineTo(fx.x + 12, fx.y - 6 + i * 6); ctx.stroke();
+    }
+    // 印章盖下（0.35 后砸下，缩放弹入）
+    if (p > 0.3) {
+      const stampP = this._easeOutBack((p - 0.3) / 0.25);
+      const s = Math.max(0, Math.min(1.2, stampP));
+      const ok = !!fx.passed;
+      ctx.save();
+      ctx.translate(fx.x, fx.y);
+      ctx.scale(s, s);
+      ctx.rotate(ok ? -0.12 : 0.15);
+      ctx.shadowColor = ok ? '#2a8a4a' : '#8a3a2a';
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = ok ? 'rgba(60,160,90,0.85)' : 'rgba(150,60,50,0.85)';
+      const ss = 11;
+      ctx.fillRect(-ss / 2, -ss / 2, ss, ss);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#fff8f0';
+      ctx.font = 'bold 9px "STSong", serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(ok ? '通过' : '不第', 0, 0.5);
+      ctx.restore();
+      // 评语文案
+      const textP = this._v15EaseOutCubic((p - 0.6) / 0.25);
+      if (textP > 0) {
+        ctx.globalAlpha = fade * textP;
+        ctx.textAlign = 'center';
+        ctx.font = 'bold 12px "STSong", serif';
+        ctx.fillStyle = ok ? '#8affc0' : '#d89a8a';
+        ctx.fillText(ok ? '考核：称职 ▲' : '考核：不称 ▼', fx.x, fx.y - 22);
+      }
+    }
+    ctx.restore();
+  }
+
+  // 贬官：官服脱下（红袍滑落）+ 身形佝偻叹息
+  _drawDemoteOffice(ctx, fx, p) {
+    const fade = p < 0.12 ? p / 0.12 : (p > 0.88 ? (1 - p) / 0.12 : 1);
+    ctx.save();
+    ctx.globalAlpha = fade;
+    // 人物（灰蓝素衣，佝偻）
+    ctx.fillStyle = '#5a5a60';
+    ctx.beginPath(); ctx.ellipse(fx.x, fx.y - 4, 5, 4, 0.15, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(fx.x - 1, fx.y - 11, 2.4, 0, Math.PI * 2); ctx.fill();
+    // 脱下的红袍自肩部滑落（随时间下移 + 半透明）
+    const slideP = Math.max(0, Math.min(1, (p - 0.2) / 0.5));
+    const robeY = this._v15Lerp(fx.y - 9, fx.y + 6, slideP);
+    ctx.globalAlpha = fade * (1 - slideP * 0.5);
+    ctx.fillStyle = '#b83838';
+    ctx.beginPath();
+    ctx.moveTo(fx.x - 5, robeY - 3);
+    ctx.lineTo(fx.x + 5, robeY - 3);
+    ctx.lineTo(fx.x + 4, robeY + 4);
+    ctx.lineTo(fx.x - 4, robeY + 4);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = fade;
+    // 叹气气缕
+    const breathe = (this.time * 0.5 + fx.seed) % 1;
+    ctx.strokeStyle = `rgba(190,190,185,${0.5 * (1 - breathe)})`;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(fx.x - 4, fx.y - 14 - breathe * 8, 2.2, 0, Math.PI * 2);
+    ctx.stroke();
+    // 贬官文字
+    const textP = this._v15EaseOutCubic((p - 0.45) / 0.3);
+    if (textP > 0) {
+      ctx.globalAlpha = fade * textP;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = 'bold 13px "STSong", serif';
+      ctx.fillStyle = '#c0b8a8';
+      ctx.fillText('贬官降职…', fx.x, fx.y - 26);
     }
     ctx.restore();
   }

@@ -45,6 +45,13 @@ function _playerGeneralCount(g) {
   try { return g.getFactionGenerals ? g.getFactionGenerals(g.playerFaction).length : 0; }
   catch (e) { return 0; }
 }
+// 工具：V22 科举/选官系统统计
+function _examStats(g) {
+  try { return g.imperialExam?.v22_stats || {}; } catch (e) { return {}; }
+}
+function _examSys(g) {
+  try { return g.imperialExam || null; } catch (e) { return null; }
+}
 
 export const ACHIEVEMENTS = [
   // ==================== 基础（原 V 系列 12 个） ====================
@@ -1021,6 +1028,88 @@ export const ACHIEVEMENTS = [
       try { return (g.familySystem?.stats?.divorces || 0) >= 1; }
       catch (e) { return false; }
     }
+  },
+
+  // ==================== V22.0.0 新增（10 个 v22_ 前缀：科举/选官深化） ====================
+  // ---- 科举取士（5）----
+  {
+    id: 'v22_exam_first', name: '首开贡举', icon: '📜', category: 'politics', points: 20,
+    description: '首次举办科举，开科取士。', reward: { money: 2000 },
+    condition: (g) => {
+      try { return (g.imperialExam?.examCount || 0) >= 1; } catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v22_zhuangyuan_1', name: '金榜题名', icon: '🏆', category: 'politics', points: 20,
+    description: '麾下首次出一位状元。', reward: { money: 2000, title: '座师' },
+    condition: (g) => _examStats(g).zhuangyuan >= 1,
+    progress: (g) => ({ current: Math.min(1, _examStats(g).zhuangyuan || 0), total: 1 })
+  },
+  {
+    id: 'v22_zhuangyuan_5', name: '状元门生', icon: '🎓', category: 'politics', points: 40,
+    description: '麾下累计出 5 位状元，门生故吏遍天下。', reward: { bgm: 'culture', money: 4000 },
+    condition: (g) => _examStats(g).zhuangyuan >= 5,
+    progress: (g) => ({ current: Math.min(5, _examStats(g).zhuangyuan || 0), total: 5 })
+  },
+  {
+    id: 'v22_military_top', name: '武举魁首', icon: '⚔️', category: 'military', points: 30,
+    description: '举办武举并拔擢一名武状元。', reward: { food: 2500 },
+    condition: (g) => _examStats(g).militaryTop >= 1,
+    progress: (g) => ({ current: Math.min(1, _examStats(g).militaryTop || 0), total: 1 })
+  },
+  {
+    id: 'v22_fellow_network', name: '同年之谊', icon: '🔗', category: 'person', points: 30,
+    description: '同榜进士结成同年网络，在世同年 ≥ 6 人。', reward: { money: 2500 },
+    condition: (g) => {
+      try {
+        const sys = _examSys(g);
+        if (!sys) return false;
+        let total = 0;
+        for (const grp of sys.v22_fellowGroups || []) total += (grp.members || []).length;
+        return total >= 6;
+      } catch (e) { return false; }
+    },
+    progress: (g) => {
+      try {
+        const sys = _examSys(g);
+        let total = 0;
+        for (const grp of (sys?.v22_fellowGroups || [])) total += (grp.members || []).length;
+        return { current: Math.min(6, total), total: 6 };
+      } catch (e) { return { current: 0, total: 6 }; }
+    }
+  },
+
+  // ---- 翰林院 / 选官（5）----
+  {
+    id: 'v22_hanlin_open', name: '词臣登瀛', icon: '🏛️', category: 'politics', points: 20,
+    description: '状元入翰林院，开馆养士。', reward: { money: 1500 },
+    condition: (g) => {
+      try { return (_examSys(g)?.v22_hanlin || []).length >= 1; } catch (e) { return false; }
+    }
+  },
+  {
+    id: 'v22_hanlin_culture', name: '翰墨流芳', icon: '📚', category: 'politics', points: 30,
+    description: '翰林院累计产出文化值 300 以上。', reward: { bgm: 'culture', title: '文章宗伯' },
+    condition: (g) => _examStats(g).hanlinCulture >= 300,
+    progress: (g) => ({ current: Math.min(300, _examStats(g).hanlinCulture || 0), total: 300 })
+  },
+  {
+    id: 'v22_cha_recommend', name: '乡举里选', icon: '📯', category: 'person', points: 20,
+    description: '察举制下由州郡举士 ≥ 3 人。', reward: { food: 2000 },
+    condition: (g) => _examStats(g).recommended >= 3,
+    progress: (g) => ({ current: Math.min(3, _examStats(g).recommended || 0), total: 3 })
+  },
+  {
+    id: 'v22_fraud_strict', name: '科场整肃', icon: '🔍', category: 'special', points: 20,
+    description: '破获一起科举舞弊，整肃考场风纪。', reward: { money: 1500 },
+    condition: (g) => _examStats(g).fraudCaught >= 1,
+    progress: (g) => ({ current: Math.min(1, _examStats(g).fraudCaught || 0), total: 1 })
+  },
+  {
+    id: 'v22_official_evaluate', name: '考课黜陟', icon: '⚖️', category: 'politics', points: 30,
+    description: '三岁考课累计晋升官员 ≥ 5 人。', reward: { money: 3000 },
+    condition: (g) => _examStats(g).promoted >= 5,
+    progress: (g) => ({ current: Math.min(5, _examStats(g).promoted || 0), total: 5 })
   }
 ];
 

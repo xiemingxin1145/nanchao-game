@@ -36,7 +36,10 @@ const PENTATONIC = {
   C4s: 277.18, C5s: 554.37, F3s: 185.00, F4s: 369.99, F5s: 739.99,
   // V18.0 新增：C 小调攻城 BGM 所需的降三级(Eb)与降七级(Bb)音。
   //   C 自然小调：C D Eb F G Ab Bb C；此处补 Eb3/Eb4/Bb3/Bb4，其余音沿用既有键。
-  Eb3: 155.56, Eb4: 311.13, Bb3: 233.08, Bb4: 466.16
+  Eb3: 155.56, Eb4: 311.13, Bb3: 233.08, Bb4: 466.16,
+  // V22.0 新增：科举殿试 BGM「G大调」所需的高音 B5（B5=987.77Hz，十二平均律），
+  //   其余 G/A/D/E 音沿用既有键；翰林院 BGM「D大调」沿用既有 D/E/F#/A/B 键。
+  B5: 987.77
 };
 
 // 各场景 BGM 配置
@@ -246,6 +249,24 @@ const BGM_TRACKS = {
     //   stepMs=750(=80BPM四分音符)，density 0.5，营造阖家团圆、天伦之乐的温馨氛围）。
     bpm: 80, scale: ['C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5', 'A5'],
     wave: 'triangle', bassWave: 'sine', stepMs: 750, hasDrum: false, density: 0.5
+  },
+
+  // ============================================================
+  // V22.0「音效扩充」新增 2 首 BGM（科举殿试 / 翰林院）
+  // ============================================================
+  examFinal: { // 科举殿试：G大调，60BPM，庄严典雅——编钟(三角主奏泛音)+古筝(正弦低音)+定音鼓
+    // G 大调自然音阶近似：G A B D E G A B D E G A B（明亮宫调 + 舒展旋律，
+    //   三角主奏模拟编钟/古筝的温润金石声、正弦低音铺底，轻鼓点缀丹墀庄重，
+    //   stepMs=1000(=60BPM四分音符)，density 0.6，营造金銮殿策对、庄严肃穆的殿试氛围）。
+    bpm: 60, scale: ['G3', 'A3', 'B3', 'D4', 'E4', 'G4', 'A4', 'B4', 'D5', 'E5', 'G5', 'A5', 'B5'],
+    wave: 'triangle', bassWave: 'sine', stepMs: 1000, hasDrum: true, density: 0.6
+  },
+  academy: { // 翰林院：D大调，55BPM，学术氛围——古琴(正弦主奏)+笛子(三角点缀)+正弦低音
+    // D 大调五声：D E F# A B D E F# A B D（F# 用既有 F3s/F4s 键，不新增频率，
+    //   正弦主奏模拟古琴的悠远泛音、三角点缀模拟竹笛清越，无战鼓，
+    //   stepMs=1091(=55BPM四分音符)，density 0.42，营造崇文馆校书、书卷丹青的学术氛围）。
+    bpm: 55, scale: ['D3', 'E3', 'F3s', 'A3', 'B3', 'D4', 'E4', 'F4s', 'A4', 'B4', 'D5'],
+    wave: 'sine', bassWave: 'sine', stepMs: 1091, hasDrum: false, density: 0.42
   }
 };
 
@@ -291,7 +312,10 @@ export const BGM_INFO = {
   goldenAge:      { name: '河清海晏', desc: '盛世太平·F大调75BPM和平繁荣' },
   // V21.0 新增
   silkRoad:       { name: '丝路驼铃', desc: '丝路异域·D小调70BPM都塔尔手鼓' },
-  familyReunion:  { name: '天伦之乐', desc: '家族团圆·C大调80BPM古筝竹笛' }
+  familyReunion:  { name: '天伦之乐', desc: '家族团圆·C大调80BPM古筝竹笛' },
+  // V22.0 新增（科举殿试 / 翰林院）
+  examFinal:      { name: '金銮策对', desc: '科举殿试·G大调60BPM编钟古筝' },
+  academy:        { name: '崇文校书', desc: '翰林院·D大调55BPM古琴竹笛' }
 };
 
 // V9.5：初始解锁的 BGM（主菜单/大地图/战斗/事件/内政/结局 + 既有 V8.1 四首）
@@ -308,7 +332,9 @@ const DEFAULT_UNLOCKED_BGM = ['menu', 'map', 'battle', 'event', 'interior', 'end
   // V20.0：灾害乱世/盛世太平两首新 BGM 默认解锁（灾害与治世场景随版本开放即可用）
   'turbulent', 'goldenAge',
   // V21.0：丝路异域/家族团圆两首新 BGM 默认解锁（商路与皇室场景随版本开放即可用）
-  'silkRoad', 'familyReunion'];
+  'silkRoad', 'familyReunion',
+  // V22.0：科举殿试/翰林院两首新 BGM 默认解锁（殿试与崇文馆场景随版本开放即可用）
+  'examFinal', 'academy'];
 
 export class AudioManager {
   constructor() {
@@ -1672,6 +1698,120 @@ export class AudioManager {
     const notes = [523.25, 587.33, 659.25, 783.99, 880.00, 1046.50];
     notes.forEach((f, i) => this.tone(f, 0.25, 'triangle', 0.16, i * 0.08, null, 'sfx'));
     this.bell(1046.50, 1.0, 0.15, notes.length * 0.08, 0);
+  }
+
+  // ============================================================
+  // V22.0「音效扩充」新增 6 个科举/选官事件音效（全部 Web Audio 程序化合成）
+  // 技术参考：MDN Web Audio——钟声=基音+非谐泛音长尾(bell)；
+  //   人声欢呼/鞭炮/马蹄/叹息/纸张=滤波白噪声 burst(_noiseBurst)；
+  //   礼乐/吟诵/民乐=oscillator 序列(tone/horn)；官印/印章=低频重击+木质泛音。
+  // ============================================================
+
+  // 5a. 放榜：钟声 + 百姓欢呼 + 鞭炮齐鸣
+  //   钟声三响编钟(C4/E4/G4)定调；宽频带通噪声浪潮模拟千人群呼；
+  //   高频短促噪声 burst 连续噼啪模拟鞭炮炸响。
+  playExamRelease() {
+    this.resume(); if (!this.ctx || !this._sfxGate('exam_release', 800)) return;
+    const BUS = 'sfx';
+    // 钟声三响（金銮殿钟鼓司鸣钟）
+    this.bell(261.63, 1.8, 0.20, 0, 0);
+    this.bell(329.63, 1.6, 0.16, 0.3, 0);
+    this.bell(392.00, 1.8, 0.16, 0.6, 0);
+    // 百姓欢呼：宽频噪声浪潮（左右声像散开）
+    this._noiseBurst({ dur: 1.0, freq: 700, q: 0.7, type: 'bandpass', vol: 0.16, offset: 0.7, bus: BUS, pan: -0.4 });
+    this._noiseBurst({ dur: 1.0, freq: 850, q: 0.7, type: 'bandpass', vol: 0.16, offset: 0.75, bus: BUS, pan: 0.4 });
+    this._noiseBurst({ dur: 0.8, freq: 1000, q: 0.9, type: 'bandpass', vol: 0.12, offset: 0.8, bus: BUS, pan: 0 });
+    // 鞭炮齐鸣：高频短促噪声 burst 连续噼啪（间隔 ~70ms）
+    for (let i = 0; i < 8; i++) {
+      this._noiseBurst({ dur: 0.06, freq: 2600 + i * 200, q: 1.2, type: 'highpass', vol: 0.10, offset: 0.9 + i * 0.07, bus: BUS, pan: (i % 2 ? 0.4 : -0.4) });
+    }
+    // 上扬喜庆琶音收尾
+    const arp = [523.25, 659.25, 783.99, 1046.5];
+    arp.forEach((f, i) => this.tone(f, 0.25, 'triangle', 0.14, 1.6 + i * 0.1, null, BUS));
+  }
+
+  // 5b. 状元游街：民乐鼓吹 + 马蹄声 + 百姓夹道欢呼
+  //   民乐：上扬五声旋律(三角波)模拟鼓吹；马蹄：低频鼓点左右交替模拟马蹄；
+  //   百姓欢呼：宽频噪声浪潮。
+  playZhuangyuanParade() {
+    this.resume(); if (!this.ctx || !this._sfxGate('zhuangyuan_parade', 900)) return;
+    const BUS = 'sfx';
+    // 民乐鼓吹：上扬五声行进旋律
+    const melody = [392.0, 440.0, 523.25, 587.33, 659.25, 783.99, 880.0, 1046.5];
+    melody.forEach((f, i) => this.tone(f, 0.3, 'triangle', 0.16, i * 0.18, null, BUS, (i % 2 ? 0.2 : -0.2)));
+    // 马蹄声：低频鼓点 + 高频声像噪声，左右交替（模拟马蹄"的-笃、的-笃"）
+    for (let i = 0; i < 10; i++) {
+      this.drum(0.22, 0.2 + i * 0.12, 95 - (i % 2) * 10, BUS);
+      this._noiseBurst({ dur: 0.04, freq: 1800, q: 1.5, type: 'highpass', vol: 0.06, offset: 0.2 + i * 0.12, bus: BUS, pan: (i % 2 ? 0.5 : -0.5) });
+    }
+    // 百姓夹道欢呼：宽频噪声浪潮
+    this._noiseBurst({ dur: 1.2, freq: 750, q: 0.7, type: 'bandpass', vol: 0.14, offset: 0.3, bus: BUS, pan: -0.5 });
+    this._noiseBurst({ dur: 1.2, freq: 900, q: 0.7, type: 'bandpass', vol: 0.14, offset: 0.35, bus: BUS, pan: 0.5 });
+  }
+
+  // 5c. 同年宴：酒杯碰撞 + 诗词吟诵
+  //   酒杯碰撞：高频短促正弦"叮当"（玻璃/瓷杯）；
+  //   诗词吟诵：中低频正弦滑音序列（模拟吟诵平仄起伏）。
+  playTongnianBanquet() {
+    this.resume(); if (!this.ctx || !this._sfxGate('tongnian_banquet', 700)) return;
+    const BUS = 'sfx';
+    // 酒杯碰撞：高频短促正弦叮当（左右声像，模拟碰杯）
+    for (let i = 0; i < 4; i++) {
+      this.tone(1567.98 + (i % 2) * 220, 0.12, 'sine', 0.10, 0.1 + i * 0.15, null, BUS, (i % 2 ? 0.3 : -0.3));
+    }
+    // 诗词吟诵：中低频正弦滑音序列（模拟文人吟诵"平-平-仄-平"起伏）
+    const chant = [293.66, 329.63, 392.0, 329.63, 293.66, 261.63, 329.63];
+    chant.forEach((f, i) => this.tone(f, 0.5, 'sine', 0.10, 0.6 + i * 0.28, f * 1.05, BUS));
+    // 酒樽倒酒：低频噪声潺潺
+    this._noiseBurst({ dur: 0.6, freq: 500, q: 1.2, type: 'bandpass', vol: 0.06, offset: 0.3, bus: BUS, pan: 0 });
+  }
+
+  // 5d. 落第：叹息 + 纸张飘落
+  //   叹息：低频带通噪声缓慢衰减（人嗟叹）；
+  //   纸张飘落：高频高通噪声缓慢衰减（试卷散落风声）。
+  playExamFail() {
+    this.resume(); if (!this.ctx || !this._sfxGate('exam_fail', 600)) return;
+    const BUS = 'sfx';
+    // 叹息：低频带通噪声缓慢衰减（"唉——"）
+    this._noiseBurst({ dur: 0.9, freq: 220, q: 0.8, type: 'bandpass', vol: 0.16, offset: 0, bus: BUS, pan: 0 });
+    // 纸张飘落：高频高通噪声缓慢衰减（试卷簌簌飘落）
+    this._noiseBurst({ dur: 1.2, freq: 4000, q: 1.0, type: 'highpass', vol: 0.06, offset: 0.3, bus: BUS, pan: -0.2 });
+    this._noiseBurst({ dur: 1.0, freq: 4500, q: 1.0, type: 'highpass', vol: 0.05, offset: 0.5, bus: BUS, pan: 0.2 });
+    // 低沉下行尾音（情绪低落）
+    this.tone(392.0, 1.0, 'sine', 0.12, 0.2, 261.63, BUS);
+  }
+
+  // 5e. 授官：官印声 + 礼乐
+  //   官印声：低频重击(钤印)+高频木质共振(印匣)；
+  //   礼乐：编钟+号角（朝堂雅乐）。
+  playAppointOffice() {
+    this.resume(); if (!this.ctx || !this._sfxGate('appoint_office', 700)) return;
+    const BUS = 'sfx';
+    // 官印声：低频重击（钤印"砰"）+ 高频木质共振（印匣"哒"）
+    this.drum(0.5, 0, 120, BUS);
+    this._noiseBurst({ dur: 0.12, freq: 2000, q: 1.5, type: 'highpass', vol: 0.12, offset: 0.05, bus: BUS, pan: 0 });
+    // 礼乐：编钟列阵（G宫）
+    const chimes = [392.0, 523.25, 659.25, 783.99];
+    chimes.forEach((f, i) => this.bell(f, 1.8, 0.16, 0.3 + i * 0.15, (i - 1.5) * 0.15));
+    // 号角长鸣（庄严）
+    this.horn(196.0, 1.4, 0.20, 0.4, null, 0);
+  }
+
+  // 5f. 考核：翻卷 + 印章声
+  //   翻卷：带通噪声快速抖动（翻阅卷宗）；
+  //   印章声：低频重击+木质共振（批卷钤印）。
+  playOfficialAssessment() {
+    this.resume(); if (!this.ctx || !this._sfxGate('official_assessment', 500)) return;
+    const BUS = 'sfx';
+    // 翻卷：带通噪声快速抖动（翻阅试卷/卷宗，连续 3 次）
+    for (let i = 0; i < 3; i++) {
+      this._noiseBurst({ dur: 0.08, freq: 3000, q: 1.2, type: 'bandpass', vol: 0.08, offset: i * 0.12, bus: BUS, pan: (i % 2 ? 0.2 : -0.2) });
+    }
+    // 印章声：低频重击（朱笔钤印）+ 高频木质共振（印泥/印匣）
+    this.drum(0.4, 0.45, 110, BUS);
+    this._noiseBurst({ dur: 0.1, freq: 2400, q: 1.5, type: 'highpass', vol: 0.10, offset: 0.48, bus: BUS, pan: 0 });
+    // 批阅落笔：中高频轻响（毛笔落纸）
+    this.tone(1046.5, 0.15, 'triangle', 0.08, 0.65, null, BUS);
   }
   // 6. 赋税调整音效：铜钱轻响+纸张翻动
   playTaxAdjust() {
@@ -3256,6 +3396,21 @@ export class AudioManager {
     //   节奏加倍，且旧定时器永不被 clearInterval 持有引用而泄漏。
     //   修复：建 interval 前先 clear 旧定时器，保证同一时刻只有一个 BGM 调度循环。
     if (this._bgmTimer) { clearInterval(this._bgmTimer); this._bgmTimer = null; }
+    // 性能优化（audio.js V22.0·多BGM切换资源管理加强）：
+    //   基准：switchBGM 路径会先 stopBGM()（其内已清空 _bgmLiveNodes），
+    //   但若外部直接调用 startBGM(scene)（如恢复播放/重入菜单/未来新调用点），
+    //   只 clearInterval 旧 _bgmTimer，上一首曲目正在发声的旋律/低音 osc 仍留在
+    //   _bgmLiveNodes 里自然收尾（0.65~0.85s），与新曲目第一拍短暂共存。
+    //   优化：建 interval 前，若 _bgmLiveNodes 非空，立即 stop/disconnect/清空，
+    //   确保新旧曲目节点零重叠、音频图资源立即释放。
+    if (Array.isArray(this._bgmLiveNodes) && this._bgmLiveNodes.length) {
+      for (const n of this._bgmLiveNodes) {
+        try { n.osc && n.osc.stop(); } catch (e) {}
+        try { n.osc && n.osc.disconnect(); } catch (e) {}
+        try { n.gain && n.gain.disconnect(); } catch (e) {}
+      }
+      this._bgmLiveNodes = [];
+    }
     this._bgmOn = true;
     this._bgmStep = 0;
     // 性能优化（audio.js #2 多BGM切换资源管理）：

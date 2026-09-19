@@ -94,6 +94,18 @@ export function saveGame(game, slot = 0) {
     const key = slot === 0 ? SAVE_KEY : SAVE_SLOTS[slot - 1];
     let data = game.serialize();
     data.saveTime = new Date().toISOString();
+    // 性能优化（save.js V22.0·更大存档写入）：
+    //   基准：game.serialize() 当前为白名单字段，不含运行时瞬态缓存
+    //     （_roundFactionGenerals/_techBagCache/_roundIdleGens 等回合级分桶缓存）。
+    //     但这些运行时字段在大版本演进中若被误并入 serialize() 返回对象
+    //     （如某次迭代把回合级分桶缓存直接挂到返回值），一张 234 将的 Map
+    //     会让存档体积翻倍、LZ77 压缩耗时骤增、localStorage 写盘阻塞拉长。
+    //   优化：落盘前防御性清扫——删除 data 中以 `_` 开头的键（运行时瞬态命名约定），
+    //     确保无论 serialize() 如何演进，存档只含持久态字段。
+    //   正确性：持久态字段均不以 `_` 开头（见 SHORT_KEYS 白名单），清扫不丢档。
+    for (const k of Object.keys(data)) {
+      if (k.charAt(0) === '_') delete data[k];
+    }
     // 性能优化#4：存档体积优化——
     //   优化前：game.log 随回合数无限增长（297事件/长篇日志），长局后存档 JSON
     //   线性膨胀，localStorage 5MB 上限易被撑爆、写入耗时拉长。

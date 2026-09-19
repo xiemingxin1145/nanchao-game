@@ -136,7 +136,14 @@ export class CalendarSystem {
     this.lastAnomaly = { id: picked.id, name: picked.name, turn: game.turn, icon: picked.icon };
     this.anomalyHistory.push(picked.id);
 
-    const cities = game.getFactionCities(game.playerFaction);
+    // BUG修复（calendar.js V22.0 rollAnomaly 未复用玩家城市缓存）：
+    //   基准：原写法 `game.getFactionCities(game.playerFaction)` 对全部城市做一次
+    //   全表 filter；而 applyTermEffects（同文件上方）已复用 settleTurn 入口建好的
+    //   `_playerCitiesTurnCache`。rollAnomaly 在 settleTurn 末尾被调用，此时该缓存
+    //   已存在——此处却重复全表扫描一次，132 城规模下每回合白白多扫一遍。
+    //   修复：与 applyTermEffects 对齐，优先复用 `_playerCitiesTurnCache`，缓存缺失
+    //   （非回合结算路径）时兜底回原 getFactionCities。
+    const cities = game._playerCitiesTurnCache || game.getFactionCities(game.playerFaction);
     const eff = picked.effect || {};
     const clamp = (v) => Math.max(0, Math.min(100, v));
 

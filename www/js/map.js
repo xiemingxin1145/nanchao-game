@@ -1642,6 +1642,129 @@ export class IsometricMap {
     ctx.restore();
   }
 
+  // ============================================================
+  // V22.0 — 地图可视化：同年关系线 / 京城科举标记 / 翰林院标记
+  // ============================================================
+
+  // 同年关系线：同榜（科举出身）进士所在城市间的金色脉冲连线。
+  // 数据来源：this.game.generals 中带 examTitle 者的 location 城市。
+  // 性能：同年城市集合按 this._animTime 每 0.5s 重建一次（避免每帧遍历全部武将）；
+  //       连线成对枚举并硬上限 CAP；中点离屏用 _onScreen 裁剪；未探索不连。
+  _drawTongnianLines(ctx) {
+    if (!this.game || !this.game.generals) return;
+    const t = this._animTime;
+    // 节流重建同年城市集合
+    if (!this._tongnianRebuildAt || t - this._tongnianRebuildAt > 0.5) {
+      this._tongnianRebuildAt = t;
+      const citySet = new Set();
+      for (const gen of this.game.generals.values()) {
+        if (gen && gen.examTitle && gen.location != null) citySet.add(gen.location);
+      }
+      this._tongnianCityIds = Array.from(citySet);
+    }
+    const ids = this._tongnianCityIds;
+    if (!ids || ids.length < 2) return;
+    ctx.save();
+    const CAP = 10;             // 同屏同年线上限保护
+    const LIMIT = 6;            // 至多取前 6 个同年城市参与连线
+    let drawn = 0;
+    const limited = ids.slice(0, LIMIT);
+    for (let i = 0; i < limited.length && drawn < CAP; i++) {
+      for (let j = i + 1; j < limited.length && drawn < CAP; j++) {
+        const cA = this.game.cities.get(limited[i]);
+        const cB = this.game.cities.get(limited[j]);
+        if (!cA || !cB || cA.isoX == null || cB.isoX == null) continue;
+        const p1 = this.isoToScreen(cA.isoX, cA.isoY);
+        const p2 = this.isoToScreen(cB.isoX, cB.isoY);
+        const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2;
+        if (!this._onScreen(mx, my, 200)) continue;   // 距离/视口裁剪
+        const pulse = 0.45 + 0.25 * Math.sin(t * 2.5 + drawn);
+        ctx.strokeStyle = `rgba(255,205,80,${pulse})`;
+        ctx.lineWidth = Math.max(1.2, 1.8 * this.scale);
+        ctx.setLineDash([5, 5]);
+        ctx.lineDashOffset = -t * 16;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // 中点金色节点
+        ctx.fillStyle = 'rgba(255,220,120,0.9)';
+        ctx.shadowColor = '#ffd700';
+        ctx.shadowBlur = 5;
+        ctx.beginPath();
+        ctx.arc(mx, my, Math.max(1.6, 2.2 * this.scale), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        drawn++;
+      }
+    }
+    ctx.restore();
+  }
+
+  // 京城科举标记 + 翰林院建筑标记（叠加在玩家首都之上）。
+  // 科举城市标记：首都正上方脉动小「榜」卷轴；翰林院标记：首都左上小殿宇「翰」匾。
+  // 性能：视口裁剪 + 战争迷雾判定 + 随 this.scale 缩放。
+  _drawCapitalExamMarkers(ctx) {
+    if (!this.game || !this.game.playerFaction) return;
+    const fid = this.game.playerFaction;
+    const capId = FACTIONS[fid] && FACTIONS[fid].capital;
+    if (!capId) return;
+    const cap = this.game.cities.get(capId);
+    if (!cap || cap.isoX == null) return;
+    // 战争迷雾：未探索京城不画
+    if (typeof this.game.isCityExplored === 'function' && !this.game.isCityExplored(capId)) return;
+    const pos = this.isoToScreen(cap.isoX, cap.isoY);
+    if (!this._onScreen(pos.x, pos.y, 90)) return;   // 距离/视口裁剪
+    const t = this._animTime;
+    const s = this.scale;
+    ctx.save();
+
+    // ---- 翰林院建筑标记（京城偏左上，小殿宇 + 「翰」匾）----
+    ctx.save();
+    ctx.translate(pos.x - 16 * s, pos.y - 6 * s);
+    // 殿身
+    ctx.fillStyle = '#5a4a7a';
+    ctx.fillRect(-6 * s, -4 * s, 12 * s, 6 * s);
+    // 歇山顶
+    ctx.fillStyle = '#7a6aa0';
+    ctx.beginPath();
+    ctx.moveTo(-8 * s, -4 * s);
+    ctx.lineTo(0, -10 * s);
+    ctx.lineTo(8 * s, -4 * s);
+    ctx.closePath();
+    ctx.fill();
+    // 匾额
+    ctx.fillStyle = '#ffe9a8';
+    ctx.font = `${Math.max(8, 9 * s)}px "STSong", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('翰', 0, -1 * s);
+    ctx.restore();
+
+    // ---- 科举金榜标记（京城正上方，脉动小卷轴）----
+    ctx.save();
+    const pulse = 1 + 0.12 * Math.sin(t * 3);
+    ctx.translate(pos.x, pos.y - 26 * s);
+    ctx.scale(pulse, pulse);
+    ctx.shadowColor = '#FFD700';
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = '#f3e2a8';
+    ctx.fillRect(-7 * s, -5 * s, 14 * s, 10 * s);
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#b82828';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(-7 * s, -5 * s, 14 * s, 10 * s);
+    ctx.fillStyle = '#b82828';
+    ctx.font = `bold ${Math.max(8, 9 * s)}px "STSong", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('榜', 0, 0.5 * s);
+    ctx.restore();
+
+    ctx.restore();
+  }
+
   // 战争迷雾增强：对已探索但无视野的城市画柔和渐变雾团
   _drawWarFog(ctx) {
     if (!this.game) return;
@@ -1766,10 +1889,14 @@ export class IsometricMap {
     this._drawSilkRoad(ctx);
     // V21.0：家族联姻关系线（联姻城市间红色脉冲连线）
     this._drawMarriageLines(ctx);
+    // V22.0：同年关系线（同榜进士所在城市间金色连线）
+    this._drawTongnianLines(ctx);
     // V18.0：河上商船/战船（河流城市附近定期经过）
     this._drawRiverShips(ctx);
 
     this._drawCities();
+    // V22.0：京城科举金榜标记 + 翰林院建筑标记（叠加在首都之上）
+    this._drawCapitalExamMarkers(ctx);
     // V18.0：交战城市周围火焰/烟雾
     this._drawCityBattleFire(ctx);
     this._drawArmies();
@@ -1850,6 +1977,14 @@ export class IsometricMap {
     // V21.0：家族动画 FX（联姻红绸/出生祥云/去世白幡）
     if (typeof Animator.drawFamilyFX === 'function') {
       Animator.drawFamilyFX(ctx);
+    }
+    // V22.0：科举/选官动画 FX（游街/宴饮/落第/授官/考核/贬官）
+    if (typeof Animator.drawExamFX === 'function') {
+      Animator.drawExamFX(ctx);
+    }
+    // V22.0：放榜全屏覆盖层（金榜展开 + 金光闪耀）
+    if (typeof Animator.drawExamResultsFX === 'function') {
+      Animator.drawExamResultsFX(ctx);
     }
   }
 

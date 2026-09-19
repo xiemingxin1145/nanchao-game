@@ -1,6 +1,6 @@
 {
   "name": "nanchao",
-  "version": "21.0.0",
+  "version": "22.0.0",
   "description": "南北朝 - 2.5D 回合制历史策略游戏",
   "main": "src/main.js",
   "scripts": {
@@ -25,11 +25,13 @@
     "appId": "com.nanchao.game",
     "productName": "南北朝",
     "artifactName": "NanChao-${version}.${ext}",
+    "icon": "build/icon.png",
     "linux": {
       "target": [
         "AppImage"
       ],
-      "category": "Game"
+      "category": "Game",
+      "icon": "build/icon.png"
     },
     "publish": {
       "provider": "github",

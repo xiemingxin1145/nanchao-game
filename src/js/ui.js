@@ -136,6 +136,8 @@ export class UI {
           <img src="${IMG.titleBg}" class="title-bg kenburns" onerror="this.style.display='none'">
           <!-- V21.0：丝路情缘主菜单氛围光晕（黄沙驼铃暖光，纯 CSS，无 JS 粒子负担） -->
           <div class="v21-menu-haze"></div>
+          <!-- V22.0：金榜题名主菜单氛围光晕（金榜朱印暖光，纯 CSS，无 JS 粒子负担） -->
+          <div class="v22-menu-haze"></div>
           <!-- V20.0：盛世华章主菜单氛围光晕（呼吸渐变，纯 CSS 动画，无 JS 粒子负担） -->
           <div class="v20-menu-haze"></div>
           <!-- V13.0：Canvas 古风粒子背景（花瓣/墨点/星光），全屏层 -->
@@ -160,7 +162,7 @@ export class UI {
               <button class="btn-ancient v13-btn" id="btn-quit">退出</button>
             </div>
           </div>
-          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge">V21.0 · 丝路情缘版</div>
+          <div class="version-badge v13-version-badge v14-version-badge v15-version-badge v16-version-badge v17-version-badge v18-version-badge v19-version-badge v20-version-badge v21-version-badge v22-version-badge">V22.0 · 金榜题名版</div>
         </div>
       </div>
     `;
@@ -1034,7 +1036,8 @@ export class UI {
             <button class="btn-small" id="btn-dynasty" title="王朝/禅让">王朝</button>
             <button class="btn-small" id="btn-office" title="官职/爵位">官职</button>
             <button class="btn-small" id="btn-trade" title="贸易商路">贸易</button>
-            <button class="btn-small" id="btn-exam" title="科举取士">科举</button>
+            <button class="btn-small" id="btn-exam" title="V22.0 科举：殿试榜/同年图/翰林院/武举">科举</button>
+            <button class="btn-small v22-select-btn" id="btn-v22-select" title="V22.0 选官：察举/九品中正/考核晋升">选官</button>
             <button class="btn-small" id="btn-calendar" title="历法节气/天文">历法</button>
             <button class="btn-small" id="btn-harem" title="后宫/皇室/子嗣">后宫</button>
             <button class="btn-small" id="btn-save">存档</button>
@@ -1126,7 +1129,9 @@ export class UI {
     const bd = document.getElementById('btn-dynasty'); if (bd) bd.onclick = () => this.showDynastyPanel();
     const bo = document.getElementById('btn-office'); if (bo) bo.onclick = () => this.showOfficePanel();
     const bt = document.getElementById('btn-trade'); if (bt) bt.onclick = () => this.showTradePanel();
-    const be = document.getElementById('btn-exam'); if (be) be.onclick = () => this.showExamPanel();
+    const be = document.getElementById('btn-exam'); if (be) be.onclick = () => this.showExamPanelV22();
+    // V22.0：选官面板（察举/九品中正/考核）
+    const bv22 = document.getElementById('btn-v22-select'); if (bv22) bv22.onclick = () => this.showSelectionPanelV22();
     const bc = document.getElementById('btn-calendar'); if (bc) bc.onclick = () => this.showCalendarPanel();
     const bh = document.getElementById('btn-harem'); if (bh) bh.onclick = () => this.showHaremPanel();
     const sw = document.getElementById('hdr-solar-wrap'); if (sw) sw.onclick = () => this.showCalendarPanel();
@@ -8397,3 +8402,452 @@ export class UI {
     } catch (e) {}
   }
 
+
+  // ============== V22.0「金榜题名版」UI 精修 ==================
+  //  约定：新类名一律 v22- 前缀；所有 game/imperialExam/office API
+  //        调用带 typeof === 'function' / 存在性守卫，优雅降级；
+  //        同年关系图/品级图为静态 SVG，≤14 节点，纯 CSS 动画，
+  //        不新增 Canvas 粒子循环。
+  // ============================================================
+
+  // ---------- V22 通用工具 ----------
+  _v22Num(v, d = 0) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
+  _v22Clamp(v, lo = 0, hi = 100) { return Math.max(lo, Math.min(hi, v)); }
+  _v22Esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  }
+
+  // ---------- V22 古风弹窗骨架 ----------
+  _v22ModalShell(titleHtml, bodyHtml, extraCls = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay v22-overlay';
+    modal.innerHTML = `
+      <div class="modal v22-modal v22-scroll ${extraCls}">
+        <div class="v22-corner tl"></div><div class="v22-corner tr"></div>
+        <div class="v22-corner bl"></div><div class="v22-corner br"></div>
+        <h2 class="modal-title v22-title">${titleHtml}</h2>
+        <div class="v22-body">${bodyHtml}</div>
+        <button class="btn-ancient v22-close" onclick="this.closest('.v22-overlay').remove()">关闭</button>
+      </div>`;
+    document.body.appendChild(modal);
+    if (this.audio && typeof this.audio.playPanelOpen === 'function') {
+      try { this.audio.playPanelOpen(); } catch (e) {}
+    }
+    return modal;
+  }
+
+  // ---------- V22：安全读取科举系统 ----------
+  _v22Exam() {
+    const g = this.game;
+    if (!g || !g.imperialExam) return null;
+    return g.imperialExam;
+  }
+
+  // ---------- V22：太学等级 ----------
+  _v22TaixueLv() {
+    const g = this.game;
+    try {
+      const cap = g.cities.get(FACTIONS[g.playerFaction]?.capital);
+      return (cap && cap.buildings && cap.buildings.taixue) || 0;
+    } catch (e) { return 0; }
+  }
+
+  // ============================================================
+  // 一、科举主面板（状态 / 上次结果 / 下次时间）
+  // ============================================================
+  showExamPanelV22() {
+    if (!this.game) { this.toast('开始游戏后可见科举'); return; }
+    const g = this.game;
+    const ie = this._v22Exam();
+    if (!ie) { this.toast('科举系统未就绪'); return; }
+
+    const txLv = this._v22TaixueLv();
+    let canHold = false;
+    try { canHold = (typeof g.canHoldExam === 'function') ? g.canHoldExam() : false; } catch (e) {}
+    const dueTurn = this._v22Num(ie.nextExamTurn);
+    const turnsLeft = Math.max(0, dueTurn - this._v22Num(g.turn));
+    const last = ie.lastResults || null;
+
+    // --- 顶部状态 ---
+    const statusHtml = `
+      <div class="v22-exam-summary">
+        <div class="v22-stat"><span>太学等级</span><b>Lv.${txLv}</b></div>
+        <div class="v22-stat"><span>下次科举</span><b>第 ${dueTurn} 回合</b></div>
+        <div class="v22-stat"><span>距开科</span><b>${turnsLeft > 0 ? turnsLeft + ' 回合' : '可开科'}</b></div>
+        <div class="v22-stat"><span>已举办</span><b>${this._v22Num(ie.examCount)} 次</b></div>
+      </div>
+      <div class="v22-status-line ${canHold ? 'v22-ok' : 'v22-wait'}">
+        ${canHold ? '✅ 今岁可开科取士！' : (txLv < 3 ? '⏳ 太学需≥3级方可开科' : '⏳ 科举尚未到期')}
+      </div>`;
+
+    // --- 开科科目按钮 ---
+    const subjectBtns = canHold ? Object.keys(EXAM_SUBJECTS).map(k => {
+      const s = EXAM_SUBJECTS[k];
+      return `<button class="btn-ancient v22-subj-btn" onclick="__ui_.doExamV22('${k}')">
+        ${s.icon} ${this._v22Esc(s.name)}</button>`;
+    }).join('') : '<p class="v22-empty">条件未满足，暂不能开科。</p>';
+
+    // --- 殿试结果榜 ---
+    const bangHtml = this._v22Bangbang(last);
+    // --- 同年关系图 ---
+    const tongnianHtml = this._v22TongnianGraph(last);
+    // --- 翰林院 ---
+    const hanlinHtml = this._v22HanlinPanel();
+    // --- 武举 ---
+    const wujuHtml = this._v22WujuPanel(last);
+
+    const body = `
+      ${statusHtml}
+      <div class="v22-section">
+        <div class="v22-sec-title">◆ 开科取士（选科目）</div>
+        <div class="v22-subj-row">${subjectBtns}</div>
+      </div>
+      ${bangHtml}
+      ${tongnianHtml}
+      ${hanlinHtml}
+      ${wujuHtml}
+    `;
+    this._v22ModalShell('📜 科举取士 · 金榜题名', body, 'v22-wide');
+  }
+
+  // ---------- V22：殿试结果榜（状元/榜眼/探花/进士） ----------
+  _v22Bangbang(last) {
+    if (!last) {
+      return `<div class="v22-section"><div class="v22-sec-title">◆ 殿试金榜</div>
+        <p class="v22-empty">尚未举办科举，无金榜可览。</p></div>`;
+    }
+    const honor = (e, rank, medal, cls) => e
+      ? `<div class="v22-bang ${cls}">
+           <div class="v22-bang-medal">${medal}</div>
+           <div class="v22-bang-name">${this._v22Esc(e.name)}</div>
+           <div class="v22-bang-rank">${rank}</div>
+           <div class="v22-bang-score">成绩 ${this._v22Num(e.score)}</div>
+         </div>` : '';
+    const jinshiRows = (last.jinshi || []).map((j, i) => {
+      const qual = this._v22Num(j.score) > 700 ? '<span class="v22-qual s">甲</span>'
+        : this._v22Num(j.score) > 500 ? '<span class="v22-qual a">乙</span>'
+        : '<span class="v22-qual b">丙</span>';
+      return `<div class="v22-js-row"><span>${i + 4}</span><b>${this._v22Esc(j.name)}</b>${qual}<span>成绩 ${this._v22Num(j.score)}</span></div>`;
+    }).join('');
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 殿试金榜（${this._v22Esc(last.level || '')}·${this._v22Esc(last.subject || '')}）</div>
+      <div class="v22-bang-top3">
+        ${honor(last.bangyan, '榜眼', '🥈', 'v22-bang-2')}
+        ${honor(last.zhuangyuan, '状元', '🥇', 'v22-bang-1')}
+        ${honor(last.tanhua, '探花', '🥉', 'v22-bang-3')}
+      </div>
+      <div class="v22-js-list">
+        <div class="v22-js-title">新科进士（${(last.jinshi || []).length} 人）</div>
+        ${jinshiRows || '<p class="v22-empty">本科无普通进士。</p>'}
+      </div>
+    </div>`;
+  }
+
+  // ---------- V22：同年关系图（SVG 网络，≤14 节点） ----------
+  _v22TongnianGraph(last) {
+    // 以最近一次放榜为同年网络；状元居中，榜眼/探花环列，进士环绕
+    const nodes = [];
+    if (last) {
+      if (last.zhuangyuan) nodes.push({ name: last.zhuangyuan.name, role: '状元', x: 50, y: 50 });
+      if (last.bangyan) nodes.push({ name: last.bangyan.name, role: '榜眼', x: 30, y: 38 });
+      if (last.tanhua) nodes.push({ name: last.tanhua.name, role: '探花', x: 70, y: 38 });
+      (last.jinshi || []).slice(0, 8).forEach((j, i) => {
+        const ang = (i / 8) * Math.PI * 2 - Math.PI / 2;
+        nodes.push({ name: j.name, role: '进士', x: 50 + Math.cos(ang) * 38, y: 50 + Math.sin(ang) * 38 });
+      });
+    }
+    if (nodes.length === 0) {
+      return `<div class="v22-section"><div class="v22-sec-title">◆ 同年之谊</div>
+        <p class="v22-empty">尚未取士，同年网络未立。</p></div>`;
+    }
+    const center = nodes.find(n => n.role === '状元') || nodes[0];
+    const lines = nodes.filter(n => n !== center).map(n =>
+      `<line x1="${center.x}" y1="${center.y}" x2="${n.x}" y2="${n.y}" class="v22-tn-line"/>`).join('');
+    const dots = nodes.map(n => {
+      const cls = n.role === '状元' ? 'v22-tn-node zy'
+        : (n.role === '榜眼' || n.role === '探花') ? 'v22-tn-node bh'
+        : 'v22-tn-node js';
+      return `<g>
+        <circle cx="${n.x}" cy="${n.y}" r="${n.role === '状元' ? 4 : 2.6}" class="${cls}"/>
+        <text x="${n.x}" y="${n.y - 6}" class="v22-tn-label ${n.role === '状元' ? 'on' : ''}">${this._v22Esc(n.name)}</text>
+        <text x="${n.x}" y="${n.y + 9}" class="v22-tn-role">${this._v22Esc(n.role)}</text>
+      </g>`;
+    }).join('');
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 同年之谊（新科进士互为同年）</div>
+      <div class="v22-tn-wrap">
+        <svg class="v22-tn-svg" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${lines}${dots}</svg>
+      </div>
+      <p class="v22-hint">同门同年，互为奥援；宦海浮沉，同年相护。</p>
+    </div>`;
+  }
+
+  // ---------- V22：翰林院面板（在馆学士 / 产出文化值） ----------
+  _v22HanlinPanel() {
+    const g = this.game;
+    // 在馆学士 = 我方势力中带科举出身标记的武将
+    let scholars = [];
+    try {
+      const mine = (typeof g.getFactionGenerals === 'function') ? g.getFactionGenerals(g.playerFaction) : [];
+      scholars = mine.filter(x => x && x.examTitle);
+    } catch (e) { scholars = []; }
+    // 产出文化值：每位学士按出身品级折算（状元+8/回合，榜眼+6，探花+4，进士+2）
+    const perTurn = scholars.reduce((s, x) => {
+      const t = x.examTitle || '';
+      if (t === '状元') return s + 8;
+      if (t === '榜眼') return s + 6;
+      if (t === '探花') return s + 4;
+      return s + 2;
+    }, 0);
+    const rows = scholars.slice(0, 12).map(x => {
+      const tagCls = x.examTitle === '状元' ? 'v22-hl-zy' : (x.examTitle === '榜眼' || x.examTitle === '探花') ? 'v22-hl-bh' : 'v22-hl-js';
+      return `<div class="v22-hl-row">
+        <b>${this._v22Esc(x.name)}</b>
+        <span class="v22-hl-tag ${tagCls}">${this._v22Esc(x.examTitle)}</span>
+        <span class="v22-hl-attr">政${this._v22Num(x.politics)} 智${this._v22Num(x.intel)}</span>
+      </div>`;
+    }).join('');
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 翰林院 · 储才养望</div>
+      <div class="v22-hl-summary">
+        <div class="v22-stat"><span>在馆学士</span><b>${scholars.length} 人</b></div>
+        <div class="v22-stat"><span>每回合文化</span><b style="color:#FFD54F">+${perTurn}</b></div>
+      </div>
+      <div class="v22-hl-list">${rows || '<p class="v22-empty">翰林院尚未有人入馆，开科取士以储才。</p>'}</div>
+    </div>`;
+  }
+
+  // ---------- V22：武举面板（选拔流程 / 结果） ----------
+  _v22WujuPanel(last) {
+    // 武举流程：射策 → 马枪 → 殿廷
+    const steps = [
+      { name: '县试·弓马', desc: '骑射马枪，择其勇健。' },
+      { name: '府试·策论', desc: '兵略策问，兼考方略。' },
+      { name: '殿试·御前', desc: '天子亲临，定甲第出身。' }
+    ];
+    const stepsHtml = steps.map((s, i) => `
+      <div class="v22-wj-step">
+        <div class="v22-wj-no">${i + 1}</div>
+        <div><b>${this._v22Esc(s.name)}</b><div class="v22-wj-desc">${this._v22Esc(s.desc)}</div></div>
+      </div>`).join('');
+    // 武举结果：若最近一次为武举科则展示，否则提示
+    const isWuju = last && /武举/.test(last.subject || '');
+    const resultHtml = isWuju
+      ? `<div class="v22-wj-result">
+           ${last.zhuangyuan ? `<div class="v22-wj-line">🥇 武状元：<b>${this._v22Esc(last.zhuangyuan.name)}</b></div>` : ''}
+           ${last.bangyan ? `<div class="v22-wj-line">🥈 武榜眼：<b>${this._v22Esc(last.bangyan.name)}</b></div>` : ''}
+           ${last.tanhua ? `<div class="v22-wj-line">🥉 武探花：<b>${this._v22Esc(last.tanhua.name)}</b></div>` : ''}
+         </div>`
+      : '<p class="v22-empty">尚未举行武举科。开科时选「⚔️ 武举科」以拔将才。</p>';
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 武举 · 选拔流程</div>
+      <div class="v22-wj-flow">${stepsHtml}</div>
+      <div class="v22-sec-title v22-sub2">武举结果</div>
+      ${resultHtml}
+    </div>`;
+  }
+
+  // ---------- V22：执行开科（守卫 + 放榜） ----------
+  doExamV22(subjectId) {
+    const g = this.game;
+    if (!g || typeof g.holdExam !== 'function') { this.toast('科举系统未就绪'); return; }
+    const r = g.holdExam(subjectId);
+    if (r && r.ok) {
+      if (this.audio) {
+        try { this.unlockSceneBGM('exam'); } catch (e) {}
+        if (this.audio.playExamHuangbang) try { this.audio.playExamHuangbang(); } catch (e) {}
+      }
+      this.toast(r.msg || '开科取士');
+      if (typeof this.showExamResultModalV15 === 'function') this.showExamResultModalV15(r.result);
+    } else {
+      this.toast((r && r.msg) || '无法开科');
+    }
+    document.querySelectorAll('.v22-overlay').forEach(m => m.remove());
+    if (typeof this.refreshUI === 'function') this.refreshUI();
+  }
+
+  // ============================================================
+  // 二、选官主面板（察举 / 九品中正 / 模式切换 / 考核）
+  // ============================================================
+  showSelectionPanelV22() {
+    if (!this.game) { this.toast('开始游戏后可见选官'); return; }
+    const g = this.game;
+    const mode = g._v22SelectMode || 'keju'; // 默认科举取士
+    const modeHtml = `
+      <div class="v22-mode-row">
+        <button class="v22-mode-btn ${mode === 'keju' ? 'on' : ''}" onclick="__ui_._v22SetMode('keju')">📜 科举取士</button>
+        <button class="v22-mode-btn ${mode === 'chaju' ? 'on' : ''}" onclick="__ui_._v22SetMode('chaju')">🎓 察举征辟</button>
+      </div>
+      <p class="v22-hint">${mode === 'keju'
+        ? '科举取士：寒门禁脢皆可怀牒自试，三年一开科，择优授官。'
+        : '察举征辟：由公卿州郡荐举贤良方正，重门第与清议。'}</p>`;
+
+    const chajuHtml = this._v22ChajuPanel();
+    const pinzhongHtml = this._v22PinzhongBar();
+    const kaoheHtml = this._v22KaohePanel();
+
+    const body = `
+      ${modeHtml}
+      ${chajuHtml}
+      ${pinzhongHtml}
+      ${kaoheHtml}
+    `;
+    this._v22ModalShell('🏛 选官 · 察举九品', body, 'v22-wide');
+  }
+
+  // ---------- V22：选官模式切换 ----------
+  _v22SetMode(mode) {
+    if (!this.game) return;
+    this.game._v22SelectMode = (mode === 'chaju') ? 'chaju' : 'keju';
+    this.toast(this.game._v22SelectMode === 'keju' ? '已切换为：科举取士' : '已切换为：察举征辟');
+    document.querySelectorAll('.v22-overlay').forEach(m => m.remove());
+    this.showSelectionPanelV22();
+  }
+
+  // ---------- V22：察举面板（可推荐人才列表 / 推荐按钮） ----------
+  _v22ChajuPanel() {
+    const g = this.game;
+    let idle = [];
+    try { idle = (typeof g.getIdleGenerals === 'function') ? g.getIdleGenerals() : []; } catch (e) { idle = []; }
+    // 察举门槛：综合属性 ≥ 200 方可荐举
+    const rows = idle.slice(0, 12).map(x => {
+      const total = this._v22Num(x.politics) + this._v22Num(x.intel) + this._v22Num(x.command) + this._v22Num(x.force);
+      const ok = total >= 200;
+      return `<div class="v22-cj-row">
+        <div class="v22-cj-info">
+          <b>${this._v22Esc(x.name)}</b>
+          <span class="v22-cj-attr">政${this._v22Num(x.politics)} 智${this._v22Num(x.intel)} 统${this._v22Num(x.command)} 武${this._v22Num(x.force)}</span>
+        </div>
+        ${ok
+          ? `<button class="btn-small v22-cj-btn" onclick="__ui_._v22Recommend('${x.id}')">荐举</button>`
+          : '<span class="v22-cj-low">才望未及</span>'}
+      </div>`;
+    }).join('');
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 察举征辟 · 可荐之才（在野）</div>
+      <div class="v22-cj-list">${rows || '<p class="v22-empty">在野无遗贤，或无人可荐。</p>'}</div>
+    </div>`;
+  }
+
+  // ---------- V22：察举推荐（招募在野将） ----------
+  _v22Recommend(genId) {
+    const g = this.game;
+    let r = { ok: false, msg: '无法荐举' };
+    try {
+      if (typeof g.recruitIdleGeneral === 'function') r = g.recruitIdleGeneral(genId);
+    } catch (e) { r = { ok: false, msg: String(e && e.message || e) }; }
+    if (this.audio && typeof this.audio.playRecruit === 'function') {
+      try { this.audio.playRecruit(); } catch (e) {}
+    }
+    this.toast(r.msg || (r.ok ? '荐举成功' : '荐举失败'));
+    document.querySelectorAll('.v22-overlay').forEach(m => m.remove());
+    this.showSelectionPanelV22();
+  }
+
+  // ---------- V22：九品中正 · 官员品级可视化 ----------
+  _v22PinzhongBar() {
+    const g = this.game;
+    const levels = [
+      { id: '正一品', cls: 'v22-rk-1' }, { id: '从一品', cls: 'v22-rk-2' },
+      { id: '正二品', cls: 'v22-rk-3' }, { id: '从二品', cls: 'v22-rk-4' },
+      { id: '正三品', cls: 'v22-rk-5' }, { id: '从三品', cls: 'v22-rk-6' },
+      { id: '正四品', cls: 'v22-rk-7' }, { id: '正五品', cls: 'v22-rk-8' },
+      { id: '正六品', cls: 'v22-rk-9' }, { id: '正七品', cls: 'v22-rk-10' },
+      { id: '正八品', cls: 'v22-rk-11' }, { id: '正九品', cls: 'v22-rk-12' }
+    ].reverse();
+    // 统计我方各品级在任人数（按 OFFICES rank 归并）
+    let counts = {};
+    try {
+      const offList = (typeof OFFICES !== 'undefined') ? OFFICES : [];
+      let held = {};
+      if (typeof g.getOffices === 'function') held = g.getOffices(g.playerFaction) || {};
+      offList.forEach(off => { if (held[off.id]) counts[off.rank] = (counts[off.rank] || 0) + 1; });
+    } catch (e) {}
+    const cells = levels.map(l => {
+      const lvNum = parseInt(l.cls.replace('v22-rk-', ''), 10); // 1..12（12=正九品）
+      const cnt = counts[lvNum] || 0;
+      return `<span class="v22-rkcell ${l.cls}" title="${this._v22Esc(l.id)}：在任 ${cnt} 人">
+        ${this._v22Esc(l.id.replace('正','').replace('从','从'))}<i>${cnt || ''}</i></span>`;
+    }).join('');
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 九品中正 · 官制品级（从九品 → 正一品）</div>
+      <div class="v22-rkbar">
+        <div class="v22-rkbar-track">${cells}</div>
+      </div>
+      <p class="v22-hint">中正官区别人物，计品定第；高品罕授，下品冗员。</p>
+    </div>`;
+  }
+
+  // ---------- V22：官员考核（结果列表 / 晋升贬官） ----------
+  _v22KaohePanel() {
+    const g = this.game;
+    let gens = [];
+    try { gens = (typeof g.getFactionGenerals === 'function') ? g.getFactionGenerals(g.playerFaction) : []; } catch (e) { gens = []; }
+    // 考核：综合忠诚 + 四维均值 → 上上/上中/上下/中上/中中/中下
+    const gradeOf = (x) => {
+      const loyalty = this._v22Num(x.loyalty);
+      const avg = (this._v22Num(x.politics) + this._v22Num(x.intel) + this._v22Num(x.command) + this._v22Num(x.force)) / 4;
+      const score = loyalty * 0.4 + avg * 0.6;
+      if (score >= 85) return { g: '上上', cls: 'v22-kh-s', note: '卓越，宜擢拔' };
+      if (score >= 75) return { g: '上中', cls: 'v22-kh-a', note: '干练，可进阶' };
+      if (score >= 65) return { g: '上下', cls: 'v22-kh-b', note: '称职，留任' };
+      if (score >= 55) return { g: '中上', cls: 'v22-kh-c', note: '平调观察' };
+      if (score >= 45) return { g: '中中', cls: 'v22-kh-d', note: '勉力供职' };
+      return { g: '中下', cls: 'v22-kh-e', note: '疲沓，宜贬黜' };
+    };
+    const rows = gens.filter(x => x && !x.inArmy && !x.onHostage && !x.onMission).slice(0, 14).map(x => {
+      const gd = gradeOf(x);
+      return `<div class="v22-kh-row">
+        <div class="v22-kh-info">
+          <b>${this._v22Esc(x.name)}</b>
+          <span class="v22-kh-attr">忠${this._v22Num(x.loyalty)} · 政${this._v22Num(x.politics)} 智${this._v22Num(x.intel)} 统${this._v22Num(x.command)} 武${this._v22Num(x.force)}</span>
+        </div>
+        <span class="v22-kh-grade ${gd.cls}">${gd.g}</span>
+        <span class="v22-kh-note">${gd.note}</span>
+        <div class="v22-kh-act">
+          <button class="btn-small" onclick="__ui_._v22Promote('${x.id}')">晋升</button>
+          <button class="btn-small v22-demote" onclick="__ui_._v22Demote('${x.id}')">贬官</button>
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="v22-section">
+      <div class="v22-sec-title">◆ 官员考课 · 殿最殿最</div>
+      <div class="v22-kh-list">${rows || '<p class="v22-empty">暂无在任官员可考。</p>'}</div>
+      <p class="v22-hint">晋升加恩树忠诚，贬官示惩儆效尤；进退之间，人知劝勉。</p>
+    </div>`;
+  }
+
+  // ---------- V22：晋升（加忠诚，守卫式） ----------
+  _v22Promote(genId) {
+    const g = this.game;
+    const gen = (typeof g.getGeneral === 'function') ? g.getGeneral(genId) : null;
+    if (!gen) { this.toast('未找到该官员'); return; }
+    let done = false;
+    try {
+      if (typeof g.promoteGeneral === 'function') { g.promoteGeneral(genId); done = true; }
+    } catch (e) {}
+    if (!done) {
+      gen.loyalty = Math.min(100, this._v22Num(gen.loyalty) + 5);
+    }
+    this.toast(`已晋升 ${gen.name}，忠诚 +5`);
+    document.querySelectorAll('.v22-overlay').forEach(m => m.remove());
+    this.showSelectionPanelV22();
+  }
+
+  // ---------- V22：贬官（降忠诚，守卫式） ----------
+  _v22Demote(genId) {
+    const g = this.game;
+    const gen = (typeof g.getGeneral === 'function') ? g.getGeneral(genId) : null;
+    if (!gen) { this.toast('未找到该官员'); return; }
+    let done = false;
+    try {
+      if (typeof g.demoteGeneral === 'function') { g.demoteGeneral(genId); done = true; }
+    } catch (e) {}
+    if (!done) {
+      gen.loyalty = Math.max(0, this._v22Num(gen.loyalty) - 5);
+    }
+    this.toast(`已贬黜 ${gen.name}，忠诚 -5`);
+    document.querySelectorAll('.v22-overlay').forEach(m => m.remove());
+    this.showSelectionPanelV22();
+  }
