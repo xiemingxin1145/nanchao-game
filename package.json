@@ -1,6 +1,6 @@
 {
   "name": "nanchao",
-  "version": "24.0.0",
+  "version": "24.0.1",
   "description": "南北朝 - 2.5D 回合制历史策略游戏",
   "main": "src/main.js",
   "scripts": {
